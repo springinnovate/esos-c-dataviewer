@@ -15,15 +15,16 @@ networks:
 
 services:
   geoserver:
-    image: ${GEOSERVER_IMAGE:-kartoza/geoserver:2.25.1}
+    image: ${GEOSERVER_IMAGE}
     container_name: geoserver
     restart: unless-stopped
     environment:
-      - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER:-admin}
-      - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD:-geoserver}
-      - JAVA_OPTS=${GEOSERVER_JAVA_OPTS:--Xms1g -Xmx2g -XX:ActiveProcessorCount=2 -Duser.timezone=UTC}
+      - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
+      - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
+      - JAVA_OPTS=${GEOSERVER_JAVA_OPTS}
     volumes:
-      - geoserver_data_dir:/opt/geoserver/data_dir
+      - ./geoserver_data_dir:/opt/geoserver/data_dir
+      - ./local_data:/opt/geoserver/local_data:ro
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:8080/geoserver/web/']
       interval: 15s
@@ -42,7 +43,7 @@ services:
     labels:
       # Traefik routing (only active when traefik is running in prod)
       - 'traefik.enable=true'
-      - 'traefik.http.routers.geoserver.rule=Host(`${GEOSERVER_HOST:?set in .env}`)'
+      - 'traefik.http.routers.geoserver.rule=Host(`${GEOSERVER_HOST}`)'
       - 'traefik.http.routers.geoserver.entrypoints=websecure'
       - 'traefik.http.routers.geoserver.tls.certresolver=letsencrypt'
       - 'traefik.http.services.geoserver.loadbalancer.server.port=8080'
@@ -67,10 +68,10 @@ services:
       - '--providers.docker.exposedbydefault=false'
       - '--entrypoints.web.address=:80'
       - '--entrypoints.websecure.address=:443'
-      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:?set in .env}'
+      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}'
       - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
       - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
-      - '--api.dashboard=${TRAEFIK_DASHBOARD:-false}'
+      - '--api.dashboard=${TRAEFIK_DASHBOARD}'
     ports:
       - '80:80'
       - '443:443'

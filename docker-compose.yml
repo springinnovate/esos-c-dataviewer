@@ -9,7 +9,7 @@ volumes:
   traefik_letsencrypt:
 
 networks:
-  internal:
+  backend:
   frontend:
 
 services:
@@ -31,7 +31,7 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      - internal
+      - backend
       - frontend
     ports:
       - target: 8080
@@ -46,6 +46,24 @@ services:
       - 'traefik.http.routers.geoserver.entrypoints=websecure'
       - 'traefik.http.routers.geoserver.tls.certresolver=letsencrypt'
       - 'traefik.http.services.geoserver.loadbalancer.server.port=8080'
+
+  geoserver-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.geoserver-init
+    image: geoserver-init:latest
+    container_name: geoserver-init
+    depends_on:
+      geoserver:
+        condition: service_healthy
+    networks: [backend]
+    restart: 'no'
+    volumes:
+      - ./geoserver_register.py:/app/geoserver_register.py:ro
+      - ./layers.yml:/app/layers.yml:ro
+      - ./local_data:/opt/geoserver/local_data:ro
+    command: ['/app/layers.yml']
+    profiles: ['local', 'prod']
 
   traefik:
     image: traefik:v3.1

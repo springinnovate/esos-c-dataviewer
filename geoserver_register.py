@@ -173,60 +173,6 @@ def ensure_coverage_geotiff(
     return cov_name
 
 
-def discover_first_coverage_name(
-    gs: Gs, ws: str, store: str, retries: int = 10, delay: int = 2
-) -> str:
-    for attempt in range(retries):
-        r = gs.get(
-            f"/rest/workspaces/{ws}/coveragestores/{store}/coverages.json"
-        )
-        if r.status_code != 200:
-            time.sleep(delay)
-            continue
-
-        try:
-            data = r.json()
-        except ValueError:
-            # Not valid JSON yet — retry
-            time.sleep(delay)
-            continue
-
-        # Sometimes GeoServer returns {'coverages': ''} — skip that
-        if not isinstance(data.get("coverages"), dict):
-            time.sleep(delay)
-            continue
-
-        covs = data["coverages"].get("coverage", [])
-        if isinstance(covs, dict):
-            covs = [covs]
-        if covs:
-            return covs[0]["name"]
-
-        time.sleep(delay)
-
-    raise RuntimeError(
-        f"no coverages found under store {ws}:{store} after {retries} attempts"
-    )
-
-
-def recalc_coverage_bounds(gs: Gs, ws: str, store: str, name: str) -> None:
-    # recompute native & geographic bounds; helps avoid disabled layers
-    r = requests.put(
-        gs._url(
-            f"/rest/workspaces/{ws}/coveragestores/{store}/coverages/{name}.json?recalculate=nativebbox,latlonbbox"
-        ),
-        auth=gs.auth,
-        headers=gs.headers_json,
-        json={"coverage": {"enabled": True}},
-        timeout=gs.timeout,
-        verify=False,
-    )
-    if r.status_code not in (200, 201):
-        raise RuntimeError(
-            f"bbox recalc failed {ws}:{name}: {r.status_code} {r.text}"
-        )
-
-
 def set_default_style(
     gs: Gs, ws: str, layer_name: str, style_name: str
 ) -> None:
@@ -251,6 +197,58 @@ def ping_until_up(gs: Gs, timeout_sec: int = 120) -> None:
     raise TimeoutError("geoserver REST did not become ready")
 
 
+def ensure_style(gs: Gs, ws: str, name: str, fmt: str, file_path: str) -> None:
+    fmt = fmt.lower()
+    fmt_map = {
+        "sld": ("application/vnd.ogc.sld+xml", ".sld", "sld"),
+        "geocss": ("application/vnd.geoserver.geocss+css", ".css", "css"),
+        "mbstyle": (
+            "application/vnd.geoserver.mbstyle+json",
+            ".mbstyle",
+            "mbstyle",
+        ),
+        "ysld": ("application/vnd.geoserver.ysld+yaml", ".ysld", "ysld"),
+    }
+    if fmt not in fmt_map:
+        raise ValueError(f"unknown style format: {fmt}")
+    content_type, ext, format_name = fmt_map[fmt]
+
+    # create style shell if missing (POST /styles)
+    r = gs.get(f"/rest/workspaces/{ws}/styles/{name}.json")
+    if r.status_code != 200:
+        payload = {
+            "style": {
+                "name": name,
+                "workspace": ws,
+                "format": format_name,
+                "filename": Path(file_path).name,
+            }
+        }
+        r2 = gs.post(f"/rest/workspaces/{ws}/styles", payload)
+        if r2.status_code not in (200, 201):
+            raise RuntimeError(
+                f"style create failed {ws}:{name}: {r2.status_code} {r2.text} \n"
+                f"this was the payload: {payload}"
+            )
+
+    # upload/update style body (PUT raw)
+    with open(file_path, "r", encoding="utf-8") as f:
+        body = f.read()
+    url = gs._url(f"/rest/workspaces/{ws}/styles/{name}{ext}?raw=true")
+    r3 = requests.put(
+        url,
+        auth=gs.auth,
+        headers={"Content-Type": content_type},
+        data=body.encode("utf-8"),
+        timeout=gs.timeout,
+        verify=False,
+    )
+    if r3.status_code not in (200, 201):
+        raise RuntimeError(
+            f"style upload failed {ws}:{name}: {r3.status_code} {r3.text}"
+        )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("config", help="path to layers.yml")
@@ -269,6 +267,15 @@ def main():
     ping_until_up(gs)
     print("it is up!")
 
+    for st in cfg.get("styles", []):
+        ensure_style(
+            gs,
+            st["workspace"],
+            st["name"],
+            st.get("format", "sld"),
+            st["file_path"],
+        )
+
     for ws in cfg.get("workspaces", []):
         ensure_workspace(
             gs, ws["name"], ws.get("namespace_uri"), ws.get("default", False)
@@ -276,7 +283,6 @@ def main():
 
     if default_ws:
         ensure_workspace(gs, default_ws)
-    print("done with workspaces")
 
     for layer in cfg.get("layers", []):
         print(f"working on {layer}")
@@ -290,8 +296,6 @@ def main():
             ensure_coverage_geotiff(gs, ws, file_path, srs, style)
         else:
             raise ValueError(f"unknown layer type: {t}")
-
-    print("ok")
 
 
 if __name__ == "__main__":

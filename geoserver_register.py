@@ -267,6 +267,15 @@ def main():
     ping_until_up(gs)
     print("it is up!")
 
+    # define workspaces
+    if default_ws:
+        ensure_workspace(gs, default_ws)
+    for ws in cfg.get("workspaces", []):
+        ensure_workspace(
+            gs, ws["name"], ws.get("namespace_uri"), ws.get("default", False)
+        )
+
+    # define styles
     for st in cfg.get("styles", []):
         ensure_style(
             gs,
@@ -276,14 +285,7 @@ def main():
             st["file_path"],
         )
 
-    for ws in cfg.get("workspaces", []):
-        ensure_workspace(
-            gs, ws["name"], ws.get("namespace_uri"), ws.get("default", False)
-        )
-
-    if default_ws:
-        ensure_workspace(gs, default_ws)
-
+    # define raster layers
     for layer in cfg.get("layers", []):
         print(f"working on {layer}")
         t = layer["type"]

@@ -10,11 +10,11 @@ volumes:
 
 networks:
   internal:
-  web: # shared with reverse proxy (prod)
-    external: false
+  frontend:
 
 services:
   geoserver:
+    # ${GEOSERVER_IMAGE} is in the .env file (not tracked/secret)
     image: ${GEOSERVER_IMAGE}
     container_name: geoserver
     restart: unless-stopped
@@ -32,7 +32,7 @@ services:
       retries: 20
     networks:
       - internal
-      - web
+      - frontend
     # expose directly only in local profile
     ports:
       - target: 8080
@@ -69,5 +69,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_letsencrypt:/letsencrypt
     networks:
-      - web
+      - frontend
     profiles: ['prod']

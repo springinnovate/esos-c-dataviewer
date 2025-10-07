@@ -248,10 +248,11 @@ def create_layer(
     # created when a raster layer is created, so by creating a "coverage" you
     # create a raster layer...
     coverage_name = Path(geotiff_path).stem
+
     # the store is where the data are 'stored' and a coveragestore is where
     # raster data are stored
     coveragestore_name = f"{coverage_name}_store"
-    # only add it if it doesn't exist
+
     coveragestore_payload = {
         "coverageStore": {
             "name": coveragestore_name,

@@ -11,12 +11,12 @@ styles:
   - name: above_ground_biomass
     workspace: esosc
     format: sld
-    file_path: /opt/geoserver/local_data/styles/agb_biomass.sld
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/styles/agb_biomass.sld
 
 layers:
   - type: raster_geotiff
     workspace: esosc
     store: carbon_above_ground_store
-    file_path: /opt/geoserver/local_data/rasters/Carbon_data/carbon_above.tif
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_above.tif
     default_style: above_ground_biomass
     srs: EPSG:3347

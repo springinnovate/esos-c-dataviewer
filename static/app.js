@@ -140,23 +140,23 @@ function wireMapClickForPixelStats() {
   }
 
   function renderResultCard({ title, body }) {
-    const pane = document.getElementById('widgetsPane')
-    const card = document.createElement('div')
-    card.className = 'widget'
-    card.innerHTML = `
-      <div class='widget-header'>
-        <span>${title}</span>
-        <button class='close-btn' title='Close'>&times;</button>
-      </div>
-      <pre class='widget-body'></pre>
-    `
-    card.querySelector('.widget-body').textContent = body
-    card.querySelector('.close-btn').addEventListener('click', () => card.remove())
-    pane.prepend(card)
-  }
-}
+      const pane = document.getElementById('widgetsPane')
+      const card = document.createElement('div')
+      card.className = 'widget'
+      card.innerHTML = `
+        <div class='widget-header'>
+          <span>${title}</span>
+          <button class='close-btn' title='Close'>&times;</button>
+        </div>
+        <pre class='widget-body'></pre>
+      `
+      card.querySelector('.widget-body').textContent = body
+      card.querySelector('.close-btn').addEventListener('click', () => card.remove())
+      pane.prepend(card)
+    }
+};
 
-;(async function main() {
+(async function main() {
   initMap()
   wireOpacity()
   wireWidgets()

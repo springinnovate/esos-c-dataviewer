@@ -26,10 +26,10 @@ layers:
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_below.tif
     default_style: above_ground_biomass
     srs: EPSG:3347
-#   - type: raster_geotiff
-#     workspace: esosc
-#     store: carbon_soil_ground_store
-#     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_soil.tif
-#     default_style: above_ground_biomass
-#     srs: EPSG:3347
+  - type: raster_geotiff
+    workspace: esosc
+    store: carbon_soil_ground_store
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_soil.tif
+    default_style: above_ground_biomass
+    srs: EPSG:3347
 

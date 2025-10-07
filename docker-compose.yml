@@ -1,7 +1,5 @@
 # docker-compose.yml
-# Local + Prod via profiles. Use: 
-#   Local: docker compose --profile local up -d
-#   Prod:  docker compose --profile prod up -d
+# docker compose up -d
 name: essosc-viewer
 
 volumes:
@@ -46,6 +44,27 @@ services:
       - traefik.http.routers.geoserver.entrypoints=web
       - traefik.http.services.geoserver.loadbalancer.server.port=8080
 
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.viewer
+    image: essosc-viewer:latest
+    container_name: essosc-viewer
+    restart: unless-stopped
+    environment:
+      - GEOSERVER_BASE_URL=/geoserver
+      - LAYERS_YAML_PATH=/app/layers.yml
+    volumes:
+      - ./layers.yml:/app/layers.yml:ro
+    networks: [backend]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.viewer.rule=Host(`localhost`) && PathPrefix(`/viewer`)
+      - traefik.http.routers.viewer.entrypoints=web
+      - traefik.http.services.viewer.loadbalancer.server.port=5173
+      - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
+      - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker
+
   geoserver-init:
     build:
       context: .
@@ -63,19 +82,3 @@ services:
       - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
-
-  viewer:
-    build:
-      context: .
-      dockerfile: Dockerfile.viewer
-    image: essosc-viewer:latest
-    container_name: essosc-viewer
-    restart: unless-stopped
-    environment:
-      - GEOSERVER_BASE_URL=/geoserver
-      - LAYERS_YAML_PATH=/app/layers.yml
-    volumes:
-      - ./layers.yml:/app/layers.yml:ro
-    networks: [backend]
-    ports:
-      - 5173:5173

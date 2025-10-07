@@ -142,64 +142,90 @@ class Gs:
             verify=False,
         )
 
+    def delete(self, path: str) -> requests.Response:
+        """Send a DELETE request to a GeoServer REST endpoint.
 
-def create_workspace_if_missing(
-    geoserver_client: Gs, name: str, make_default: bool
+        This method constructs a full GeoServer URL from the provided path and
+        issues an HTTP DELETE request using the configured authentication and
+        timeout.
+
+        Args:
+            path (str): The relative REST path to delete (e.g.,
+                '/rest/workspaces/example').
+
+        Returns:
+            requests.Response: The HTTP response object returned by the
+            GeoServer server.
+
+        Raises:
+            requests.RequestException: If the request fails due to a network
+        """
+        return requests.delete(
+            self._url(path), auth=self.auth, timeout=self.timeout, verify=False
+        )
+
+
+def recreate_workspace(
+    geoserver_client: Gs, workspace_name: str, make_default: bool
 ) -> None:
-    """Creates a GeoServer workspace if it does not already exist.
+    """Delete and recreate a GeoServer workspace.
 
-    This function checks whether a workspace with the specified name exists in the
-    GeoServer instance. If it does not exist, a new workspace is created. Optionally,
-    the workspace can be set as the default workspace for subsequent REST operations.
+    This forcibly deletes an existing workspace (with all contents)
+    and creates a new one, optionally making it the default.
 
     Args:
-        geoserver_client (Gs): An authenticated GeoServer REST client.
-        name (str): The name of the workspace to create.
-        namespace_uri (str, optional): The namespace URI associated with the workspace.
-            If not provided, GeoServer will assign one automatically. Defaults to None.
-        make_default (bool, optional): Whether to make this workspace the default
-            workspace in GeoServer. Defaults to False.
-
-    Raises:
-        RuntimeError: If the workspace creation request fails with a non-success status.
+        geoserver_client (Gs): Authenticated GeoServer REST client.
+        workspace_name (str): The workspace to delete and recreate.
+        make_default (bool, optional): Whether to make this the default
+            workspace after creation. Defaults to False.
     """
-    r = geoserver_client.get(f"/rest/workspaces/{name}.json")
-    if r.status_code == 200:
-        if make_default:
-            geoserver_client.put(
-                "/rest/workspaces/default.json", {"workspace": {"name": name}}
-            )
-        return
-    payload = {"workspace": {"name": name}}
-    payload["workspace"]["isolated"] = False
-    payload["workspace"]["namespace"] = {
-        "name": name,
-        "atom:link": [],
-    }
-    r = geoserver_client.post("/rest/workspaces", payload)
-    if r.status_code not in (200, 201):
+    # Delete if exists
+    delete_response = geoserver_client.delete(
+        f"/rest/workspaces/{workspace_name}?recurse=true"
+    )
+    if delete_response.status_code in (200, 202, 204, 404):
+        print(f"Deleted workspace '{workspace_name}' (if existed).", flush=True)
+    else:
         raise RuntimeError(
-            f"workspace create failed {name}: {r.status_code} {r.text}"
+            f"Failed to delete workspace {workspace_name}: "
+            f"{delete_response.status_code} {delete_response.text}"
         )
+
+    # (re) create
+    create_payload = {"workspace": {"name": workspace_name}}
+    create_response = geoserver_client.post("/rest/workspaces", create_payload)
+    if create_response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Workspace creation failed {workspace_name}: "
+            f"{create_response.status_code} {create_response.text}"
+        )
+
     if make_default:
-        geoserver_client.put(
-            "/rest/workspaces/default.json", {"workspace": {"name": name}}
+        default_resp = geoserver_client.put(
+            "/rest/workspaces/default.json",
+            {"workspace": {"name": workspace_name}},
         )
+        if default_resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to make {workspace_name} default: "
+                f"{default_resp.status_code} {default_resp.text}"
+            )
+
+    print(f"Workspace '{workspace_name}' (re)created successfully.", flush=True)
 
 
-def create_layer_if_not_exists(
+def create_layer(
     geoserver_client: Gs,
     workspace_name: str,
     geotiff_path: str,
     spatial_ref_system: str,
     default_style_name: str,
 ) -> str:
-    """Publishes a GeoTIFF as a new raster layer if it does not already exist.
+    """Publishes a GeoTIFF as a new raster layer.
 
     Registers a GeoTIFF file in GeoServer by creating a coverage store,
     defining the coverage (resource), and publishing it as a WMS/WCS layer
-    using the specified default style. If the layer already exists, no changes
-    are made.
+    using the specified default style.
 
     Args:
         geoserver_client (Gs): An authenticated GeoServer REST client.
@@ -218,22 +244,27 @@ def create_layer_if_not_exists(
         RuntimeError: If any REST API request for creating the store,
             coverage, or layer fails.
     """
+    # coverage is confusing but it's an internal metadata object that is
+    # created when a raster layer is created, so by creating a "coverage" you
+    # create a raster layer...
     coverage_name = Path(geotiff_path).stem
-    store_name = f"{coverage_name}_store"
 
-    # Create the coverage store
-    store_payload = {
+    # the store is where the data are 'stored' and a coveragestore is where
+    # raster data are stored
+    coveragestore_name = f"{coverage_name}_store"
+
+    coveragestore_payload = {
         "coverageStore": {
-            "name": store_name,
+            "name": coveragestore_name,
             "type": "GeoTIFF",
             "enabled": True,
             "workspace": workspace_name,
-            "url": f"file:{geotiff_path}",
+            "url": f"file://{geotiff_path}",
         }
     }
-
     store_response = geoserver_client.post(
-        f"/rest/workspaces/{workspace_name}/coveragestores", store_payload
+        f"/rest/workspaces/{workspace_name}/coveragestores",
+        coveragestore_payload,
     )
     if store_response.status_code not in (200, 201):
         raise RuntimeError(
@@ -253,7 +284,8 @@ def create_layer_if_not_exists(
     }
 
     coverage_response = geoserver_client.post(
-        f"/rest/workspaces/{workspace_name}/coveragestores/{store_name}/coverages",
+        f"/rest/workspaces/{workspace_name}/coveragestores"
+        f"/{coveragestore_name}/coverages",
         coverage_payload,
     )
     if coverage_response.status_code not in (200, 201):
@@ -276,7 +308,8 @@ def create_layer_if_not_exists(
     )
     if style_response.status_code not in (200, 201):
         raise RuntimeError(
-            f"Setting default style failed {workspace_name}:{coverage_name}:{default_style_name}: "
+            f"Setting default style failed "
+            f"{workspace_name}:{coverage_name}:{default_style_name}: "
             f"{style_response.status_code} {style_response.text}"
         )
 
@@ -426,7 +459,7 @@ def main():
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
 
     for workspace_def in config_data.get("workspaces", []):
-        create_workspace_if_missing(
+        recreate_workspace(
             geoserver_client,
             workspace_def["name"],
             workspace_def.get("default", False),
@@ -451,7 +484,7 @@ def main():
         file_path = layer_def["file_path"]
 
         if layer_type == "raster_geotiff":
-            create_layer_if_not_exists(
+            create_layer(
                 geoserver_client,
                 workspace_name,
                 file_path,
@@ -460,6 +493,7 @@ def main():
             )
         else:
             raise ValueError(f"Unknown layer type: {layer_type}")
+    print("all done")
 
 
 if __name__ == "__main__":

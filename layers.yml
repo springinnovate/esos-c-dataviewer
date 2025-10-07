@@ -1,5 +1,5 @@
 geoserver:
-  base_url: http://geoserver:8080/geoserver
+  base_url: ${GEOSERVER_INTERNAL_BASE_URL}
   user: ${GEOSERVER_ADMIN_USER}
   password: ${GEOSERVER_ADMIN_PASSWORD}
 
@@ -20,3 +20,16 @@ layers:
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_above.tif
     default_style: above_ground_biomass
     srs: EPSG:3347
+  - type: raster_geotiff
+    workspace: esosc
+    store: carbon_below_ground_store
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_below.tif
+    default_style: above_ground_biomass
+    srs: EPSG:3347
+  - type: raster_geotiff
+    workspace: esosc
+    store: carbon_soil_ground_store
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_soil.tif
+    default_style: above_ground_biomass
+    srs: EPSG:3347
+

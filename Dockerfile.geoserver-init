@@ -1,0 +1,16 @@
+# Dockerfile.geoserver-init
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install network utilities: curl, ping (iputils-ping), and optional wget
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl \
+      iputils-ping \
+      wget \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir requests pyyaml python-dotenv
+
+ENTRYPOINT ["python", "/app/geoserver_register.py"]

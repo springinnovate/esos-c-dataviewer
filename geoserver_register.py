@@ -474,7 +474,7 @@ def main():
             style_def["file_path"],
         )
 
-    for layer_def in config_data.get("layers", []):
+    for raster_id, layer_def in config_data.get("layers").items():
         print(f"Working on layer definition: {layer_def}")
 
         layer_type = layer_def["type"]

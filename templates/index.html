@@ -1,0 +1,49 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <title>ESSOSC Viewer</title>
+    <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />
+    <link rel='stylesheet' href='static/style.css' />
+    <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
+  </head>
+  <body>
+    <header>
+      <div class='brand'>ESSOSC Viewer</div>
+      <div class='controls'>
+        <label>
+          Layer
+          <select id='layerSelect'></select>
+        </label>
+        <label>
+          Opacity
+          <input id='opacityRange' type='range' min='0' max='1' step='0.05' value='1' />
+        </label>
+        <button id='addWidgetBtn'>+ Widget</button>
+      </div>
+    </header>
+
+    <main>
+      <aside id='widgetsPane'>
+        <!-- user widgets appear here -->
+      </aside>
+      <section id='map'></section>
+    </main>
+
+    <template id='widgetTemplate'>
+      <div class='widget'>
+        <div class='widget-header'>
+          <span class='widget-title'>Custom Widget</span>
+          <button class='close-btn' title='Remove'>&times;</button>
+        </div>
+        <div class='widget-body' contenteditable='true'>
+          <p>Edit this widget. You can paste HTML/JS (script tags allowed) if your browser CSP permits.</p>
+        </div>
+      </div>
+    </template>
+
+    <script src='static/app.js'></script>
+  </body>
+</html>

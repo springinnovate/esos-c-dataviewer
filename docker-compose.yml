@@ -12,6 +12,7 @@ networks:
 services:
   traefik:
     image: traefik:v3
+    container_name: traefik
     command:
       - --providers.docker
       - --entrypoints.web.address=:80
@@ -54,6 +55,7 @@ services:
     environment:
       - GEOSERVER_BASE_URL=/geoserver
       - LAYERS_YAML_PATH=/app/layers.yml
+      - RSTATS_BASE_URL=/raster-stats
     volumes:
       - ./layers.yml:/app/layers.yml:ro
     networks: [backend]
@@ -82,3 +84,26 @@ services:
       - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
+
+  raster-stats:
+    build:
+      context: .
+      dockerfile: Dockerfile.raster-stats
+    image: essosc-raster-stats:latest
+    container_name: essosc-raster-stats
+    restart: unless-stopped
+    environment:
+      - RASTERS_YAML_PATH=/app/layers.yml
+      - WORKERS=2
+    volumes:
+      - ./layers.yml:/app/layers.yml:ro
+      - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ./.env:/app/.env:ro
+    networks: [backend]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.raster-stats.rule=Host(`localhost`) && PathPrefix(`/raster-stats`)
+      - traefik.http.routers.raster-stats.entrypoints=web
+      - traefik.http.services.raster-stats.loadbalancer.server.port=8000
+      - traefik.http.middlewares.raster-stats-stripprefix.stripprefix.prefixes=/raster-stats
+      - traefik.http.routers.raster-stats.middlewares=raster-stats-stripprefix@docker

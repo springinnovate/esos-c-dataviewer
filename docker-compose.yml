@@ -9,15 +9,29 @@ volumes:
   traefik_letsencrypt:
 
 networks:
-  backend:
-  frontend:
+  backend: {}
 
 services:
+  traefik:
+    image: traefik:v3
+    command:
+      - --providers.docker
+      - --entrypoints.web.address=:80
+    ports:
+      - 80:80
+    networks: [backend]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
   geoserver:
-    # ${GEOSERVER_IMAGE} is in the .env file (not tracked/secret)
     image: ${GEOSERVER_IMAGE}
     container_name: geoserver
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/geoserver/web/ >/dev/null 2>&1 || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 20
     environment:
       - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
       - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
@@ -25,27 +39,12 @@ services:
     volumes:
       - ./geoserver_data_dir:${GEOSERVER_DATA_DIR}
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:8080/geoserver/web/']
-      interval: 15s
-      timeout: 5s
-      retries: 20
-    networks:
-      - backend
-      - frontend
-    ports:
-      - target: 8080
-        published: ${GEOSERVER_LOCAL_PORT}
-        protocol: tcp
-        mode: host
-    profiles: ['local', 'prod']
+    networks: [backend]
     labels:
-      # Traefik routing (only active when traefik is running in prod)
-      - 'traefik.enable=true'
-      - 'traefik.http.routers.geoserver.rule=Host(`${GEOSERVER_HOST}`)'
-      - 'traefik.http.routers.geoserver.entrypoints=websecure'
-      - 'traefik.http.routers.geoserver.tls.certresolver=letsencrypt'
-      - 'traefik.http.services.geoserver.loadbalancer.server.port=8080'
+      - traefik.enable=true
+      - traefik.http.routers.geoserver.rule=Host(`localhost`) && PathPrefix(`/geoserver`)
+      - traefik.http.routers.geoserver.entrypoints=web
+      - traefik.http.services.geoserver.loadbalancer.server.port=8080
 
   geoserver-init:
     build:
@@ -61,30 +60,22 @@ services:
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
       - ./layers.yml:/app/layers.yml:ro
+      - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
-    profiles: ['local', 'prod']
 
-  traefik:
-    image: traefik:v3.1
-    container_name: traefik
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.viewer
+    image: essosc-viewer:latest
+    container_name: essosc-viewer
     restart: unless-stopped
-    command:
-      - '--providers.docker=true'
-      - '--providers.docker.exposedbydefault=false'
-      - '--entrypoints.web.address=:80'
-      - '--entrypoints.websecure.address=:443'
-      - '--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}'
-      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
-      - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
-      - '--api.dashboard=${TRAEFIK_DASHBOARD}'
-    ports:
-      - '80:80'
-      - '443:443'
-      # enable if using dashboard: - '8088:8080'
+    environment:
+      - GEOSERVER_BASE_URL=/geoserver
+      - LAYERS_YAML_PATH=/app/layers.yml
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_letsencrypt:/letsencrypt
-    networks:
-      - frontend
-    profiles: ['prod']
+      - ./layers.yml:/app/layers.yml:ro
+    networks: [backend]
+    ports:
+      - 5173:5173

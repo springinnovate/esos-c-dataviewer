@@ -1,0 +1,11 @@
+# Dockerfile.geoserver-init, used to push the layers/styles etc to the geoserver
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iputils-ping wget curl ca-certificates netcat-openbsd \
+    && pip install --no-cache-dir requests pyyaml python-dotenv
+
+COPY geoserver_register.py layers.yml .env ./
+ENTRYPOINT ["python", "geoserver_register.py"]

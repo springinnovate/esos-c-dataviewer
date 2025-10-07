@@ -144,7 +144,7 @@ class Gs:
 
 
 def create_workspace_if_missing(
-    geoserver_client: Gs, name: str, namespace_uri: str, make_default: bool
+    geoserver_client: Gs, name: str, make_default: bool
 ) -> None:
     """Creates a GeoServer workspace if it does not already exist.
 
@@ -175,7 +175,6 @@ def create_workspace_if_missing(
     payload["workspace"]["namespace"] = {
         "name": name,
         "atom:link": [],
-        "href": namespace_uri,
     }
     r = geoserver_client.post("/rest/workspaces", payload)
     if r.status_code not in (200, 201):
@@ -417,7 +416,6 @@ def main():
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_password = config_data["geoserver"]["password"]
-    default_workspace = config_data["geoserver"].get("default_workspace")
 
     timeout_seconds = 30
     geoserver_client = Gs(
@@ -427,14 +425,10 @@ def main():
     seconds_to_wait_for_geoserver_start = 420
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
 
-    if default_workspace:
-        create_workspace_if_missing(geoserver_client, default_workspace)
-
     for workspace_def in config_data.get("workspaces", []):
         create_workspace_if_missing(
             geoserver_client,
             workspace_def["name"],
-            workspace_def.get("namespace_uri"),
             workspace_def.get("default", False),
         )
 

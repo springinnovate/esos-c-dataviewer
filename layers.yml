@@ -2,7 +2,6 @@ geoserver:
   base_url: http://geoserver:8080/geoserver
   user: ${GEOSERVER_ADMIN_USER}
   password: ${GEOSERVER_ADMIN_PASSWORD}
-  default_workspace: esosc
 
 workspaces:
   - name: esosc

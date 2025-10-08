@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Tuple
 
 import numpy as np
 import rasterio
@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from rasterio.features import geometry_mask
 from rasterio.transform import rowcol
+from rasterio.windows import from_bounds, Window
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
 from pyproj import Transformer
@@ -29,6 +30,26 @@ class PixelStatsIn(BaseModel):
     lon: float
     lat: float
     crs: str = Field(default="EPSG:4326")  # incoming coordinates
+
+
+class PixelWindowStatsIn(BaseModel):
+    raster_id: str
+    lon: float
+    lat: float
+    crs: str = Field(default="EPSG:4326")
+
+    # one of: radius in pixels around the center, or a bbox in input CRS units
+    radius_pixels: Optional[int] = Field(default=None, ge=0)
+    bbox: Optional[Tuple[float, float, float, float]] = Field(
+        default=None,
+        description='minx, miny, maxx, maxy in the same CRS as "crs"',
+    )
+
+    # histogram controls
+    histogram_bins: int = Field(default=16, ge=1)
+    histogram_range: Optional[Tuple[float, float]] = (
+        None  # min,max or None to auto
+    )
 
 
 class GeometryStatsIn(BaseModel):
@@ -52,6 +73,15 @@ class StatsOut(BaseModel):
     nodata: Optional[float] = None
     pixel: Optional[dict] = None
     geometry: Optional[dict] = None
+
+
+class WindowStatsOut(BaseModel):
+    raster_id: str
+    window: Dict[str, Any]
+    nodata: Optional[float] = None
+    units: Optional[str] = None
+    stats: Dict[str, Any]
+    histogram: Dict[str, Any]
 
 
 def _load_registry() -> dict:
@@ -99,6 +129,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _compute_window(
+    ds: rasterio.io.DatasetReader,
+    x: float,
+    y: float,
+    r: int,
+    c: int,
+    radius_pixels: Optional[int],
+    bbox_raster_crs: Optional[Tuple[float, float, float, float]],
+) -> Window:
+    if bbox_raster_crs is not None:
+        minx, miny, maxx, maxy = bbox_raster_crs
+        return (
+            from_bounds(minx, miny, maxx, maxy, transform=ds.transform)
+            .round_offsets()
+            .round_lengths()
+        )
+    # center + radius in pixel space (inclusive)
+    rp = max(0, r - (radius_pixels or 0))
+    cp = max(0, c - (radius_pixels or 0))
+    rh = min(ds.height, r + (radius_pixels or 0) + 1)
+    cw = min(ds.width, c + (radius_pixels or 0) + 1)
+    height = rh - rp
+    width = cw - cp
+    return Window(cp, rp, width, height)
+
+
+def _area_per_pixel_m2(ds: rasterio.io.DatasetReader) -> Optional[float]:
+    # projected CRS only: area = |a * e| where a=px width, e=px height (note: e is negative for north-up)
+    try:
+        crsproj = ds.crs and ds.crs.is_projected
+    except Exception:
+        crsproj = False
+    if not crsproj:
+        return None
+    a = ds.transform.a
+    e = ds.transform.e
+    if a == 0 or e == 0:
+        return None
+    return abs(a * e)
 
 
 @app.get("/health")
@@ -150,11 +221,114 @@ def pixel_stats(q: PixelStatsIn):
         raise
 
 
+@app.post("/stats/pixel", response_model=WindowStatsOut)
+def pixel_stats(q: PixelWindowStatsIn):
+    ds, nodata, units = _open_raster(q.raster_id)
+
+    # reproject center point to raster CRS if needed
+    if q.crs != ds.crs.to_string():
+        transformer = Transformer.from_crs(q.crs, ds.crs, always_xy=True)
+        x, y = transformer.transform(q.lon, q.lat)
+    else:
+        x, y = q.lon, q.lat
+
+    r, c = rowcol(ds.transform, x, y, op=round)
+    if not (0 <= r < ds.height and 0 <= c < ds.width):
+        raise HTTPException(
+            status_code=400, detail="point outside raster extent"
+        )
+
+    # optional bbox: reproject bbox corners to raster CRS
+    bbox_raster = None
+    if q.bbox is not None:
+        minx, miny, maxx, maxy = q.bbox
+        if q.crs != ds.crs.to_string():
+            transformer = Transformer.from_crs(q.crs, ds.crs, always_xy=True)
+            bx = box(minx, miny, maxx, maxy)
+            minx, miny = transformer.transform(bx.bounds[0], bx.bounds[1])
+            maxx, maxy = transformer.transform(bx.bounds[2], bx.bounds[3])
+        bbox_raster = (minx, miny, maxx, maxy)
+
+    win = _compute_window(ds, x, y, r, c, q.radius_pixels, bbox_raster)
+    win = (
+        win.intersection(Window(0, 0, ds.width, ds.height))
+        .round_offsets()
+        .round_lengths()
+    )
+    if win.width <= 0 or win.height <= 0:
+        raise HTTPException(status_code=400, detail="empty window")
+
+    arr = ds.read(1, window=win, masked=False).astype("float64")
+    mask = np.zeros_like(arr, dtype=bool)
+    if nodata is not None:
+        mask |= np.isclose(arr, nodata)
+    mask |= ~np.isfinite(arr)
+
+    vals = arr[~mask]
+    count_valid = int(vals.size)
+    count_all = int(arr.size)
+
+    if count_valid == 0:
+        stats = {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "median": None,
+            "std": None,
+            "full_area_m2": None,
+            "non_nodata_area_m2": None,
+        }
+        histogram = {"hist": [], "bin_edges": [], "count": 0}
+    else:
+        stats = {
+            "count": count_valid,
+            "min": float(np.min(vals)),
+            "max": float(np.max(vals)),
+            "mean": float(np.mean(vals)),
+            "median": float(np.median(vals)),
+            "std": float(np.std(vals, ddof=1) if count_valid > 1 else 0.0),
+        }
+        bins = q.histogram_bins or 16
+        rng = q.histogram_range
+        hist, bin_edges = np.histogram(vals, bins=bins, range=rng)
+        histogram = {
+            "hist": hist.tolist(),
+            "bin_edges": bin_edges.tolist(),
+            "count": count_valid,
+        }
+
+        px_area = _area_per_pixel_m2(ds)
+        if px_area is not None:
+            stats["full_area_m2"] = float(px_area * count_all)
+            stats["non_nodata_area_m2"] = float(px_area * count_valid)
+        else:
+            stats["full_area_m2"] = None
+            stats["non_nodata_area_m2"] = None
+
+    out = WindowStatsOut(
+        raster_id=q.raster_id,
+        window={
+            "col_off": int(win.col_off),
+            "row_off": int(win.row_off),
+            "width": int(win.width),
+            "height": int(win.height),
+            "center_pixel": {"row": int(r), "col": int(c)},
+        },
+        nodata=nodata if nodata is not None else None,
+        units=units,
+        stats=stats,
+        histogram=histogram,
+    )
+    return out
+
+
 @app.post("/stats/geometry", response_model=StatsOut)
 def geometry_stats(q: GeometryStatsIn):
     ds, nodata, units = _open_raster(q.raster_id)
 
     geom = shape(q.geometry)
+    print(f"this is the geom: {geom}", flush=True)
 
     # Reproject geometry to raster CRS if needed
     if q.from_crs != ds.crs.to_string():
@@ -163,65 +337,127 @@ def geometry_stats(q: GeometryStatsIn):
             lambda x, y, z=None: transformer.transform(x, y), geom
         )
 
-    # Window the raster to geometry bounds for efficiency
-    window = rasterio.windows.from_bounds(*geom.bounds, transform=ds.transform)
-    data = ds.read(1, window=window, masked=False)
+    # --- safe window builder (avoids zero-sized windows) ---
+    def _safe_window_for_geom(dataset, g):
+        b = g.bounds
+        w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
+        w = w.round_offsets().round_lengths()
+        w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+
+        if int(w.width) > 0 and int(w.height) > 0:
+            return w
+
+        # pad by half a pixel and retry
+        xres, yres = map(abs, dataset.res)
+        bpad = (
+            b[0] - 0.5 * xres,
+            b[1] - 0.5 * yres,
+            b[2] + 0.5 * xres,
+            b[3] + 0.5 * yres,
+        )
+        w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
+        w = w.round_offsets().round_lengths()
+        w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+
+        # fallback: centroid pixel
+        if int(w.width) == 0 or int(w.height) == 0:
+            cx, cy = g.centroid.x, g.centroid.y
+            rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
+            rr = min(max(rr, 0), dataset.height - 1)
+            cc = min(max(cc, 0), dataset.width - 1)
+            w = Window(cc, rr, 1, 1)
+
+        return w
+
+    # Window the raster to geometry bounds
+    print(f"here are the raster bounds: {geom.bounds}")
+    window = _safe_window_for_geom(ds, geom)
+    data = ds.read(1, window=window, boundless=True, masked=False)
+    if data.size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty read window (geometry outside raster).",
+        )
+    print(
+        f"window (col_off,row_off,width,height): {window.col_off:.2f},{window.row_off:.2f},{window.width:.2f},{window.height:.2f}",
+        flush=True,
+    )
 
     # Build geometry mask in the window’s transform
     window_transform = ds.window_transform(window)
+    print(f"here's the window transform: {window_transform}")
     mask = geometry_mask(
         [mapping(geom)],
         transform=window_transform,
         invert=True,
         out_shape=data.shape,
+        all_touched=False,
     )
 
-    # Apply mask
-    masked = np.where(mask, data, np.nan).astype("float64")
+    # Apply mask + nodata
+    arr = data.astype("float64", copy=False)
     if nodata is not None:
-        masked = np.where(np.isclose(masked, nodata), np.nan, masked)
+        arr = np.where(np.isclose(arr, nodata), np.nan, arr)
+    # keep only pixels inside polygon
+    arr = np.where(mask, arr, np.nan)
 
-    vals = masked[~np.isnan(masked)]
-    stats = {}
-
-    if vals.size == 0:
-        stats = {"count": 0}
-    else:
-        if q.reducer in ("mean", "sum", "min", "max", "std", "median"):
-            if q.reducer == "mean":
-                stats["mean"] = float(np.mean(vals))
-            elif q.reducer == "sum":
-                stats["sum"] = float(np.sum(vals))
-            elif q.reducer == "min":
-                stats["min"] = float(np.min(vals))
-            elif q.reducer == "max":
-                stats["max"] = float(np.max(vals))
-            elif q.reducer == "std":
-                stats["std"] = float(
-                    np.std(vals, ddof=1) if vals.size > 1 else 0.0
-                )
-            elif q.reducer == "median":
-                stats["median"] = float(np.median(vals))
-            stats["count"] = int(vals.size)
-        elif q.reducer == "histogram":
-            bins = q.histogram_bins or 16
-            rng = q.histogram_range
-            hist, bin_edges = np.histogram(vals, bins=bins, range=rng)
-            stats = {
-                "hist": hist.tolist(),
-                "bin_edges": bin_edges.tolist(),
-                "count": int(vals.size),
+    # Stats over valid (finite) values
+    vals = arr[np.isfinite(arr)]
+    stats = {
+        "count": int(vals.size),
+        "min": None,
+        "max": None,
+        "mean": None,
+        "median": None,
+        "sum": None,
+        "std": None,
+        "hist": None,
+        "bin_edges": None,
+    }
+    if vals.size > 0:
+        stats.update(
+            {
+                "min": float(np.min(vals)),
+                "max": float(np.max(vals)),
+                "mean": float(np.mean(vals)),
+                "median": float(np.median(vals)),
+                "sum": float(np.sum(vals)),
+                "std": float(np.std(vals, ddof=1) if vals.size > 1 else 0.0),
             }
-        else:
-            raise HTTPException(
-                status_code=400, detail=f"unknown reducer: {q.reducer}"
-            )
+        )
+        # histogram (auto range, 16 bins)
+        hist, bin_edges = np.histogram(vals, bins=16)
+        stats["hist"] = hist.tolist()
+        stats["bin_edges"] = bin_edges.tolist()
+
+    # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree²")
+    # pixel area from affine determinant (handles rotations too)
+    det = ds.transform.a * ds.transform.e - ds.transform.b * ds.transform.d
+    pixel_area = abs(det)
+    total_mask_pixels = int(np.count_nonzero(mask))
+    valid_pixels = int(np.count_nonzero(np.isfinite(arr)))
+    nodata_pixels = total_mask_pixels - valid_pixels
+
+    area_stats = {
+        "pixel_area": pixel_area,  # m² per pixel if CRS in meters
+        "window_mask_pixels": total_mask_pixels,
+        "valid_pixels": valid_pixels,
+        "nodata_pixels": nodata_pixels,
+        "window_mask_area_m2": float(total_mask_pixels * pixel_area),
+        "valid_area_m2": float(valid_pixels * pixel_area),
+        "nodata_area_m2": float(nodata_pixels * pixel_area),
+        "coverage_ratio": (
+            float(valid_pixels / total_mask_pixels)
+            if total_mask_pixels
+            else 0.0
+        ),
+    }
+    stats.update(area_stats)
 
     return StatsOut(
         raster_id=q.raster_id,
-        reducer=q.reducer,
         stats=stats,
-        nodata=nodata if nodata is not None else None,
+        nodata=(None if nodata is None else nodata),
         units=units,
         geometry=q.geometry,
     )

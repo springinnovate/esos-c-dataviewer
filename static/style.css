@@ -19,47 +19,52 @@ header {
 .brand { font-weight: 700; color: var(--brand); }
 .controls { display: flex; gap: 10px; align-items: center; }
 label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
-select, input[type='range'], button {
+select, input[type='range'], input[type='number'] {
   background: #0d1016; color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 8px; font-size: 14px;
 }
-button:hover { border-color: var(--brand); }
 
-main { display: grid; grid-template-columns: 320px 1fr; height: calc(100% - 52px); }
-#widgetsPane { background: var(--panel); border-right: 1px solid var(--border); padding: 10px; overflow: auto; }
-#map { height: 100%; width: 100%; }
+main { height: calc(100% - 52px); }
+#map { position: relative; height: 100%; width: 100%; }
 
-.widget { background: #11151c; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
-.widget-title { color: var(--accent); font-weight: 600; }
-.close-btn { background: transparent; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
-
-
-.widget {
-  max-width: 100%;
-  box-sizing: border-box;
+/* Floating overlay in the upper-left of the map */
+.overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1000; /* above Leaflet tiles */
+  width: min(480px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  background: rgba(17, 21, 28, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid #ccc;
+  overflow: hidden;
 }
+.hidden { display: none; }
 
-.widget-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-
-.widget-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.overlay-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  background: rgba(24, 27, 34, 0.98);
+  font-weight: 600; color: var(--accent);
 }
+#overlayClose {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer; padding: 2px 6px;
+}
+#overlayClose:hover { color: var(--fg); }
 
-.widget-body { padding: 10px; min-height: 80px; color: var(--fg); }
-.widget-body {
-  /* keep newlines, allow wrapping */
+.overlay-body {
+  padding: 10px;
+  overflow: auto;
+  color: var(--fg);
+}
+.overlay-body pre {
+  margin: 0 0 8px 0;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;        /* wrap long tokens/URLs */
-  word-break: break-word;         /* fallback for older browsers */
-  max-width: 100%;
-  max-height: 220px;              /* adjust as needed */
-  overflow: auto;                 /* scroll if still too large */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }

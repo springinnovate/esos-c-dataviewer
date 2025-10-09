@@ -2,34 +2,137 @@ geoserver:
   base_url: ${GEOSERVER_INTERNAL_BASE_URL}
   user: ${GEOSERVER_ADMIN_USER}
   password: ${GEOSERVER_ADMIN_PASSWORD}
-
 workspaces:
-  - name: esosc
-    default: true
-
-styles:
-  - name: above_ground_biomass
-    workspace: esosc
-    format: sld
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/styles/agb_biomass.sld
-
+- name: esosc
+  default: true
+styles: []
 layers:
-  - type: raster_geotiff
-    workspace: esosc
-    store: carbon_above_ground_store
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_above.tif
-    default_style: above_ground_biomass
-    srs: EPSG:3347
-  - type: raster_geotiff
-    workspace: esosc
-    store: carbon_below_ground_store
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_below.tif
-    default_style: above_ground_biomass
-    srs: EPSG:3347
-  - type: raster_geotiff
-    workspace: esosc
-    store: carbon_soil_ground_store
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/Carbon_data/carbon_soil.tif
-    default_style: above_ground_biomass
-    srs: EPSG:3347
-
+  carbon_above:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/carbon_above.tif
+  carbon_below:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/carbon_below.tif
+  carbon_soil:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/carbon_soil.tif
+  epf_gap:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/epf_gap.tif
+  epf_natural_habitats:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/epf_natural_habitats.tif
+  farmersincome_gap:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/farmersincome_gap.tif
+  farmersincome_natural_habitats:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/farmersincome_natural_habitats.tif
+  landcarbon_ca:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/landcarbon_ca.tif
+  landscan_ca:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/landscan_ca.tif
+  nature_landcarbon_ca:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/nature_landcarbon_ca.tif
+  poldep_cropproduction_tons_Beans:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Beans.tiff
+  poldep_cropproduction_tons_Berries:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Berries.tiff
+  poldep_cropproduction_tons_Blueberry:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Blueberry.tiff
+  poldep_cropproduction_tons_Borage:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Borage.tiff
+  poldep_cropproduction_tons_Camelina:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Camelina.tiff
+  poldep_cropproduction_tons_Canola_rapeseed:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Canola_rapeseed.tiff
+  poldep_cropproduction_tons_Cranberry:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Cranberry.tiff
+  poldep_cropproduction_tons_Fababeans:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Fababeans.tiff
+  poldep_cropproduction_tons_Flaxseed:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Flaxseed.tiff
+  poldep_cropproduction_tons_Fruits:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Fruits.tiff
+  poldep_cropproduction_tons_Mustard:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Mustard.tiff
+  poldep_cropproduction_tons_Oilseeds:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Oilseeds.tiff
+  poldep_cropproduction_tons_Orchards:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Orchards.tiff
+  poldep_cropproduction_tons_Other berry:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Other
+      berry.tiff
+  poldep_cropproduction_tons_Other fruits:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Other
+      fruits.tiff
+  poldep_cropproduction_tons_Other pulses:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Other
+      pulses.tiff
+  poldep_cropproduction_tons_Peas:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Peas.tiff
+  poldep_cropproduction_tons_Pulses:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Pulses.tiff
+  poldep_cropproduction_tons_Safflower:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Safflower.tiff
+  poldep_cropproduction_tons_Soybeans:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Soybeans.tiff
+  poldep_cropproduction_tons_Sunflower:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Sunflower.tiff
+  poldep_cropproduction_tons_Tomatoes:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Tomatoes.tiff
+  poldep_cropproduction_tons_Vegetables:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/poldep_cropproduction_tons_Vegetables.tiff
+  prr_perpixel:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/prr_perpixel.tif
+  recreation_capacity_std:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/recreation_capacity_std.tif
+  runoff_proxy_ca:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/runoff_proxy_ca.tif
+  water_capacity_std:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/water_capacity_std.tif
+  water_demand_std:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/water_demand_std.tif
+  water_provision_std-001:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/water_provision_std-001.tif
+  wpnp_sum_DFE_mcg:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/wpnp_sum_DFE_mcg.tiff
+  wpnp_sum_KJ_kJ:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/wpnp_sum_KJ_kJ.tiff
+  wpnp_sum_RAE_mcg:
+    type: raster_geotiff
+    file_path: C:/Users/richp/repositories/esos-c-dataviewer/local_data/rasters/tmp/wpnp_sum_RAE_mcg.tiff

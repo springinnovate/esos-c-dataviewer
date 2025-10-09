@@ -32,14 +32,11 @@ def crs_to_srs(crs):
 def build_layer_entry(
     path: Path,
     base_dir: Path,
-    workspace: str,
-    store_suffix: str,
     raster_type: str,
     default_style: str | None,
     path_mode: str,
 ):
     stem = path.stem
-    store = f"{stem}{store_suffix}"
     if path_mode == "relative":
         try:
             file_path = str(path.relative_to(base_dir))
@@ -48,22 +45,11 @@ def build_layer_entry(
     else:
         file_path = str(path)
 
-    srs = None
-    try:
-        with rasterio.open(path) as ds:
-            srs = crs_to_srs(ds.crs)
-    except Exception as e:
-        print(f"warn: failed to read CRS from {path}: {e}", file=sys.stderr)
-
     entry = {}
     entry["type"] = raster_type
-    entry["workspace"] = workspace
-    entry["store"] = store
-    entry["file_path"] = file_path
+    entry["file_path"] = Path(file_path).as_posix()
     if default_style:
         entry["default_style"] = default_style
-    if srs:
-        entry["srs"] = srs
     return stem, entry
 
 
@@ -139,8 +125,6 @@ def main():
         key, entry = build_layer_entry(
             path=tif,
             base_dir=root,
-            workspace=args.workspace,
-            store_suffix=args.store_suffix,
             raster_type=args.raster_type,
             default_style=args.default_style,
             path_mode=args.path_mode,

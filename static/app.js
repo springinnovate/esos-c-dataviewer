@@ -60,7 +60,6 @@ function _ensureOutlineLayer() {
     fill: false,
     interactive: false,
   })
-  // do not add yet; added on first update
   return state.outlineLayer
 }
 
@@ -235,7 +234,7 @@ async function fetchGeometryStats(rasterId, geojson) {
   return res.json()
 }
 
-function () {
+function wireOverlayClose() {
   const btn = document.getElementById('overlayClose')
   btn.addEventListener('click', (e) => {
     e.preventDefault()
@@ -258,15 +257,40 @@ function showOverlayError(msg) {
   body.innerHTML = `<pre>${msg}</pre>`
 }
 
+function _zoomToOutline(centerLng, centerLat) {
+  if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
+    const b = state.outlineLayer.getBounds()
+    if (b && b.isValid()) {
+      state.map.fitBounds(b, { padding: [24, 24] })
+      return
+    }
+  }
+  state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
+}
+
 function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsObj, units }) {
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
   overlay.classList.remove('hidden')
 
   const s = statsObj || {}
+
+  // clickable "Center" row
+  const centerRow = document.createElement('div')
+  centerRow.className = 'overlay-row'
+  const centerBtn = document.createElement('button')
+  centerBtn.className = 'link-btn'
+  centerBtn.type = 'button'
+  centerBtn.textContent = `Center: ${centerLng.toFixed(6)}, ${centerLat.toFixed(6)}`
+  centerBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    _zoomToOutline(centerLng, centerLat)
+  })
+  centerRow.appendChild(centerBtn)
+
   const lines = [
     `Layer: ${rasterId}`,
-    `Center: ${centerLng.toFixed(6)}, ${centerLat.toFixed(6)}`,
     `Box size: ${boxKm} km`,
     '',
     `Count: ${s.count ?? 0}`,
@@ -290,6 +314,7 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
   pre.textContent = lines.join('\n')
 
   body.innerHTML = ''
+  body.appendChild(centerRow)
   body.appendChild(pre)
 
   if (Array.isArray(s.hist) && Array.isArray(s.bin_edges) && s.hist.length > 0 && s.bin_edges.length === s.hist.length + 1) {
@@ -317,16 +342,19 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
 }
 
 function buildHistogramSVG(hist, binEdges, opts = {}) {
-  const width = opts.width ?? 360
-  const height = opts.height ?? 120
-  const pad = opts.pad ?? 28
+  const width = opts.width ?? 420
+  const height = opts.height ?? 140
+  const pad = opts.pad ?? 30
   const w = width, h = height
-  const innerW = w - pad * 2
-  const innerH = h - pad * 2
+  const innerW = Math.max(1, w - pad * 2)
+  const innerH = Math.max(1, h - pad * 2)
 
-  const maxCount = Math.max(1, ...hist)
-  const bins = hist.length
-  const barW = innerW / bins
+  // Guard: coerce counts to non-negative numbers
+  const counts = Array.from(hist, v => Math.max(0, Number(v) || 0))
+  const maxCount = Math.max(0, ...counts)
+
+  const bins = counts.length
+  const barW = innerW / Math.max(1, bins)
 
   const svgNS = 'http://www.w3.org/2000/svg'
   const svg = document.createElementNS(svgNS, 'svg')
@@ -334,40 +362,40 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   svg.setAttribute('height', String(h))
   svg.style.background = '#11151c'
 
+  // Axes
   const axisColor = '#666'
-  const xAxis = document.createElementNS(svgNS, 'line')
-  xAxis.setAttribute('x1', String(pad))
-  xAxis.setAttribute('y1', String(h - pad))
-  xAxis.setAttribute('x2', String(w - pad))
-  xAxis.setAttribute('y2', String(h - pad))
-  xAxis.setAttribute('stroke', axisColor)
-  xAxis.setAttribute('stroke-width', '1')
-  svg.appendChild(xAxis)
+  const mkLine = (x1, y1, x2, y2) => {
+    const Ln = document.createElementNS(svgNS, 'line')
+    Ln.setAttribute('x1', x1); Ln.setAttribute('y1', y1)
+    Ln.setAttribute('x2', x2); Ln.setAttribute('y2', y2)
+    Ln.setAttribute('stroke', axisColor)
+    Ln.setAttribute('stroke-width', '1')
+    return Ln
+  }
+  svg.appendChild(mkLine(String(pad), String(h - pad), String(w - pad), String(h - pad)))
+  svg.appendChild(mkLine(String(pad), String(pad), String(pad), String(h - pad)))
 
-  const yAxis = document.createElementNS(svgNS, 'line')
-  yAxis.setAttribute('x1', String(pad))
-  yAxis.setAttribute('y1', String(pad))
-  yAxis.setAttribute('x2', String(pad))
-  yAxis.setAttribute('y2', String(h - pad))
-  yAxis.setAttribute('stroke', axisColor)
-  yAxis.setAttribute('stroke-width', '1')
-  svg.appendChild(yAxis)
-
+  // Bars
   for (let i = 0; i < bins; i++) {
-    const v = hist[i]
-    const barH = (v / maxCount) * innerH
+    const v = counts[i]
+    const barH = maxCount > 0 ? (v / maxCount) * innerH : 0
+    const safeH = Math.max( (v > 0 ? 1 : 0), barH )  // ensure at least 1px when v>0
     const x = pad + i * barW + 1
-    const y = h - pad - barH
+    const y = h - pad - safeH
+
     const rect = document.createElementNS(svgNS, 'rect')
     rect.setAttribute('x', String(x))
     rect.setAttribute('y', String(y))
     rect.setAttribute('width', String(Math.max(0, barW - 2)))
-    rect.setAttribute('height', String(Math.max(0, barH)))
-    rect.setAttribute('fill', '#1e90ff')
-    rect.setAttribute('opacity', '0.85')
+    rect.setAttribute('height', String(Math.max(0, safeH)))
+    rect.setAttribute('fill', '#1e90ff')          // explicit fill
+    rect.setAttribute('opacity', '0.9')
+    rect.setAttribute('stroke', '#0c63b8')        // outline for contrast
+    rect.setAttribute('stroke-width', '0.5')
     svg.appendChild(rect)
   }
 
+  // Y ticks (0, max)
   const mkText = (str, x, y) => {
     const t = document.createElementNS(svgNS, 'text')
     t.setAttribute('x', String(x))
@@ -384,7 +412,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   return svg
 }
 
-/* -------- bootstrap -------- */
 ;(async function main() {
   initMap()
   wireOpacity()

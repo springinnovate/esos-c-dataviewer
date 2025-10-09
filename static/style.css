@@ -42,7 +42,7 @@ main { height: calc(100% - 52px); }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  pointer-events: : auto;
+  pointer-events: auto;
 }
 .overlay.hidden { display: none; pointer-events: none; }
 .hidden { display: none; }
@@ -70,3 +70,19 @@ main { height: calc(100% - 52px); }
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+
+.overlay-row { margin-bottom: 6px; }
+.overlay-row .link-btn {
+  background: transparent;
+  border: none;
+  color: #5dd3ff;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+.link-btn:hover { color: #b5ecff; }
+
+.overlay-body svg rect { fill: #1e90ff !important; }
+.overlay-body svg text { fill: #aaa !important; }

@@ -200,18 +200,37 @@ def generate_dynamic_sld(
 
     _log.info("Building ColorMap entries...")
     entries = []
+
+    # Collect all entries as (quantity, xml_string) tuples
     if nodata is not None and np.isfinite(nodata):
         entries.append(
-            f'              <ColorMapEntry color="#000000" quantity="{nodata}" label="NoData" opacity="0.0"/>'
+            (
+                float(nodata),
+                f'              <ColorMapEntry color="#000000" quantity="{nodata}" label="NoData" opacity="0.0"/>',
+            )
         )
+
     for c, q in zip(colors, quantities):
         entries.append(
-            f'              <ColorMapEntry color="{c}" quantity="{q}" label="{_lbl(q)}" opacity="1.0"/>'
+            (
+                float(q),
+                f'              <ColorMapEntry color="{c}" quantity="{q}" label="{_lbl(q)}" opacity="1.0"/>',
+            )
         )
+
     beyond = qmax_n + (qmax_n - qmin_n) * 0.01
     entries.append(
-        f'              <ColorMapEntry color="{colors[-1]}" quantity="{beyond}" opacity="0.0"/>'
+        (
+            float(beyond),
+            f'              <ColorMapEntry color="{colors[-1]}" quantity="{beyond}" opacity="0.0"/>',
+        )
     )
+
+    # Sort by numeric quantity ascending before writing XML
+    entries.sort(key=lambda x: x[0])
+
+    # Keep only the XML strings
+    entries = [xml for _, xml in entries]
     _log.debug("ColorMap entries built: %d", len(entries))
 
     layer_name = raster_path.stem

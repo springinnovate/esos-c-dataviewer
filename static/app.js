@@ -7,10 +7,10 @@ const state = {
   wmsLayer: null,
   layers: [],
   activeLayerIdx: 0,
-
   hoverRect: null,
   boxSizeKm: 10,
   lastMouseLatLng: null,
+  outlineLayer: null,
 }
 
 async function loadConfig() {
@@ -46,6 +46,35 @@ function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
   const sw = crs.unproject(L.point(p.x - halfSizeM, p.y - halfSizeM))
   const ne = crs.unproject(L.point(p.x + halfSizeM, p.y + halfSizeM))
   return L.latLngBounds(sw, ne)
+}
+
+function _latlngsFromPoly(polyGeoJSON) {
+  return polyGeoJSON.geometry.coordinates[0].map(([lng, lat]) => [lat, lng])
+}
+
+function _ensureOutlineLayer() {
+  if (state.outlineLayer) return state.outlineLayer
+  state.outlineLayer = L.polygon([], {
+    color: '#1e90ff',
+    weight: 2,
+    fill: false,
+    interactive: false,
+  })
+  // do not add yet; added on first update
+  return state.outlineLayer
+}
+
+function _updateOutline(polyGeoJSON) {
+  const latlngs = _latlngsFromPoly(polyGeoJSON)
+  const layer = _ensureOutlineLayer()
+  layer.setLatLngs(latlngs)
+  if (!state.map.hasLayer(layer)) layer.addTo(state.map)
+}
+
+function _hideOutline() {
+  if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
+    state.map.removeLayer(state.outlineLayer)
+  }
 }
 
 function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
@@ -154,6 +183,7 @@ function onLayerChange(e) {
   // close the stats window if open
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
+  _hideOutline()
 }
 
 function wireOpacity() {
@@ -170,14 +200,7 @@ function wireAreaSamplerClick() {
     const rasterId = lyr.raster_id || lyr.name
 
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
-
-    const outline = L.polygon(poly.geometry.coordinates[0].map(([lng, lat]) => [lat, lng]), {
-      color: '#1e90ff',
-      weight: 2,
-      fill: false,
-      interactive: false,
-    }).addTo(state.map)
-    setTimeout(() => outline.remove(), 3000)
+    _updateOutline(poly)
 
     let stats
     try {
@@ -212,13 +235,14 @@ async function fetchGeometryStats(rasterId, geojson) {
   return res.json()
 }
 
-function wireOverlayClose() {
+function () {
   const btn = document.getElementById('overlayClose')
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
     document.getElementById('statsOverlay').classList.add('hidden')
     document.getElementById('overlayBody').innerHTML = ''
+    _hideOutline()
   })
 
   // belt & suspenders: swallow clicks anywhere in the overlay

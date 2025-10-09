@@ -403,6 +403,7 @@ def geometry_stats(q: GeometryStatsIn):
 
     # Stats over valid (finite) values
     vals = arr[np.isfinite(arr)]
+
     stats = {
         "count": int(vals.size),
         "min": None,
@@ -425,8 +426,21 @@ def geometry_stats(q: GeometryStatsIn):
                 "std": float(np.std(vals, ddof=1) if vals.size > 1 else 0.0),
             }
         )
-        # histogram (auto range, 16 bins)
-        hist, bin_edges = np.histogram(vals, bins=16)
+        qs = np.linspace(0, 1, 17)
+        bin_edges = np.quantile(vals, qs)
+        q25, q75 = np.percentile(vals, [25, 75])
+        iqr = q75 - q25
+        bin_width = 2 * iqr * len(vals) ** (-1 / 3)
+        if bin_width == 0:
+            bin_width = np.ptp(vals) / 10 or 1  # fallback
+
+        num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
+        num_bins = min(
+            num_bins_fd, 64
+        )  # cap at 32 bins (or whatever limit you want)
+
+        hist, bin_edges = np.histogram(vals, bins=num_bins)
+        # hist, bin_edges = np.histogram(vals, bins="doane")
         stats["hist"] = hist.tolist()
         stats["bin_edges"] = bin_edges.tolist()
 

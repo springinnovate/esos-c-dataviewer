@@ -25,7 +25,12 @@ select, input[type='range'], input[type='number'] {
 }
 
 main { height: calc(100% - 52px); }
-#map { position: relative; height: 100%; width: 100%; }
+#map { position: relative; height: 100%; width: 100%; cursor: crosshair; }
+
+#statsOverlay,
+#statsOverlay * {
+  cursor: default !important;
+}
 
 /* Floating overlay in the upper-left of the map */
 .overlay {
@@ -86,3 +91,19 @@ main { height: calc(100% - 52px); }
 
 .overlay-body svg rect { fill: #1e90ff !important; }
 .overlay-body svg text { fill: #aaa !important; }
+
+.hist-tooltip {
+  position: absolute;
+  z-index: 1001;
+  pointer-events: none;
+  background: rgba(20, 24, 32, 0.96);
+  color: #e8eaf0;
+  border: 1px solid #2a2f3a;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.25;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  transform: translate(8px, 8px);
+  white-space: nowrap;
+}

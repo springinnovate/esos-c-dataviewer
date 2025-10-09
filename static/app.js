@@ -341,6 +341,7 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
   function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
 }
 
+// replace your buildHistogramSVG with this version (adds per-bar tooltips)
 function buildHistogramSVG(hist, binEdges, opts = {}) {
   const width = opts.width ?? 420
   const height = opts.height ?? 140
@@ -349,10 +350,8 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   const innerW = Math.max(1, w - pad * 2)
   const innerH = Math.max(1, h - pad * 2)
 
-  // Guard: coerce counts to non-negative numbers
   const counts = Array.from(hist, v => Math.max(0, Number(v) || 0))
-  const maxCount = Math.max(0, ...counts)
-
+  const maxCount = Math.max(1, ...counts)
   const bins = counts.length
   const barW = innerW / Math.max(1, bins)
 
@@ -362,7 +361,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   svg.setAttribute('height', String(h))
   svg.style.background = '#11151c'
 
-  // Axes
   const axisColor = '#666'
   const mkLine = (x1, y1, x2, y2) => {
     const Ln = document.createElementNS(svgNS, 'line')
@@ -375,11 +373,10 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   svg.appendChild(mkLine(String(pad), String(h - pad), String(w - pad), String(h - pad)))
   svg.appendChild(mkLine(String(pad), String(pad), String(pad), String(h - pad)))
 
-  // Bars
   for (let i = 0; i < bins; i++) {
     const v = counts[i]
-    const barH = maxCount > 0 ? (v / maxCount) * innerH : 0
-    const safeH = Math.max( (v > 0 ? 1 : 0), barH )  // ensure at least 1px when v>0
+    const barH = (v / maxCount) * innerH
+    const safeH = Math.max((v > 0 ? 1 : 0), barH)
     const x = pad + i * barW + 1
     const y = h - pad - safeH
 
@@ -388,14 +385,32 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     rect.setAttribute('y', String(y))
     rect.setAttribute('width', String(Math.max(0, barW - 2)))
     rect.setAttribute('height', String(Math.max(0, safeH)))
-    rect.setAttribute('fill', '#1e90ff')          // explicit fill
+    rect.setAttribute('fill', '#1e90ff')
     rect.setAttribute('opacity', '0.9')
-    rect.setAttribute('stroke', '#0c63b8')        // outline for contrast
+    rect.setAttribute('stroke', '#0c63b8')
     rect.setAttribute('stroke-width', '0.5')
     svg.appendChild(rect)
+
+    // tooltip handlers
+    const lo = binEdges[i]
+    const hi = binEdges[i + 1]
+    const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : String(n)
+    const text = `Range: [${fmt(lo)}, ${fmt(hi)})\nCount: ${v.toLocaleString()}`
+
+    rect.addEventListener('mouseenter', (ev) => {
+      _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
+    })
+    rect.addEventListener('mousemove', (ev) => {
+      _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
+    })
+    rect.addEventListener('mouseleave', () => _hideHistTooltip())
+    rect.addEventListener('touchstart', (ev) => {
+      const t = ev.touches[0]
+      _showHistTooltip(text, t.clientX, t.clientY, document.getElementById('statsOverlay'))
+    }, { passive: true })
+    rect.addEventListener('touchend', () => _hideHistTooltip())
   }
 
-  // Y ticks (0, max)
   const mkText = (str, x, y) => {
     const t = document.createElementNS(svgNS, 'text')
     t.setAttribute('x', String(x))
@@ -407,9 +422,36 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     return t
   }
   svg.appendChild(mkText('0', pad - 4, h - pad + 3))
-  svg.appendChild(mkText(String(maxCount), pad - 4, pad + 3))
+  svg.appendChild(mkText(String(Math.max(...counts)), pad - 4, pad + 3))
+
+  // hide tooltip if pointer leaves the svg area
+  svg.addEventListener('mouseleave', () => _hideHistTooltip())
 
   return svg
+}
+
+function _ensureHistTooltip() {
+  let tip = document.querySelector('.hist-tooltip')
+  if (!tip) {
+    tip = document.createElement('div')
+    tip.className = 'hist-tooltip'
+    tip.style.display = 'none'
+    // append to overlay so positioning is local
+    document.getElementById('statsOverlay').appendChild(tip)
+  }
+  return tip
+}
+function _showHistTooltip(text, clientX, clientY, anchorEl) {
+  const tip = _ensureHistTooltip()
+  tip.textContent = text
+  const r = anchorEl.getBoundingClientRect()
+  tip.style.left = `${clientX - r.left}px`
+  tip.style.top = `${clientY - r.top}px`
+  tip.style.display = 'block'
+}
+function _hideHistTooltip() {
+  const tip = document.querySelector('.hist-tooltip')
+  if (tip) tip.style.display = 'none'
 }
 
 ;(async function main() {

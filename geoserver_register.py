@@ -486,22 +486,21 @@ def main():
             workspace_def["name"],
             workspace_def.get("default", False),
         )
+        workspace_name = workspace_def["name"]
 
-    for style_def in config_data.get("styles", []):
+    for raster_id, layer_def in config_data.get("layers").items():
+        style_path = layer_def["default_style"]
         create_style_if_not_exists(
             geoserver_client,
-            style_def["workspace"],
-            style_def["name"],
-            style_def.get("format", "sld"),
-            style_def["file_path"],
+            workspace_name,
+            Path(style_path).stem,
+            "sld",
+            style_path,
         )
-    for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
 
         layer_type = layer_def["type"]
-        workspace_name = layer_def["workspace"]
         default_style = layer_def.get("default_style")
-        spatial_ref_system = layer_def.get("srs")
         file_path = layer_def["file_path"]
 
         with rasterio.open(file_path) as ds:

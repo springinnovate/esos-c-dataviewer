@@ -22,17 +22,15 @@ def _load_layers_config(cfg_path: str) -> dict:
 
 def _collect_layers(cfg: dict) -> list:
     layers = []
+    workspace = cfg.get("workspaces")[0]["name"]
     for layer_id, layer in cfg.get("layers", []).items():
         if layer.get("type") != "raster_geotiff":
             continue
-        ws = layer["workspace"]
-        srs = layer.get("srs")
-        style = layer.get("default_style")
+        style = Path(layer.get("default_style")).stem
         layers.append(
             {
-                "workspace": ws,
+                "workspace": workspace,
                 "name": layer_id,
-                "srs": srs,
                 "default_style": style,
             }
         )

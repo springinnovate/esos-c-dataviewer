@@ -499,7 +499,7 @@ def main():
         )
         logger.info("Working on layer definition: %s", layer_def)
         layer_type = layer_def["type"]
-        default_style = layer_def.get("default_style")
+        default_style = Path(layer_def.get("default_style")).stem
         file_path = layer_def["file_path"]
 
         with rasterio.open(file_path) as ds:

@@ -24,7 +24,7 @@ function initMap() {
   const map = L.map(mapDiv, {
     center: [37.8, -96.9],
     zoom: 4,
-    zoomControl: true,
+    zoomControl: false,
   })
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
@@ -33,6 +33,10 @@ function initMap() {
   state.map = map
   initMouseFollowBox()
   wireOverlayClose()
+
+  const overlay = document.getElementById('statsOverlay')
+  L.DomEvent.disableClickPropagation(overlay)
+  L.DomEvent.disableScrollPropagation(overlay)
 }
 
 function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
@@ -147,6 +151,9 @@ function onLayerChange(e) {
   if (!lyr) return
   state.activeLayerIdx = idx
   addWmsLayer(lyr.name)
+  // close the stats window if open
+  document.getElementById('statsOverlay').classList.add('hidden')
+  document.getElementById('overlayBody').innerHTML = ''
 }
 
 function wireOpacity() {
@@ -205,13 +212,19 @@ async function fetchGeometryStats(rasterId, geojson) {
   return res.json()
 }
 
-/* -------- Overlay rendering (upper-left floating panel) -------- */
 function wireOverlayClose() {
   const btn = document.getElementById('overlayClose')
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
     document.getElementById('statsOverlay').classList.add('hidden')
     document.getElementById('overlayBody').innerHTML = ''
   })
+
+  // belt & suspenders: swallow clicks anywhere in the overlay
+  const overlay = document.getElementById('statsOverlay')
+  ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
+    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
 }
 
 function showOverlayError(msg) {

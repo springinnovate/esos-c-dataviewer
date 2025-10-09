@@ -60,7 +60,7 @@ def generate_dynamic_sld(
 ) -> str:
     """
     Build and write a sequential color-ramp SLD for a raster by sampling valid pixels
-    and using the 5th–95th percentile range to avoid outliers. Produces a style file
+    and using the 5th-95th percentile range to avoid outliers. Produces a style file
     named '<stem>_default_style.sld' under '<styles_root>/styles'.
 
     Returns the filesystem path to the written .sld file.
@@ -118,9 +118,7 @@ def generate_dynamic_sld(
             arr.size,
         )
 
-    _log.debug(
-        "Raster open+read total time: %.3fs", time.perf_counter() - t_open
-    )
+    _log.debug("Raster open+read total time: %.3fs", time.perf_counter() - t_open)
 
     if valid.size == 0:
         _log.warning("No valid data found; using trivial range [0,1]")
@@ -333,9 +331,7 @@ def main():
 
     def _repr_str(dumper, data):
         if "\n" in data:
-            return dumper.represent_scalar(
-                "tag:yaml.org,2002:str", data, style="|"
-            )
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
         return dumper.org_represent_str(data)
 
     yaml.SafeDumper.represent_str = _repr_str

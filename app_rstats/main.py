@@ -199,7 +199,28 @@ REGISTRY = _load_registry()
 
 
 def _open_raster(raster_id: str):
-    print(f"getting {raster_id} from {REGISTRY}", flush=True)
+    """Open a registered raster dataset and return its metadata.
+
+    Looks up the raster entry from the global `REGISTRY` using the provided
+    raster ID, verifies that the file exists, and opens it with Rasterio.
+    Returns the dataset handle along with its nodata value and units.
+
+    Args:
+        raster_id (str): Identifier of the raster to open, matching an entry in `REGISTRY`.
+
+    Returns:
+        tuple:
+            ds (rasterio.io.DatasetReader): Opened Rasterio dataset.
+            nodata (float | None): Nodata value from metadata or dataset.
+            units (str | None): Units of measurement from metadata, if available.
+
+    Raises:
+        HTTPException: If the raster ID is not found in the registry (404) or
+            if the raster file does not exist on disk (500).
+
+    Side Effects:
+        Prints diagnostic information about the raster being opened.
+    """
     meta = REGISTRY.get(raster_id)
     if not meta:
         raise HTTPException(status_code=404, detail=f"raster_id not found: {raster_id}")

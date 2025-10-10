@@ -452,6 +452,32 @@ def pixel_stats(q: PixelWindowStatsIn):
 
 @app.post("/stats/geometry", response_model=StatsOut)
 def geometry_stats(q: GeometryStatsIn):
+    """Compute zonal statistics for a polygon geometry over a raster.
+
+    Given a GeoJSON geometry and a registered raster ID, this endpoint computes
+    statistics (min, max, mean, median, sum, std, histogram) over the pixels
+    within the polygon footprint. The geometry is automatically reprojected
+    to the raster’s CRS if necessary. Nodata values and non-finite pixels are
+    excluded from all calculations. The function also computes per-pixel and
+    total area metrics.
+
+    Args:
+        q (GeometryStatsIn): Request model containing the raster ID, input
+            geometry, input CRS, and optional histogram settings.
+
+    Returns:
+        StatsOut: Object containing computed statistics, histogram data,
+        nodata and unit information, and derived area metrics.
+
+    Raises:
+        HTTPException: If the geometry lies outside the raster extent or
+            produces an empty read window.
+
+    Notes:
+        - For projected rasters, area metrics are expressed in square meters.
+        - For geographic rasters, area metrics are in square degrees.
+        - Uses a safe windowing strategy to handle small or edge geometries.
+    """
     ds, nodata, units = _open_raster(q.raster_id)
 
     geom = shape(q.geometry)
@@ -567,7 +593,7 @@ def geometry_stats(q: GeometryStatsIn):
         stats["hist"] = hist.tolist()
         stats["bin_edges"] = bin_edges.tolist()
 
-    # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree²")
+    # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree^2")
     # pixel area from affine determinant (handles rotations too)
     det = ds.transform.a * ds.transform.e - ds.transform.b * ds.transform.d
     pixel_area = abs(det)
@@ -576,7 +602,7 @@ def geometry_stats(q: GeometryStatsIn):
     nodata_pixels = total_mask_pixels - valid_pixels
 
     area_stats = {
-        "pixel_area": pixel_area,  # m² per pixel if CRS in meters
+        "pixel_area": pixel_area,  # m^2 per pixel if CRS in meters
         "window_mask_pixels": total_mask_pixels,
         "valid_pixels": valid_pixels,
         "nodata_pixels": nodata_pixels,

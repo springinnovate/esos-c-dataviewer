@@ -295,7 +295,21 @@ def _compute_window(
 
 
 def _area_per_pixel_m2(ds: rasterio.io.DatasetReader) -> Optional[float]:
-    # projected CRS only: area = |a * e| where a=px width, e=px height (note: e is negative for north-up)
+    """Compute the ground area represented by a single pixel in square meters.
+
+    Calculates the per-pixel area based on the raster’s affine transform,
+    assuming a projected coordinate reference system (CRS). The area is
+    derived from the absolute value of the product of pixel width and height.
+    For north-up rasters, the height term is typically negative, so the
+    absolute value ensures a positive result.
+
+    Args:
+        ds (rasterio.io.DatasetReader): Open raster dataset.
+
+    Returns:
+        Optional[float]: Pixel area in square meters if the CRS is projected;
+        otherwise, None.
+    """
     try:
         crsproj = ds.crs and ds.crs.is_projected
     except Exception:
@@ -304,8 +318,7 @@ def _area_per_pixel_m2(ds: rasterio.io.DatasetReader) -> Optional[float]:
         return None
     a = ds.transform.a
     e = ds.transform.e
-    if a == 0 or e == 0:
-        return None
+    # e is often negative for north up, so we abs it
     return abs(a * e)
 
 

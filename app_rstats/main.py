@@ -330,6 +330,28 @@ def rasters():
 
 @app.post("/stats/pixel", response_model=WindowStatsOut)
 def pixel_stats(q: PixelWindowStatsIn):
+    """Compute summary statistics for a pixel-centered raster window.
+
+    Given a geographic coordinate or bounding box, this endpoint samples the
+    corresponding window from a registered raster and computes basic
+    statistics (min, max, mean, median, std) and a histogram of pixel values.
+    The input coordinate or bounding box is automatically reprojected to the
+    raster’s CRS if necessary. Nodata and non-finite values are excluded from
+    calculations.
+
+    Args:
+        q (PixelWindowStatsIn): Request model specifying the raster ID, input
+            coordinate (lon/lat), optional pixel radius or bounding box, and
+            histogram parameters.
+
+    Returns:
+        WindowStatsOut: Object containing raster window metadata, computed
+        statistics, histogram data, and nodata/unit information.
+
+    Raises:
+        HTTPException: If the raster ID is not found, the file is missing, or
+            the target point/window lies outside the raster extent.
+    """
     ds, nodata, units = _open_raster(q.raster_id)
 
     # reproject center point to raster CRS if needed

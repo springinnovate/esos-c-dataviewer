@@ -15,7 +15,6 @@ RUN pip install --no-cache-dir requests pyyaml python-dotenv rasterio
 
 ENTRYPOINT ["python", "/app/geoserver_register.py"]
 
-
 # Dockerfile.geoserver-init
 FROM python:3.11-slim
 

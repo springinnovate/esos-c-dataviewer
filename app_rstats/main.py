@@ -172,21 +172,30 @@ class WindowStatsOut(BaseModel):
 
 
 def _load_registry() -> dict:
-    try:
-        print(f"try to load {RASTERS_YAML_PATH}")
-        if not RASTERS_YAML_PATH.exists():
-            raise RuntimeError("rasters.yml not found")
-        raw_yaml = RASTERS_YAML_PATH.read_text()
-        expanded_yaml = os.path.expandvars(raw_yaml)
-        y = yaml.safe_load(expanded_yaml)
-        return y.get("layers", {})
-    except Exception as e:
-        print(f"could not load registery {e}")
-        raise
+    """Load the raster layer registry from a YAML configuration file.
+
+    Attempts to read and parse the file defined by the global constant
+    `RASTERS_YAML_PATH`. The YAML file may include environment variable
+    references, which are expanded before parsing. The function returns the
+    dictionary under the top-level key "layers" if present.
+
+    Returns:
+        dict: A dictionary of raster layer definitions loaded from the YAML file.
+
+    Raises:
+        RuntimeError: If the registry file is missing or cannot be found.
+        Exception: For any unexpected error during file reading or YAML parsing.
+
+    """
+    if not RASTERS_YAML_PATH.exists():
+        raise RuntimeError("rasters.yml not found")
+    raw_yaml = RASTERS_YAML_PATH.read_text()
+    expanded_yaml = os.path.expandvars(raw_yaml)
+    y = yaml.safe_load(expanded_yaml)
+    return y.get("layers", {})
 
 
 REGISTRY = _load_registry()
-print(f"this is the registery {REGISTRY}", flush=True)
 
 
 def _open_raster(raster_id: str):

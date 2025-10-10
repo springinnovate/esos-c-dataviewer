@@ -322,11 +322,6 @@ def _area_per_pixel_m2(ds: rasterio.io.DatasetReader) -> Optional[float]:
     return abs(a * e)
 
 
-@app.get("/health")
-def health():
-    return {"ok": True, "rasters": list(REGISTRY.keys())}
-
-
 @app.get("/rasters")
 def rasters():
     return {"rasters": list(REGISTRY.keys())}

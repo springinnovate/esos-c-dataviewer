@@ -254,6 +254,29 @@ def _compute_window(
     radius_pixels: Optional[int],
     bbox_raster_crs: Optional[Tuple[float, float, float, float]],
 ) -> Window:
+    """Compute a pixel window for reading a raster subset.
+
+    Determines the raster window to read based on either a bounding box in the
+    raster's coordinate reference system (CRS) or a radius in pixel units
+    around a given pixel center. The resulting window is clamped to the raster
+    boundaries and rounded to integer offsets and sizes.
+
+    Args:
+        ds (rasterio.io.DatasetReader): Open raster dataset.
+        x (float): X coordinate of the center point in raster CRS.
+        y (float): Y coordinate of the center point in raster CRS.
+        r (int): Row index of the center pixel.
+        c (int): Column index of the center pixel.
+        radius_pixels (Optional[int]): Radius in pixels around the center pixel.
+            If None, only the center pixel is used.
+        bbox_raster_crs (Optional[Tuple[float, float, float, float]]): Bounding
+            box in the raster CRS as (minx, miny, maxx, maxy). If provided, it
+            overrides the pixel-radius method.
+
+    Returns:
+        rasterio.windows.Window: Window object representing the pixel region
+        to read from the raster.
+    """
     if bbox_raster_crs is not None:
         minx, miny, maxx, maxy = bbox_raster_crs
         return (

@@ -1,4 +1,8 @@
 # Dockerfile.geoserver-init
+# Lightweight initialization container for automating GeoServer setup.
+# Installs minimal system and Python dependencies required to register
+# workspaces, styles, and raster layers via REST API. Intended to run
+# once at startup to configure GeoServer automatically before serving.
 FROM python:3.11-slim
 
 WORKDIR /app

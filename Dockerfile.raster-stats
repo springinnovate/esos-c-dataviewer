@@ -1,0 +1,31 @@
+# Dockerfile.rstats
+# Lightweight container for running the rstats (raster stats) API service.
+# Provides a Python 3.11 environment with GDAL and related libraries
+# for raster and geospatial analysis. Installs dependencies listed in
+# rstats_requirements.txt and serves the FastAPI app located in
+# app_rstats via Uvicorn on port 8000.
+#
+# Environment variables:
+#   PORT        - port for Uvicorn to listen on (default: 8000)
+#   WORKERS     - number of Uvicorn worker processes (default: 1)
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdal-bin libgdal-dev build-essential curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Minimal wheels; rasterio needs GDAL headers
+RUN pip install --no-cache-dir --upgrade pip
+
+WORKDIR /app
+COPY rstats_requirements.txt /app/
+RUN pip install --no-cache-dir -r rstats_requirements.txt
+
+COPY app_rstats /app/app_rstats
+
+# healthcheck endpoint on :8000
+ENV PORT=8000
+CMD uvicorn app_rstats.main:app --host 0.0.0.0 --port ${PORT} --workers ${WORKERS:-1}

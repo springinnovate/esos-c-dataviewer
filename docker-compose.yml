@@ -55,7 +55,7 @@ services:
     environment:
       - GEOSERVER_BASE_URL=/geoserver
       - LAYERS_YAML_PATH=/app/layers.yml
-      - RSTATS_BASE_URL=/raster-stats
+      - RSTATS_BASE_URL=/rstats
     volumes:
       - ./layers.yml:/app/layers.yml:ro
     networks: [backend]
@@ -85,12 +85,12 @@ services:
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
 
-  raster-stats:
+  rstats:
     build:
       context: .
-      dockerfile: Dockerfile.raster-stats
-    image: essosc-raster-stats:latest
-    container_name: essosc-raster-stats
+      dockerfile: Dockerfile.rstats
+    image: essosc-rstats:latest
+    container_name: essosc-rstats
     restart: unless-stopped
     environment:
       - RASTERS_YAML_PATH=/app/layers.yml
@@ -102,8 +102,8 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.raster-stats.rule=Host(`localhost`) && PathPrefix(`/raster-stats`)
-      - traefik.http.routers.raster-stats.entrypoints=web
-      - traefik.http.services.raster-stats.loadbalancer.server.port=8000
-      - traefik.http.middlewares.raster-stats-stripprefix.stripprefix.prefixes=/raster-stats
-      - traefik.http.routers.raster-stats.middlewares=raster-stats-stripprefix@docker
+      - traefik.http.routers.rstats.rule=Host(`localhost`) && PathPrefix(`/rstats`)
+      - traefik.http.routers.rstats.entrypoints=web
+      - traefik.http.services.rstats.loadbalancer.server.port=8000
+      - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
+      - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker

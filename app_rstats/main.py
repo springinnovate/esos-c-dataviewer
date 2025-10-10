@@ -235,6 +235,7 @@ def _open_raster(raster_id: str):
 
 app = FastAPI(title="ESSOSC Raster Stats API", version="0.1.0")
 
+# Enable Cross-Origin Resource Sharing (CORS) for the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -1,28 +1,55 @@
-# app_rstats/main.py
+"""
+ESSOSC Raster Stats API
+-----------------------
+Main entrypoint for the raster statistics microservice.
+
+This FastAPI application exposes endpoints for retrieving pixel-level,
+window-level, and geometry-based statistics from registered GeoTIFF rasters.
+It supports automatic coordinate reprojection, masking, and summary operations
+(mean, sum, min, max, std, count, median, histogram). The service loads its
+raster registry from a YAML file defined by the environment variable
+`RASTERS_YAML_PATH`.
+
+Endpoints:
+    GET  /health              - Returns service status and available rasters
+    GET  /rasters             - Lists all registered rasters
+    POST /stats/pixel         - Returns a single pixel or small window’s value(s)
+    POST /stats/geometry      - Computes zonal statistics for a polygon geometry
+
+Dependencies:
+    - FastAPI for the API framework
+    - Rasterio for raster data access
+    - Shapely and PyProj for geometry and CRS operations
+    - NumPy for numerical statistics
+    - YAML and dotenv for configuration management
+
+Intended usage:
+    Run with `uvicorn app_rstats.main:app --host 0.0.0.0 --port 8000`
+"""
+
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
-from typing import Literal, Optional, Dict, Tuple
+from typing import Literal, Optional, Dict, Tuple, Any
+import os
 
-import numpy as np
-import rasterio
-import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from pyproj import Transformer
 from rasterio.features import geometry_mask
 from rasterio.transform import rowcol
 from rasterio.windows import from_bounds, Window
-from shapely.geometry import shape, mapping
+from shapely.geometry import shape, mapping, box
 from shapely.ops import transform as shp_transform
-from pyproj import Transformer
-
-RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
+import numpy as np
+import rasterio
+import yaml
 
 load_dotenv()
+
+RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 
 class PixelStatsIn(BaseModel):
@@ -47,9 +74,7 @@ class PixelWindowStatsIn(BaseModel):
 
     # histogram controls
     histogram_bins: int = Field(default=16, ge=1)
-    histogram_range: Optional[Tuple[float, float]] = (
-        None  # min,max or None to auto
-    )
+    histogram_range: Optional[Tuple[float, float]] = None  # min,max or None to auto
 
 
 class GeometryStatsIn(BaseModel):
@@ -106,14 +131,10 @@ def _open_raster(raster_id: str):
     print(f"getting {raster_id} from {REGISTRY}", flush=True)
     meta = REGISTRY.get(raster_id)
     if not meta:
-        raise HTTPException(
-            status_code=404, detail=f"raster_id not found: {raster_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"raster_id not found: {raster_id}")
     path = meta["file_path"]
     if not Path(path).exists():
-        raise HTTPException(
-            status_code=500, detail=f"raster file missing: {path}"
-        )
+        raise HTTPException(status_code=500, detail=f"raster file missing: {path}")
     ds = rasterio.open(path)
     nodata = meta.get("nodata", ds.nodata)
     units = meta.get("units")
@@ -182,45 +203,6 @@ def rasters():
     return {"rasters": list(REGISTRY.keys())}
 
 
-@app.post("/stats/pixel", response_model=StatsOut)
-def pixel_stats(q: PixelStatsIn):
-    try:
-        print(f"try to fetch {q.raster_id}", flush=True)
-        ds, nodata, units = _open_raster(q.raster_id)
-
-        # Reproject input lon/lat to raster CRS if needed
-        if q.crs != ds.crs.to_string():
-            transformer = Transformer.from_crs(q.crs, ds.crs, always_xy=True)
-            x, y = transformer.transform(q.lon, q.lat)
-        else:
-            x, y = q.lon, q.lat
-
-        r, c = rowcol(ds.transform, x, y, op=round)
-
-        if not (0 <= r < ds.height and 0 <= c < ds.width):
-            raise HTTPException(
-                status_code=400, detail="point outside raster extent"
-            )
-
-        val = ds.read(1, window=((r, r + 1), (c, c + 1)))[0, 0]
-        out = StatsOut(
-            raster_id=q.raster_id,
-            value=(
-                None
-                if (nodata is not None and np.isclose(val, nodata))
-                else float(val)
-            ),
-            nodata=nodata if nodata is not None else None,
-            units=units,
-            pixel={"row": int(r), "col": int(c), "x": x, "y": y},
-        )
-        print(out, flush=True)
-        return out
-    except Exception as e:
-        print(f"bad error {e}")
-        raise
-
-
 @app.post("/stats/pixel", response_model=WindowStatsOut)
 def pixel_stats(q: PixelWindowStatsIn):
     ds, nodata, units = _open_raster(q.raster_id)
@@ -234,9 +216,7 @@ def pixel_stats(q: PixelWindowStatsIn):
 
     r, c = rowcol(ds.transform, x, y, op=round)
     if not (0 <= r < ds.height and 0 <= c < ds.width):
-        raise HTTPException(
-            status_code=400, detail="point outside raster extent"
-        )
+        raise HTTPException(status_code=400, detail="point outside raster extent")
 
     # optional bbox: reproject bbox corners to raster CRS
     bbox_raster = None
@@ -333,9 +313,7 @@ def geometry_stats(q: GeometryStatsIn):
     # Reproject geometry to raster CRS if needed
     if q.from_crs != ds.crs.to_string():
         transformer = Transformer.from_crs(q.from_crs, ds.crs, always_xy=True)
-        geom = shp_transform(
-            lambda x, y, z=None: transformer.transform(x, y), geom
-        )
+        geom = shp_transform(lambda x, y, z=None: transformer.transform(x, y), geom)
 
     # --- safe window builder (avoids zero-sized windows) ---
     def _safe_window_for_geom(dataset, g):
@@ -435,9 +413,7 @@ def geometry_stats(q: GeometryStatsIn):
             bin_width = np.ptp(vals) / 10 or 1  # fallback
 
         num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
-        num_bins = min(
-            num_bins_fd, 64
-        )  # cap at 32 bins (or whatever limit you want)
+        num_bins = min(num_bins_fd, 64)  # cap at 32 bins (or whatever limit you want)
 
         hist, bin_edges = np.histogram(vals, bins=num_bins)
         # hist, bin_edges = np.histogram(vals, bins="doane")
@@ -461,9 +437,7 @@ def geometry_stats(q: GeometryStatsIn):
         "valid_area_m2": float(valid_pixels * pixel_area),
         "nodata_area_m2": float(nodata_pixels * pixel_area),
         "coverage_ratio": (
-            float(valid_pixels / total_mask_pixels)
-            if total_mask_pixels
-            else 0.0
+            float(valid_pixels / total_mask_pixels) if total_mask_pixels else 0.0
         ),
     }
     stats.update(area_stats)

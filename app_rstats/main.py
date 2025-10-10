@@ -53,6 +53,15 @@ RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 
 class PixelStatsIn(BaseModel):
+    """Input model for single-pixel raster queries.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+        lon (float): Longitude of the target point (in the input CRS).
+        lat (float): Latitude of the target point (in the input CRS).
+        crs (str): Coordinate reference system of the input point, default is 'EPSG:4326'.
+    """
+
     raster_id: str
     lon: float
     lat: float
@@ -60,6 +69,21 @@ class PixelStatsIn(BaseModel):
 
 
 class PixelWindowStatsIn(BaseModel):
+    """Input model for window-based raster statistics.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+        lon (float): Longitude of the window center point (in the input CRS).
+        lat (float): Latitude of the window center point (in the input CRS).
+        crs (str): Coordinate reference system of the input point, default is 'EPSG:4326'.
+        radius_pixels (Optional[int]): Radius in pixels around the center for sampling.
+        bbox (Optional[Tuple[float, float, float, float]]): Bounding box in the input CRS
+            defined as (minx, miny, maxx, maxy).
+        histogram_bins (int): Number of bins for histogram calculation, default is 16.
+        histogram_range (Optional[Tuple[float, float]]): Range (min, max) for histogram,
+            or None to compute automatically.
+    """
+
     raster_id: str
     lon: float
     lat: float
@@ -78,6 +102,19 @@ class PixelWindowStatsIn(BaseModel):
 
 
 class GeometryStatsIn(BaseModel):
+    """Input model for geometry-based zonal statistics.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+        geometry (dict): GeoJSON geometry defining the analysis area.
+        from_crs (str): CRS of the input geometry, default is 'EPSG:4326'.
+        reducer (Literal): Statistical operation to apply over the geometry,
+            one of 'mean', 'sum', 'min', 'max', 'std', 'count', 'median', 'histogram'.
+        histogram_bins (Optional[int]): Number of bins for histogram statistics.
+        histogram_range (Optional[Tuple[float, float]]): Range (min, max) for histogram,
+            or None to determine automatically.
+    """
+
     raster_id: str
     geometry: dict  # GeoJSON geometry
     from_crs: str = Field(default="EPSG:4326")
@@ -89,6 +126,20 @@ class GeometryStatsIn(BaseModel):
 
 
 class StatsOut(BaseModel):
+    """Output model for pixel or geometry-based statistics.
+
+    Attributes:
+        raster_id (str): Identifier of the raster used for analysis.
+        band (int): Band number used, default is 1.
+        reducer (Optional[str]): Statistical reducer applied, if any.
+        value (Optional[float]): Single pixel value when applicable.
+        stats (Optional[dict]): Dictionary of computed statistics.
+        units (Optional[str]): Units of measurement for the raster data.
+        nodata (Optional[float]): Nodata value for the raster.
+        pixel (Optional[dict]): Pixel metadata including row/col indices and coordinates.
+        geometry (Optional[dict]): GeoJSON geometry associated with the result, if any.
+    """
+
     raster_id: str
     band: int = 1
     reducer: Optional[str] = None
@@ -101,6 +152,17 @@ class StatsOut(BaseModel):
 
 
 class WindowStatsOut(BaseModel):
+    """Output model for window-based raster statistics.
+
+    Attributes:
+        raster_id (str): Identifier of the raster used for analysis.
+        window (Dict[str, Any]): Window metadata (offsets, dimensions, center pixel).
+        nodata (Optional[float]): Nodata value for the raster.
+        units (Optional[str]): Units of measurement for the raster data.
+        stats (Dict[str, Any]): Summary statistics for the sampled window.
+        histogram (Dict[str, Any]): Histogram data for the sampled window.
+    """
+
     raster_id: str
     window: Dict[str, Any]
     nodata: Optional[float] = None

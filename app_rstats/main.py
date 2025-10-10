@@ -520,8 +520,6 @@ def geometry_stats(q: GeometryStatsIn):
 
         return w
 
-    # Window the raster to geometry bounds
-    print(f"here are the raster bounds: {geom.bounds}")
     window = _safe_window_for_geom(ds, geom)
     data = ds.read(1, window=window, boundless=True, masked=False)
     if data.size == 0:
@@ -529,14 +527,9 @@ def geometry_stats(q: GeometryStatsIn):
             status_code=400,
             detail="Empty read window (geometry outside raster).",
         )
-    print(
-        f"window (col_off,row_off,width,height): {window.col_off:.2f},{window.row_off:.2f},{window.width:.2f},{window.height:.2f}",
-        flush=True,
-    )
 
     # Build geometry mask in the window’s transform
     window_transform = ds.window_transform(window)
-    print(f"here's the window transform: {window_transform}")
     mask = geometry_mask(
         [mapping(geom)],
         transform=window_transform,

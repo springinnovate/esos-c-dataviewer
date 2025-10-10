@@ -324,6 +324,7 @@ def _area_per_pixel_m2(ds: rasterio.io.DatasetReader) -> Optional[float]:
 
 @app.get("/rasters")
 def rasters():
+    """List all registered raster IDs."""
     return {"rasters": list(REGISTRY.keys())}
 
 

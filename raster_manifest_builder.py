@@ -1,4 +1,10 @@
-# TODO: docstring sof this module and functions
+"""Layer manifest compiler and style generator.
+
+This module scans a directory recursively for GeoTIFF rasters, automatically
+builds YAML configuration entries for GeoServer, and generates simple
+Sequential color-ramp SLD styles for each raster. The resulting YAML document
+is printed to standard output and can be used to initialize GeoServer layers.
+"""
 
 from pathlib import Path
 import argparse
@@ -21,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 def find_geotiffs(root: Path, exts):
+    """Recursively yield GeoTIFF paths under a directory.
+
+    Args:
+        root (Path): Directory to search.
+        exts (set[str]): Allowed file extensions (e.g., {'.tif', '.tiff'}).
+
+    Yields:
+        Path: Paths to matching GeoTIFF files.
+    """
     for p in root.rglob("*"):
         if p.is_file():
             if p.suffix.lower() in exts:
@@ -28,6 +43,15 @@ def find_geotiffs(root: Path, exts):
 
 
 def crs_to_srs(crs):
+    """Convert a rasterio CRS to an EPSG or PROJ string.
+
+    Args:
+        crs (rasterio.crs.CRS): CRS object.
+
+    Returns:
+        str | None: Corresponding EPSG code (e.g., 'EPSG:4326') or CRS string,
+        or None if conversion fails.
+    """
     if not crs:
         return None
     try:
@@ -48,6 +72,16 @@ def build_layer_entry(
     raster_type: str,
     default_style: str | None,
 ):
+    """Build a layer configuration entry for a raster.
+
+    Args:
+        path (Path): Path to the raster file.
+        raster_type (str): Type label for the raster (e.g., 'raster_geotiff').
+        default_style (str | None): Path to the default SLD style.
+
+    Returns:
+        tuple[str, dict]: Layer key and metadata dictionary.
+    """
     stem = path.stem
     entry = {}
     entry["type"] = raster_type
@@ -63,12 +97,20 @@ def generate_dynamic_sld(
     n_colors: int = 7,
     logger: logging.Logger | None = None,
 ) -> str:
-    """
-    Build and write a sequential color-ramp SLD for a raster by sampling valid pixels
-    and using the 5th-95th percentile range to avoid outliers. Produces a style file
-    named '<stem>_default_style.sld' under '<styles_root>/styles'.
+    """Generate and write a sequential color-ramp SLD for a raster.
 
-    Returns the filesystem path to the written .sld file.
+    Samples valid pixels from a raster and computes a 5th–95th percentile range
+    to avoid outliers. Builds a color ramp with `n_colors` steps and writes a
+    style file named '<stem>_default_style.sld' under '<styles_root>/styles'.
+
+    Args:
+        raster_path (str | Path): Path to the input raster file.
+        styles_root (str | Path): Directory where the 'styles' folder will be created.
+        n_colors (int, optional): Number of colors in the ramp. Defaults to 7.
+        logger (logging.Logger | None, optional): Optional logger instance.
+
+    Returns:
+        str: Filesystem path to the generated SLD file.
     """
     t0 = time.perf_counter()
     _log = logger or logging.getLogger(__name__)
@@ -261,7 +303,9 @@ def generate_dynamic_sld(
         f"        <Rule>\n"
         f"          <RasterSymbolizer>\n"
         f"            <Opacity>1.0</Opacity>\n"
-        f'            <ColorMap type="ramp">\n' + "\n".join(entries) + "\n"
+        f'            <ColorMap type="ramp">\n'
+        + "\n".join(entries)
+        + "\n"  # noqa: F541
         f"            </ColorMap>\n"
         f"            <ContrastEnhancement>\n"
         f"              <Normalize/>\n"
@@ -288,6 +332,7 @@ def generate_dynamic_sld(
 
 
 def main():
+    """Command-line entry point for generating GeoServer layer manifests."""
     parser = argparse.ArgumentParser(
         prog="layers_compiler",
         description="Recursively scan a directory for GeoTIFFs and emit YAML layer entries.",

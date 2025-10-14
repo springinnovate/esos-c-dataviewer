@@ -1,5 +1,13 @@
 // static/app.js
 /* global L */
+
+/**
+ * @file
+ * Frontend map + stats overlay for rstats service.
+ * Uses Leaflet WMS for visualization and fetches raster stats for a user-defined square window.
+ * Docstrings use JSDoc so editors/TS can infer types.
+ */
+
 const state = {
   map: null,
   baseUrl: '',
@@ -13,12 +21,21 @@ const state = {
   outlineLayer: null,
 }
 
+/**
+ * Load app configuration from the server.
+ * @returns {Promise<{geoserver_base_url:string, rstats_base_url:string, layers:Array}>}
+ * @throws {Error} if the request fails
+ */
 async function loadConfig() {
   const res = await fetch('api/config')
   if (!res.ok) throw new Error('Failed to load config')
   return res.json()
 }
 
+/**
+ * Initialize the Leaflet map and overlay event swallowing.
+ * Side effects: sets state.map and wires overlay interactions.
+ */
 function initMap() {
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
@@ -39,6 +56,12 @@ function initMap() {
   L.DomEvent.disableScrollPropagation(overlay)
 }
 
+/**
+ * Compute a square LatLngBounds of given size (km) centered at a point.
+ * @param {L.LatLng} centerLatLng
+ * @param {number|string} windowSizeKm
+ * @returns {L.LatLngBounds}
+ */
 function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs || L.CRS.EPSG3857
   const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
@@ -48,10 +71,21 @@ function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
   return L.latLngBounds(sw, ne)
 }
 
+/**
+ * Convert first ring of a GeoJSON Polygon to Leaflet [lat,lng] pairs.
+ * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
+ * @returns {Array<[number,number]>} Array of [lat,lng]
+ * @private
+ */
 function _latlngsFromPoly(polyGeoJSON) {
   return polyGeoJSON.geometry.coordinates[0].map(([lng, lat]) => [lat, lng])
 }
 
+/**
+ * Ensure a single outline polygon exists for the current selection.
+ * @returns {L.Polygon} outline layer
+ * @private
+ */
 function _ensureOutlineLayer() {
   if (state.outlineLayer) return state.outlineLayer
   state.outlineLayer = L.polygon([], {
@@ -63,6 +97,11 @@ function _ensureOutlineLayer() {
   return state.outlineLayer
 }
 
+/**
+ * Update and display the outline polygon on the map.
+ * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
+ * @private
+ */
 function _updateOutline(polyGeoJSON) {
   const latlngs = _latlngsFromPoly(polyGeoJSON)
   const layer = _ensureOutlineLayer()
@@ -70,12 +109,22 @@ function _updateOutline(polyGeoJSON) {
   if (!state.map.hasLayer(layer)) layer.addTo(state.map)
 }
 
+/**
+ * Hide the outline layer if present.
+ * @private
+ */
 function _hideOutline() {
   if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
     state.map.removeLayer(state.outlineLayer)
   }
 }
 
+/**
+ * Build a square GeoJSON Polygon centered at a LatLng with edge length windowSizeKm.
+ * @param {L.LatLng} centerLatLng
+ * @param {number|string} windowSizeKm
+ * @returns {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]},properties:{kind:string,halfSizeM:number}}}
+ */
 function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs || L.CRS.EPSG3857
   const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
@@ -97,6 +146,10 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
   }
 }
 
+/**
+ * Create and keep a rectangle that follows the mouse to show the sampling window.
+ * Side effects: sets state.hoverRect and mouse listeners that update it.
+ */
 function initMouseFollowBox() {
   state.hoverRect = L.rectangle(
     latLngBoundsForSquareKilometers(state.map.getCenter(), state.boxSizeKm),
@@ -116,6 +169,10 @@ function initMouseFollowBox() {
   })
 }
 
+/**
+ * Wire UI controls that set the sampling window size (km).
+ * Keeps range and numeric inputs in sync and updates hover rectangle.
+ */
 function wireRadiusControls() {
   const rRange = document.getElementById('windowSize')
   const rNum = document.getElementById('windowSizeNumber')
@@ -143,6 +200,10 @@ function wireRadiusControls() {
   setVal(rRange.value)
 }
 
+/**
+ * Populate the layer <select> with available WMS layers and wire change handler.
+ * Reads state.layers and updates the DOM.
+ */
 function populateLayerSelect() {
   const sel = document.getElementById('layerSelect')
   sel.innerHTML = ''
@@ -155,6 +216,11 @@ function populateLayerSelect() {
   sel.addEventListener('change', onLayerChange)
 }
 
+/**
+ * Add a WMS layer to the map for the given qualified layer name.
+ * Replaces any existing state.wmsLayer.
+ * @param {string} qualifiedName
+ */
 function addWmsLayer(qualifiedName) {
   if (state.wmsLayer) {
     state.map.removeLayer(state.wmsLayer)
@@ -173,6 +239,11 @@ function addWmsLayer(qualifiedName) {
   state.wmsLayer = l
 }
 
+/**
+ * Handle layer change from the <select>.
+ * Sets active layer, updates WMS, hides overlay, and clears outline.
+ * @param {Event & {target: HTMLSelectElement}} e
+ */
 function onLayerChange(e) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.layers[idx]
@@ -185,6 +256,10 @@ function onLayerChange(e) {
   _hideOutline()
 }
 
+/**
+ * Wire the opacity range control to the current WMS layer.
+ * No-op if no WMS layer loaded.
+ */
 function wireOpacity() {
   const r = document.getElementById('opacityRange')
   r.addEventListener('input', () => {
@@ -192,6 +267,10 @@ function wireOpacity() {
   })
 }
 
+/**
+ * Wire map click to request raster statistics for the window around the click.
+ * On success, renders the overlay; on failure, shows an error message.
+ */
 function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
     const lyr = state.layers[state.activeLayerIdx]
@@ -220,6 +299,13 @@ function wireAreaSamplerClick() {
   })
 }
 
+/**
+ * POST a geometry to the rstats service and return statistics.
+ * @param {string} rasterId
+ * @param {{type:'Feature'|'Polygon',geometry?:object}} geojson Feature or bare geometry in EPSG:4326
+ * @returns {Promise<{stats:object, units?:string}>}
+ * @throws {Error} if the request fails
+ */
 async function fetchGeometryStats(rasterId, geojson) {
   const res = await fetch(`${state.baseStatsUrl}/stats/geometry`, {
     method: 'POST',
@@ -234,6 +320,10 @@ async function fetchGeometryStats(rasterId, geojson) {
   return res.json()
 }
 
+/**
+ * Wire close button and event swallowing for the stats overlay.
+ * Side effects: registers multiple event listeners on #statsOverlay.
+ */
 function wireOverlayClose() {
   const btn = document.getElementById('overlayClose')
   btn.addEventListener('click', (e) => {
@@ -250,6 +340,10 @@ function wireOverlayClose() {
     .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
 }
 
+/**
+ * Show an error message inside the stats overlay.
+ * @param {string} msg
+ */
 function showOverlayError(msg) {
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
@@ -257,6 +351,12 @@ function showOverlayError(msg) {
   body.innerHTML = `<pre>${msg}</pre>`
 }
 
+/**
+ * Zoom to the outline bounds if present; otherwise center and zoom near the given point.
+ * @param {number} centerLng
+ * @param {number} centerLat
+ * @private
+ */
 function _zoomToOutline(centerLng, centerLat) {
   if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
     const b = state.outlineLayer.getBounds()
@@ -268,6 +368,10 @@ function _zoomToOutline(centerLng, centerLat) {
   state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
 }
 
+/**
+ * Render the stats overlay content, including summary lines and an optional histogram.
+ * @param {{rasterId:string,centerLng:number,centerLat:number,boxKm:number,statsObj?:object,units?:string}} args
+ */
 function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsObj, units }) {
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
@@ -275,7 +379,6 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
 
   const s = statsObj || {}
 
-  // clickable "Center" row
   const centerRow = document.createElement('div')
   centerRow.className = 'overlay-row'
   const centerBtn = document.createElement('button')
@@ -341,7 +444,13 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
   function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
 }
 
-// replace your buildHistogramSVG with this version (adds per-bar tooltips)
+/**
+ * Build a simple SVG histogram with per-bar tooltips.
+ * @param {number[]|ArrayLike<number>} hist Bin counts
+ * @param {number[]} binEdges Bin edges, length = hist.length + 1
+ * @param {{width?:number,height?:number,pad?:number}} [opts]
+ * @returns {SVGSVGElement}
+ */
 function buildHistogramSVG(hist, binEdges, opts = {}) {
   const width = opts.width ?? 420
   const height = opts.height ?? 140
@@ -391,7 +500,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     rect.setAttribute('stroke-width', '0.5')
     svg.appendChild(rect)
 
-    // tooltip handlers
     const lo = binEdges[i]
     const hi = binEdges[i + 1]
     const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : String(n)
@@ -424,12 +532,16 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   svg.appendChild(mkText('0', pad - 4, h - pad + 3))
   svg.appendChild(mkText(String(Math.max(...counts)), pad - 4, pad + 3))
 
-  // hide tooltip if pointer leaves the svg area
   svg.addEventListener('mouseleave', () => _hideHistTooltip())
 
   return svg
 }
 
+/**
+ * Ensure a singleton tooltip element exists for histogram tooltips.
+ * @returns {HTMLDivElement}
+ * @private
+ */
 function _ensureHistTooltip() {
   let tip = document.querySelector('.hist-tooltip')
   if (!tip) {
@@ -441,6 +553,15 @@ function _ensureHistTooltip() {
   }
   return tip
 }
+
+/**
+ * Show and position the histogram tooltip within the overlay.
+ * @param {string} text
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {HTMLElement} anchorEl Overlay element to position within
+ * @private
+ */
 function _showHistTooltip(text, clientX, clientY, anchorEl) {
   const tip = _ensureHistTooltip()
   tip.textContent = text
@@ -449,11 +570,21 @@ function _showHistTooltip(text, clientX, clientY, anchorEl) {
   tip.style.top = `${clientY - r.top}px`
   tip.style.display = 'block'
 }
+
+/**
+ * Hide the histogram tooltip if present.
+ * @private
+ */
 function _hideHistTooltip() {
   const tip = document.querySelector('.hist-tooltip')
   if (tip) tip.style.display = 'none'
 }
 
+/**
+ * App entrypoint.
+ * Initializes UI, loads config, and selects the first layer if available.
+ * Self-invoking to avoid leaking names.
+ */
 ;(async function main() {
   initMap()
   wireOpacity()

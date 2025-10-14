@@ -334,7 +334,7 @@ function wireOverlayClose() {
     _hideOutline()
   })
 
-  // belt & suspenders: swallow clicks anywhere in the overlay
+  // Prevent overlay interactions from bubbling to the map
   const overlay = document.getElementById('statsOverlay')
   ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
     .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))

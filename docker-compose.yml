@@ -12,7 +12,6 @@ networks:
 services:
   traefik:
     image: traefik:v3
-    container_name: traefik
     command:
       - --providers.docker
       - --entrypoints.web.address=:80
@@ -24,7 +23,6 @@ services:
 
   geoserver:
     image: ${GEOSERVER_IMAGE}
-    container_name: geoserver
     restart: unless-stopped
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/geoserver/web/ >/dev/null 2>&1 || exit 1']
@@ -50,7 +48,6 @@ services:
       context: .
       dockerfile: Dockerfile.viewer
     image: essosc-viewer:latest
-    container_name: essosc-viewer
     restart: unless-stopped
     environment:
       - GEOSERVER_BASE_URL=/geoserver
@@ -72,7 +69,6 @@ services:
       context: .
       dockerfile: Dockerfile.geoserver-init
     image: geoserver-init:latest
-    container_name: geoserver-init
     depends_on:
       geoserver:
         condition: service_healthy
@@ -90,7 +86,6 @@ services:
       context: .
       dockerfile: Dockerfile.rstats
     image: essosc-rstats:latest
-    container_name: essosc-rstats
     restart: unless-stopped
     environment:
       - RASTERS_YAML_PATH=/app/layers.yml

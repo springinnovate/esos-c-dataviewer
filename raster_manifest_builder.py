@@ -1,3 +1,5 @@
+# TODO: docstring sof this module and functions
+
 from pathlib import Path
 import argparse
 import logging

@@ -212,7 +212,14 @@ def recreate_workspace(
 
 
 def crs_info_from_rasterio_crs(crs):
-    # prefer an EPSG code if present; otherwise fall back to WKT
+    """Extract CRS information from a rasterio CRS object.
+
+    Args:
+        crs (rasterio.crs.CRS): The CRS object to process.
+
+    Returns:
+        dict: CRS metadata including declared SRS, native WKT, and reprojection policy.
+    """
     logger.info(f"processing crs from {crs}")
     try:
         auth, code = crs.to_authority() or (None, None)

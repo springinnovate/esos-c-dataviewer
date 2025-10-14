@@ -14,6 +14,17 @@ templates = Jinja2Templates(directory="templates")
 
 
 def _load_layers_config(cfg_path: str) -> dict:
+    """Load a YAML layers configuration file.
+
+    Args:
+        cfg_path (str): Path to the configuration file.
+
+    Returns:
+        dict: Parsed configuration data.
+
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+    """
     if not Path(cfg_path).exists():
         raise FileNotFoundError(cfg_path)
     with open(cfg_path, "r", encoding="utf-8") as f:

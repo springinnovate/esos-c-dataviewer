@@ -47,7 +47,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.viewer
-    image: essosc-viewer:latest
     restart: unless-stopped
     environment:
       - GEOSERVER_BASE_URL=/geoserver
@@ -68,7 +67,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.geoserver-init
-    image: geoserver-init:latest
     depends_on:
       geoserver:
         condition: service_healthy
@@ -85,7 +83,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.rstats
-    image: essosc-rstats:latest
     restart: unless-stopped
     environment:
       - RASTERS_YAML_PATH=/app/layers.yml

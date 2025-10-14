@@ -98,7 +98,9 @@ class PixelWindowStatsIn(BaseModel):
 
     # histogram controls
     histogram_bins: int = Field(default=16, ge=1)
-    histogram_range: Optional[Tuple[float, float]] = None  # min,max or None to auto
+    histogram_range: Optional[Tuple[float, float]] = (
+        None  # min,max or None to auto
+    )
 
 
 class GeometryStatsIn(BaseModel):
@@ -223,10 +225,14 @@ def _open_raster(raster_id: str):
     """
     meta = REGISTRY.get(raster_id)
     if not meta:
-        raise HTTPException(status_code=404, detail=f"raster_id not found: {raster_id}")
+        raise HTTPException(
+            status_code=404, detail=f"raster_id not found: {raster_id}"
+        )
     path = meta["file_path"]
     if not Path(path).exists():
-        raise HTTPException(status_code=500, detail=f"raster file missing: {path}")
+        raise HTTPException(
+            status_code=500, detail=f"raster file missing: {path}"
+        )
     ds = rasterio.open(path)
     nodata = meta.get("nodata", ds.nodata)
     units = meta.get("units")
@@ -363,7 +369,9 @@ def pixel_stats(q: PixelWindowStatsIn):
 
     r, c = rowcol(ds.transform, x, y, op=round)
     if not (0 <= r < ds.height and 0 <= c < ds.width):
-        raise HTTPException(status_code=400, detail="point outside raster extent")
+        raise HTTPException(
+            status_code=400, detail="point outside raster extent"
+        )
 
     # optional bbox: reproject bbox corners to raster CRS
     bbox_raster = None
@@ -481,12 +489,13 @@ def geometry_stats(q: GeometryStatsIn):
     ds, nodata, units = _open_raster(q.raster_id)
 
     geom = shape(q.geometry)
-    print(f"this is the geom: {geom}", flush=True)
 
     # Reproject geometry to raster CRS if needed
     if q.from_crs != ds.crs.to_string():
         transformer = Transformer.from_crs(q.from_crs, ds.crs, always_xy=True)
-        geom = shp_transform(lambda x, y, z=None: transformer.transform(x, y), geom)
+        geom = shp_transform(
+            lambda x, y, z=None: transformer.transform(x, y), geom
+        )
 
     # --- safe window builder (avoids zero-sized windows) ---
     def _safe_window_for_geom(dataset, g):
@@ -579,7 +588,9 @@ def geometry_stats(q: GeometryStatsIn):
             bin_width = np.ptp(vals) / 10 or 1  # fallback
 
         num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
-        num_bins = min(num_bins_fd, 64)  # cap at 32 bins (or whatever limit you want)
+        num_bins = min(
+            num_bins_fd, 64
+        )  # cap at 32 bins (or whatever limit you want)
 
         hist, bin_edges = np.histogram(vals, bins=num_bins)
         # hist, bin_edges = np.histogram(vals, bins="doane")
@@ -603,7 +614,9 @@ def geometry_stats(q: GeometryStatsIn):
         "valid_area_m2": float(valid_pixels * pixel_area),
         "nodata_area_m2": float(nodata_pixels * pixel_area),
         "coverage_ratio": (
-            float(valid_pixels / total_mask_pixels) if total_mask_pixels else 0.0
+            float(valid_pixels / total_mask_pixels)
+            if total_mask_pixels
+            else 0.0
         ),
     }
     stats.update(area_stats)

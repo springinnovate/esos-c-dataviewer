@@ -134,3 +134,8 @@ select, input[type='range'], input[type='number'] {
   transform: translate(8px, 8px);
   white-space: nowrap;
 }
+
+/* ===== Utilities ===== */
+#map { cursor: crosshair; }
+.inline { display: inline-flex; align-items: center; gap: .5rem; }
+.num { width: 7ch; }

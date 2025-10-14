@@ -5,16 +5,14 @@
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1' />
     <title>ESSOSC Viewer</title>
+
     <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />
-    <link rel='stylesheet' href='static/style.css' />
     <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
-    <style>
-      #map { cursor: crosshair; }
-      .inline { display: inline-flex; align-items: center; gap: .5rem; }
-      .num { width: 7ch; }
-    </style>
+    <link rel='stylesheet' href='static/style.css' />
   </head>
+
   <body>
+    <!-- Top control bar -->
     <header>
       <div class='brand'>ESSOSC Viewer</div>
       <div class='controls'>
@@ -34,8 +32,10 @@
       </div>
     </header>
 
+    <!-- Map container -->
     <main>
       <section id='map'>
+        <!-- Floating overlay for sampled stats -->
         <div id='statsOverlay' class='overlay hidden'>
           <div class='overlay-header'>
             <span>Area sampler</span>
@@ -46,6 +46,7 @@
       </section>
     </main>
 
+    <!-- App logic -->
     <script src='static/app.js'></script>
   </body>
 </html>

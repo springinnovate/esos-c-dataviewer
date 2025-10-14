@@ -95,7 +95,6 @@ def generate_dynamic_sld(
     raster_path: str | Path,
     styles_root: str | Path,
     n_colors: int = 7,
-    logger: logging.Logger | None = None,
 ) -> str:
     """Generate and write a sequential color-ramp SLD for a raster.
 
@@ -113,23 +112,22 @@ def generate_dynamic_sld(
         str: Filesystem path to the generated SLD file.
     """
     t0 = time.perf_counter()
-    _log = logger or logging.getLogger(__name__)
-    _log.info("SLD generation started: raster=%s", raster_path)
+    logger.info("SLD generation started: raster=%s", raster_path)
 
     raster_path = Path(raster_path)
     styles_root = Path(styles_root)
     styles_dir = styles_root / "styles"
     styles_dir.mkdir(parents=True, exist_ok=True)
-    _log.debug("Ensured styles directory exists: %s", styles_dir)
+    logger.debug("Ensured styles directory exists: %s", styles_dir)
 
     style_stem = f"{raster_path.stem}_default_style"
     sld_path = styles_dir / f"{style_stem}.sld"
-    _log.debug("Output SLD path resolved: %s", sld_path)
+    logger.debug("Output SLD path resolved: %s", sld_path)
 
     t_open = time.perf_counter()
-    _log.info("Opening raster with rasterio...")
+    logger.info("Opening raster with rasterio...")
     with rasterio.open(raster_path) as ds:
-        _log.debug(
+        logger.debug(
             "Raster opened: width=%d height=%d dtype=%s nodata=%s",
             ds.width,
             ds.height,
@@ -137,9 +135,9 @@ def generate_dynamic_sld(
             ds.nodata,
         )
         t_read = time.perf_counter()
-        _log.info("Reading band 1 as masked array...")
+        logger.info("Reading band 1 as masked array...")
         arr = ds.read(1, masked=True)
-        _log.debug(
+        logger.debug(
             "Band read complete in %.3fs; masked=%s",
             time.perf_counter() - t_read,
             bool(np.ma.isMaskedArray(arr)),
@@ -154,29 +152,29 @@ def generate_dynamic_sld(
                 else None
             )
         )
-        _log.debug("Resolved nodata value: %s", str(nodata))
+        logger.debug("Resolved nodata value: %s", str(nodata))
 
         t_compress = time.perf_counter()
         valid = arr.compressed().astype("float64")
-        _log.info(
+        logger.info(
             "Compressed valid data in %.3fs; valid_count=%d (of %d)",
             time.perf_counter() - t_compress,
             valid.size,
             arr.size,
         )
 
-    _log.debug(
+    logger.debug(
         "Raster open+read total time: %.3fs", time.perf_counter() - t_open
     )
 
     if valid.size == 0:
-        _log.warning("No valid data found; using trivial range [0,1]")
+        logger.warning("No valid data found; using trivial range [0,1]")
         qmin, qmax = 0.0, 1.0
     else:
         t_pct = time.perf_counter()
-        _log.info("Computing 5th/95th percentiles...")
+        logger.info("Computing 5th/95th percentiles...")
         qmin, qmax = np.percentile(valid, [5, 95])
-        _log.debug(
+        logger.debug(
             "Percentiles computed in %.3fs: p5=%.6g p95=%.6g",
             time.perf_counter() - t_pct,
             qmin,
@@ -184,11 +182,13 @@ def generate_dynamic_sld(
         )
 
         if not np.isfinite(qmin) or not np.isfinite(qmax) or qmin == qmax:
-            _log.info("Percentiles degenerate or non-finite; using min/max...")
+            logger.info(
+                "Percentiles degenerate or non-finite; using min/max..."
+            )
             t_mm = time.perf_counter()
             qmin = float(np.nanmin(valid))
             qmax = float(np.nanmax(valid))
-            _log.debug(
+            logger.debug(
                 "Min/Max computed in %.3fs: min=%.6g max=%.6g",
                 time.perf_counter() - t_mm,
                 qmin,
@@ -197,7 +197,7 @@ def generate_dynamic_sld(
 
         if qmin == qmax:
             eps = 1.0 if qmin == 0 else abs(qmin) * 0.01
-            _log.info("Flat data detected; expanding range by ±%.6g", eps)
+            logger.info("Flat data detected; expanding range by ±%.6g", eps)
             qmin -= eps
             qmax += eps
 
@@ -210,9 +210,9 @@ def generate_dynamic_sld(
     qmin_n = _nice(qmin)
     qmax_n = _nice(qmax)
     if qmin_n >= qmax_n:
-        _log.debug("Nice range collapsed; reverting to raw [qmin,qmax]")
+        logger.debug("Nice range collapsed; reverting to raw [qmin,qmax]")
         qmin_n, qmax_n = qmin, qmax
-    _log.info("Final range for ramp: [%.6g, %.6g]", qmin_n, qmax_n)
+    logger.info("Final range for ramp: [%.6g, %.6g]", qmin_n, qmax_n)
 
     palette = [
         "#f7fcb9",
@@ -224,16 +224,16 @@ def generate_dynamic_sld(
         "#005a32",
     ]
     if n_colors < 2:
-        _log.debug("Requested n_colors < 2; bumping to 2")
+        logger.debug("Requested n_colors < 2; bumping to 2")
         n_colors = 2
 
-    _log.info("Preparing color ramp entries: n_colors=%d", n_colors)
+    logger.info("Preparing color ramp entries: n_colors=%d", n_colors)
     colors_idx = np.linspace(0, len(palette) - 1, n_colors).round().astype(int)
     colors = [palette[i] for i in colors_idx]
-    _log.debug("Palette indices: %s; colors: %s", colors_idx.tolist(), colors)
+    logger.debug("Palette indices: %s; colors: %s", colors_idx.tolist(), colors)
 
     quantities = np.linspace(qmin_n, qmax_n, n_colors)
-    _log.debug("Quantities: %s", [float(x) for x in quantities])
+    logger.debug("Quantities: %s", [float(x) for x in quantities])
 
     def _lbl(x: float) -> str:
         ax = abs(x)
@@ -245,7 +245,7 @@ def generate_dynamic_sld(
             return f"{x:.1f}"
         return f"{x:.2f}"
 
-    _log.info("Building ColorMap entries...")
+    logger.info("Building ColorMap entries...")
     entries = []
 
     # Collect all entries as (quantity, xml_string) tuples
@@ -278,13 +278,13 @@ def generate_dynamic_sld(
 
     # Keep only the XML strings
     entries = [xml for _, xml in entries]
-    _log.debug("ColorMap entries built: %d", len(entries))
+    logger.debug("ColorMap entries built: %d", len(entries))
 
     layer_name = raster_path.stem
     title = f"{layer_name} (auto)"
     abstract = f"Auto-generated ramp from {_lbl(qmin_n)} to {_lbl(qmax_n)}; nodata transparent."
 
-    _log.info("Composing SLD XML...")
+    logger.info("Composing SLD XML...")
     sld = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<StyledLayerDescriptor version="1.0.0"\n'
@@ -304,8 +304,8 @@ def generate_dynamic_sld(
         f"          <RasterSymbolizer>\n"
         f"            <Opacity>1.0</Opacity>\n"
         f'            <ColorMap type="ramp">\n'
-        + "\n".join(entries)
-        + "\n"  # noqa: F541
+        + "\n".join(entries)  # noqa: W503
+        + "\n"  # noqa: F541, W503
         f"            </ColorMap>\n"
         f"            <ContrastEnhancement>\n"
         f"              <Normalize/>\n"
@@ -318,12 +318,12 @@ def generate_dynamic_sld(
         f"</StyledLayerDescriptor>\n"
     )
 
-    _log.info("Writing SLD to disk: %s", sld_path)
+    logger.info("Writing SLD to disk: %s", sld_path)
     t_write = time.perf_counter()
     sld_path.write_text(sld, encoding="utf-8")
-    _log.debug("SLD write time: %.3fs", time.perf_counter() - t_write)
+    logger.debug("SLD write time: %.3fs", time.perf_counter() - t_write)
 
-    _log.info(
+    logger.info(
         "SLD generation finished in %.3fs: %s",
         time.perf_counter() - t0,
         sld_path,

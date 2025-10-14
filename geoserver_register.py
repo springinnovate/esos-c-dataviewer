@@ -46,7 +46,6 @@ import yaml
 import rasterio
 
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",

@@ -465,6 +465,9 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   const barW = innerW / Math.max(1, bins)
 
   const svgNS = 'http://www.w3.org/2000/svg'
+  // we need the ..NS one to create its own namespace because svg is xml not
+  // html and this guards it. so any element that needs its own namespace
+  // needs this
   const svg = document.createElementNS(svgNS, 'svg')
   svg.setAttribute('width', String(w))
   svg.setAttribute('height', String(h))

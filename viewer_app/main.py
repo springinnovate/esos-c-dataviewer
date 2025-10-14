@@ -1,4 +1,29 @@
-# viewer_app/main.py
+"""ESSOSC Viewer FastAPI application.
+
+This module defines the main FastAPI application for the ESSOSC Viewer.
+It serves a simple web interface for visualizing raster layers hosted on
+a GeoServer instance and accessing associated raster statistics through
+a REST API.
+
+The application provides:
+    * A root endpoint ("/") rendering the main viewer HTML page.
+    * An API endpoint ("/api/config") returning configuration metadata,
+      including GeoServer and raster stats base URLs, and available raster
+      layers parsed from a YAML configuration file.
+
+Environment Variables:
+    LAYERS_YAML_PATH (str): Path to the YAML configuration file defining
+        workspaces, styles, and layers.
+    GEOSERVER_BASE_URL (str): Base URL for the GeoServer service.
+    RSTATS_BASE_URL (str): Base URL for the raster statistics service.
+
+Functions:
+    _load_layers_config(config_path): Load and parse the YAML configuration file.
+    _collect_layers(config): Extract raster GeoTIFF layer definitions.
+    index(request): Render the main viewer page.
+    api_config(): Return combined configuration for front-end initialization.
+"""
+
 from pathlib import Path
 import os
 import yaml

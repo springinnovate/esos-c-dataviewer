@@ -1,0 +1,52 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <title>ESSOSC Viewer</title>
+
+    <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />
+    <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
+    <link rel='stylesheet' href='static/style.css' />
+  </head>
+
+  <body>
+    <!-- Top control bar -->
+    <header>
+      <div class='brand'>ESSOSC Viewer</div>
+      <div class='controls'>
+        <label>
+          Layer
+          <select id='layerSelect'></select>
+        </label>
+        <label>
+          Opacity
+          <input id='opacityRange' type='range' min='0' max='1' step='0.05' value='1' />
+        </label>
+        <span class='inline'>
+          <label for='windowSize'>Window Size (km)</label>
+          <input id='windowSize' type='range' min='1' max='1000' step='1' value='10' />
+          <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='10' />
+        </span>
+      </div>
+    </header>
+
+    <!-- Map container -->
+    <main>
+      <section id='map'>
+        <!-- Floating overlay for sampled stats -->
+        <div id='statsOverlay' class='overlay hidden'>
+          <div class='overlay-header'>
+            <span>Area sampler</span>
+            <button id='overlayClose' title='Close'>&times;</button>
+          </div>
+          <div id='overlayBody' class='overlay-body'></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- App logic -->
+    <script src='static/app.js'></script>
+  </body>
+</html>

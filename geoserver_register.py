@@ -32,9 +32,10 @@ Example:
             default_style: my_style
 """
 
-from typing import Any
 from pathlib import Path
+from typing import Any
 import argparse
+import logging
 import os
 import sys
 import time
@@ -42,6 +43,15 @@ import time
 from dotenv import load_dotenv
 import requests
 import yaml
+import rasterio
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 requests.packages.urllib3.disable_warnings()  # noqa: E402
 
@@ -168,30 +178,17 @@ class Gs:
 def recreate_workspace(
     geoserver_client: Gs, workspace_name: str, make_default: bool
 ) -> None:
-    """Delete and recreate a GeoServer workspace.
-
-    This forcibly deletes an existing workspace (with all contents)
-    and creates a new one, optionally making it the default.
-
-    Args:
-        geoserver_client (Gs): Authenticated GeoServer REST client.
-        workspace_name (str): The workspace to delete and recreate.
-        make_default (bool, optional): Whether to make this the default
-            workspace after creation. Defaults to False.
-    """
-    # Delete if exists
     delete_response = geoserver_client.delete(
         f"/rest/workspaces/{workspace_name}?recurse=true"
     )
     if delete_response.status_code in (200, 202, 204, 404):
-        print(f"Deleted workspace '{workspace_name}' (if existed).", flush=True)
+        logger.info("Deleted workspace '%s' (if existed).", workspace_name)
     else:
         raise RuntimeError(
             f"Failed to delete workspace {workspace_name}: "
             f"{delete_response.status_code} {delete_response.text}"
         )
 
-    # (re) create
     create_payload = {"workspace": {"name": workspace_name}}
     create_response = geoserver_client.post("/rest/workspaces", create_payload)
     if create_response.status_code not in (200, 201):
@@ -211,7 +208,37 @@ def recreate_workspace(
                 f"{default_resp.status_code} {default_resp.text}"
             )
 
-    print(f"Workspace '{workspace_name}' (re)created successfully.", flush=True)
+    logger.info("Workspace '%s' (re)created successfully.", workspace_name)
+
+
+def crs_info_from_rasterio_crs(crs):
+    """Extract CRS information from a rasterio CRS object.
+
+    Args:
+        crs (rasterio.crs.CRS): The CRS object to process.
+
+    Returns:
+        dict: CRS metadata including declared SRS, native WKT, and reprojection policy.
+    """
+    logger.info(f"processing crs from {crs}")
+    try:
+        auth, code = crs.to_authority() or (None, None)
+        logger.info(f"got {auth} / {code}")
+    except Exception:
+        auth, code = None, None
+    if auth == "EPSG" and code:
+        return {
+            "declared_srs": f"EPSG:{code}",
+            "native_wkt": crs.to_wkt(),
+            "policy": "FORCE_DECLARED",
+        }
+    else:
+        # choose a declared CRS you want clients to see (e.g., EPSG:4326)
+        return {
+            "declared_srs": "EPSG:4326",
+            "native_wkt": crs.to_wkt(),
+            "policy": "REPROJECT_TO_DECLARED",
+        }
 
 
 def create_layer(
@@ -272,14 +299,22 @@ def create_layer(
             f"{store_response.status_code} {store_response.text}"
         )
 
-    # Create the coverage resource
+    info = crs_info_from_rasterio_crs(spatial_ref_system)
     coverage_payload = {
         "coverage": {
             "name": coverage_name,
             "nativeName": coverage_name,
             "enabled": True,
-            "srs": spatial_ref_system,
-            "projectionPolicy": "FORCE_DECLARED",
+            "projectionPolicy": info["policy"],
+            "srs": info["declared_srs"],
+            "nativeCRS": info["native_wkt"],
+            # These are hard-coded to allow common requests and responses in
+            # common web and geographic CRSs EPSG:4326 (lat/lon) and
+            # EPSG:3857 (Web Mercator) without allowing just any projection
+            # you want, I'm not sure these are necessary but if it breaks
+            # it will be for a good reason we can figure out then.
+            "requestSRS": {"string": ["EPSG:4326", "EPSG:3857"]},
+            "responseSRS": {"string": ["EPSG:4326", "EPSG:3857"]},
         }
     }
 
@@ -430,8 +465,6 @@ def create_style_if_not_exists(
 
 
 def main():
-    """Main entry point for GeoServer initialization and configuration."""
-
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
@@ -464,41 +497,41 @@ def main():
             workspace_def["name"],
             workspace_def.get("default", False),
         )
+        workspace_name = workspace_def["name"]
 
-    for style_def in config_data.get("styles", []):
+    for raster_id, layer_def in config_data.get("layers").items():
+        style_path = layer_def["default_style"]
         create_style_if_not_exists(
             geoserver_client,
-            style_def["workspace"],
-            style_def["name"],
-            style_def.get("format", "sld"),
-            style_def["file_path"],
+            workspace_name,
+            Path(style_path).stem,
+            "sld",
+            style_path,
         )
-
-    for layer_def in config_data.get("layers", []):
-        print(f"Working on layer definition: {layer_def}")
-
+        logger.info("Working on layer definition: %s", layer_def)
         layer_type = layer_def["type"]
-        workspace_name = layer_def["workspace"]
-        default_style = layer_def.get("default_style")
-        spatial_ref_system = layer_def.get("srs")
+        default_style = Path(layer_def.get("default_style")).stem
         file_path = layer_def["file_path"]
+
+        with rasterio.open(file_path) as ds:
+            ds_crs = ds.crs
 
         if layer_type == "raster_geotiff":
             create_layer(
                 geoserver_client,
                 workspace_name,
                 file_path,
-                spatial_ref_system,
+                ds_crs,
                 default_style,
             )
         else:
             raise ValueError(f"Unknown layer type: {layer_type}")
-    print("all done")
+    logger.info("All done.")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        print(f"error: {e}", file=sys.stderr)
+    except Exception:
+        logger.exception("Unhandled error during GeoServer configuration")
         sys.exit(1)

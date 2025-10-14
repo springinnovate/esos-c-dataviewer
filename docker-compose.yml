@@ -23,7 +23,6 @@ services:
 
   geoserver:
     image: ${GEOSERVER_IMAGE}
-    container_name: geoserver
     restart: unless-stopped
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/geoserver/web/ >/dev/null 2>&1 || exit 1']
@@ -49,11 +48,11 @@ services:
       context: .
       dockerfile: Dockerfile.viewer
     image: essosc-viewer:latest
-    container_name: essosc-viewer
     restart: unless-stopped
     environment:
       - GEOSERVER_BASE_URL=/geoserver
       - LAYERS_YAML_PATH=/app/layers.yml
+      - RSTATS_BASE_URL=/rstats
     volumes:
       - ./layers.yml:/app/layers.yml:ro
     networks: [backend]
@@ -70,7 +69,6 @@ services:
       context: .
       dockerfile: Dockerfile.geoserver-init
     image: geoserver-init:latest
-    container_name: geoserver-init
     depends_on:
       geoserver:
         condition: service_healthy
@@ -82,3 +80,25 @@ services:
       - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
+
+  rstats:
+    build:
+      context: .
+      dockerfile: Dockerfile.rstats
+    image: essosc-rstats:latest
+    restart: unless-stopped
+    environment:
+      - RASTERS_YAML_PATH=/app/layers.yml
+      - WORKERS=2
+    volumes:
+      - ./layers.yml:/app/layers.yml:ro
+      - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ./.env:/app/.env:ro
+    networks: [backend]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rstats.rule=Host(`localhost`) && PathPrefix(`/rstats`)
+      - traefik.http.routers.rstats.entrypoints=web
+      - traefik.http.services.rstats.loadbalancer.server.port=8000
+      - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
+      - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker

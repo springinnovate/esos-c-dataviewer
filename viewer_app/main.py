@@ -32,6 +32,14 @@ def _load_layers_config(cfg_path: str) -> dict:
 
 
 def _collect_layers(cfg: dict) -> list:
+    """Collect raster GeoTIFF layer metadata from configuration.
+
+    Args:
+        cfg (dict): Loaded configuration data.
+
+    Returns:
+        list: List of layer metadata dictionaries.
+    """
     layers = []
     workspace = cfg.get("workspaces")[0]["name"]
     for layer_id, layer in cfg.get("layers", []).items():
@@ -50,11 +58,27 @@ def _collect_layers(cfg: dict) -> list:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
+    """Render the main viewer page.
+
+    Args:
+        request (Request): Incoming HTTP request.
+
+    Returns:
+        TemplateResponse: Rendered HTML response for the index page.
+    """
     return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/api/config")
 def api_config():
+    """Return API configuration for GeoServer and raster stats services.
+
+    Returns:
+        dict: Configuration including base URLs and layer definitions.
+
+    Raises:
+        HTTPException: If the configuration file is missing or unreadable.
+    """
     cfg_path = os.getenv("LAYERS_YAML_PATH")
     geoserver_base_url = os.getenv("GEOSERVER_BASE_URL").rstrip("/")
     rstats_base_url = os.getenv("RSTATS_BASE_URL").rstrip()

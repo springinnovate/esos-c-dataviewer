@@ -13,11 +13,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
-def _load_layers_config(cfg_path: str) -> dict:
+def _load_layers_config(config_path: str) -> dict:
     """Load a YAML layers configuration file.
 
     Args:
-        cfg_path (str): Path to the configuration file.
+        config_path (str): Path to the configuration file.
 
     Returns:
         dict: Parsed configuration data.
@@ -25,24 +25,24 @@ def _load_layers_config(cfg_path: str) -> dict:
     Raises:
         FileNotFoundError: If the configuration file does not exist.
     """
-    if not Path(cfg_path).exists():
-        raise FileNotFoundError(cfg_path)
-    with open(cfg_path, "r", encoding="utf-8") as f:
+    if not Path(config_path).exists():
+        raise FileNotFoundError(config_path)
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-def _collect_layers(cfg: dict) -> list:
+def _collect_layers(config: dict) -> list:
     """Collect raster GeoTIFF layer metadata from configuration.
 
     Args:
-        cfg (dict): Loaded configuration data.
+        config (dict): Loaded configuration data.
 
     Returns:
         list: List of layer metadata dictionaries.
     """
     layers = []
-    workspace = cfg.get("workspaces")[0]["name"]
-    for layer_id, layer in cfg.get("layers", []).items():
+    workspace = config.get("workspaces")[0]["name"]
+    for layer_id, layer in config.get("layers", []).items():
         if layer.get("type") != "raster_geotiff":
             continue
         style = Path(layer.get("default_style")).stem
@@ -79,17 +79,17 @@ def api_config():
     Raises:
         HTTPException: If the configuration file is missing or unreadable.
     """
-    cfg_path = os.getenv("LAYERS_YAML_PATH")
+    config_path = os.getenv("LAYERS_YAML_PATH")
     geoserver_base_url = os.getenv("GEOSERVER_BASE_URL").rstrip("/")
     rstats_base_url = os.getenv("RSTATS_BASE_URL").rstrip()
     try:
-        cfg = _load_layers_config(cfg_path)
+        config = _load_layers_config(config_path)
     except FileNotFoundError:
         raise HTTPException(
-            status_code=500, detail=f"layers.yml not found at {cfg_path}"
+            status_code=500, detail=f"layers.yml not found at {config_path}"
         )
     return {
         "geoserver_base_url": geoserver_base_url,
-        "layers": _collect_layers(cfg),
+        "layers": _collect_layers(config),
         "rstats_base_url": rstats_base_url,
     }

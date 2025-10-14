@@ -1,18 +1,21 @@
-import time
-import numpy as np
-import math
-import argparse
-import sys
 from pathlib import Path
-
-import yaml
-import rasterio
-
+import argparse
 import logging
+import math
+import sys
+import time
+
+import numpy as np
+import rasterio
+import yaml
+
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+logger = logging.getLogger(__name__)
 
 
 def find_geotiffs(root: Path, exts):
@@ -118,7 +121,9 @@ def generate_dynamic_sld(
             arr.size,
         )
 
-    _log.debug("Raster open+read total time: %.3fs", time.perf_counter() - t_open)
+    _log.debug(
+        "Raster open+read total time: %.3fs", time.perf_counter() - t_open
+    )
 
     if valid.size == 0:
         _log.warning("No valid data found; using trivial range [0,1]")
@@ -296,7 +301,7 @@ def main():
 
     root = args.directory.resolve()
     if not root.exists() or not root.is_dir():
-        print(f"error: directory not found: {root}", file=sys.stderr)
+        logger.error(f"error: directory not found: {root}", file=sys.stderr)
         sys.exit(2)
 
     layers = {}
@@ -308,8 +313,8 @@ def main():
             default_style=Path(path_to_style).as_posix(),
         )
         if key in layers:
-            print(
-                f'warn: duplicate layer id "{key}" from {raster_path}, skipping',
+            logger.warning(
+                f'duplicate layer id "{key}" from {raster_path}, skipping',
                 file=sys.stderr,
             )
             continue
@@ -331,7 +336,9 @@ def main():
 
     def _repr_str(dumper, data):
         if "\n" in data:
-            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+            return dumper.represent_scalar(
+                "tag:yaml.org,2002:str", data, style="|"
+            )
         return dumper.org_represent_str(data)
 
     yaml.SafeDumper.represent_str = _repr_str

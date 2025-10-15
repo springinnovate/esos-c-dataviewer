@@ -195,16 +195,7 @@ def purge_and_create_workspace(
             - Creating the new workspace.
             - Setting the new workspace as the default.
 
-    Side Effects:
-        - Permanently deletes **all** existing workspaces and their contents in GeoServer.
-        - Creates a new workspace named `workspace_name`.
-        - Sets that workspace as the GeoServer default.
-
-    Logs:
-        - Info messages for each workspace deletion.
-        - Info message when the new workspace is created and made default.
     """
-    # get all workspaces because we are going to delete them
     list_resp = geoserver_client.get("/rest/workspaces.json")
     if list_resp.status_code != 200:
         raise RuntimeError(

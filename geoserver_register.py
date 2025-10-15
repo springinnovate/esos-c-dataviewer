@@ -175,20 +175,64 @@ class Gs:
         )
 
 
-def recreate_workspace(
-    geoserver_client: Gs, workspace_name: str, make_default: bool
+def purge_and_create_workspace(
+    geoserver_client: Gs, workspace_name: str
 ) -> None:
-    delete_response = geoserver_client.delete(
-        f"/rest/workspaces/{workspace_name}?recurse=true"
-    )
-    if delete_response.status_code in (200, 202, 204, 404):
-        logger.info("Deleted workspace '%s' (if existed).", workspace_name)
-    else:
+    """Deletes all existing GeoServer workspaces and creates a single new one.
+
+    This function retrieves all workspaces from the GeoServer REST API and deletes
+    them using the `?recurse=true` flag to remove all associated layers and stores.
+    After purging, it creates a new workspace with the given name and sets it as
+    the default workspace.
+
+    Args:
+        geoserver_client (Gs): An authenticated GeoServer client used to send REST requests.
+        workspace_name (str): The name of the new workspace to create.
+
+    Raises:
+        RuntimeError: If any of the following operations fail:
+            - Listing existing workspaces.
+            - Deleting one or more workspaces.
+            - Creating the new workspace.
+            - Setting the new workspace as the default.
+
+    Side Effects:
+        - Permanently deletes **all** existing workspaces and their contents in GeoServer.
+        - Creates a new workspace named `workspace_name`.
+        - Sets that workspace as the GeoServer default.
+
+    Logs:
+        - Info messages for each workspace deletion.
+        - Info message when the new workspace is created and made default.
+    """
+    # get all workspaces because we are going to delete them
+    list_resp = geoserver_client.get("/rest/workspaces.json")
+    if list_resp.status_code != 200:
         raise RuntimeError(
-            f"Failed to delete workspace {workspace_name}: "
-            f"{delete_response.status_code} {delete_response.text}"
+            f"Failed to list workspaces: {list_resp.status_code} {list_resp.text}"
         )
 
+    data = list_resp.json()
+    workspaces = data.get("workspaces", {}).get("workspace", [])
+    if not isinstance(workspaces, list):
+        workspaces = [workspaces]
+
+    for ws in workspaces:
+        name = ws.get("name")
+        if not name:
+            continue
+        del_resp = geoserver_client.delete(
+            f"/rest/workspaces/{name}?recurse=true"
+        )
+        if del_resp.status_code in (200, 202, 204, 404):
+            logger.info("Deleted workspace '%s' (if existed).", name)
+        else:
+            raise RuntimeError(
+                f"Failed to delete workspace {name}: "
+                f"{del_resp.status_code} {del_resp.text}"
+            )
+
+    # create the single new workspace
     create_payload = {"workspace": {"name": workspace_name}}
     create_response = geoserver_client.post("/rest/workspaces", create_payload)
     if create_response.status_code not in (200, 201):
@@ -197,16 +241,20 @@ def recreate_workspace(
             f"{create_response.status_code} {create_response.text}"
         )
 
-    if make_default:
-        default_resp = geoserver_client.put(
-            "/rest/workspaces/default.json",
-            {"workspace": {"name": workspace_name}},
+    default_resp = geoserver_client.put(
+        "/rest/workspaces/default.json",
+        {"workspace": {"name": workspace_name}},
+    )
+    if default_resp.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Failed to make {workspace_name} default: "
+            f"{default_resp.status_code} {default_resp.text}"
         )
-        if default_resp.status_code not in (200, 201):
-            raise RuntimeError(
-                f"Failed to make {workspace_name} default: "
-                f"{default_resp.status_code} {default_resp.text}"
-            )
+
+    logger.info(
+        "Workspace '%s' (re)created successfully after clearing all workspaces.",
+        workspace_name,
+    )
 
     logger.info("Workspace '%s' (re)created successfully.", workspace_name)
 
@@ -492,25 +540,28 @@ def main():
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
 
     for workspace_def in config_data.get("workspaces", []):
-        recreate_workspace(
+        purge_and_create_workspace(
             geoserver_client,
             workspace_def["name"],
-            workspace_def.get("default", False),
         )
         workspace_name = workspace_def["name"]
 
-    for raster_id, layer_def in config_data.get("layers").items():
-        style_path = layer_def["default_style"]
+    for style_id, style_def in config_data.get("styles").items():
+        style_path = Path(style_def["file_path"])
         create_style_if_not_exists(
             geoserver_client,
             workspace_name,
-            Path(style_path).stem,
+            style_id,
             "sld",
             style_path,
         )
+
+    # TODO: i need to make a better style generator here, but for now this just does it
+    # on the last one that was put in
+    default_style_id = style_id
+    for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
         layer_type = layer_def["type"]
-        default_style = Path(layer_def.get("default_style")).stem
         file_path = layer_def["file_path"]
 
         with rasterio.open(file_path) as ds:
@@ -522,7 +573,7 @@ def main():
                 workspace_name,
                 file_path,
                 ds_crs,
-                default_style,
+                default_style_id,
             )
         else:
             raise ValueError(f"Unknown layer type: {layer_type}")

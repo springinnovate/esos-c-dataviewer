@@ -71,12 +71,10 @@ def _collect_layers(config: dict) -> list:
     for layer_id, layer in config.get("layers", []).items():
         if layer.get("type") != "raster_geotiff":
             continue
-        style = Path(layer.get("default_style")).stem
         layers.append(
             {
                 "workspace": workspace,
                 "name": layer_id,
-                "default_style": style,
             }
         )
     return layers

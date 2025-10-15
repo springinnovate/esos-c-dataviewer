@@ -5,179 +5,137 @@ geoserver:
 workspaces:
 - name: esosc
   default: true
-styles: []
+styles:
+  agb_biomass_style:
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/styles/agb_biomass.sld
+
 layers:
   carbon_above:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/carbon_above.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/carbon_above_default_style.sld
   carbon_below:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/carbon_below.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/carbon_below_default_style.sld
   carbon_soil:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/carbon_soil.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/carbon_soil_default_style.sld
   epf_gap:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/epf_gap.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/epf_gap_default_style.sld
   epf_natural_habitats:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/epf_natural_habitats.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/epf_natural_habitats_default_style.sld
   farmersincome_gap:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/farmersincome_gap.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/farmersincome_gap_default_style.sld
   farmersincome_natural_habitats:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/farmersincome_natural_habitats.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/farmersincome_natural_habitats_default_style.sld
   landcarbon_ca:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/landcarbon_ca.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/landcarbon_ca_default_style.sld
   landscan_ca:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/landscan_ca.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/landscan_ca_default_style.sld
   nature_landcarbon_ca:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/nature_landcarbon_ca.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/nature_landcarbon_ca_default_style.sld
   poldep_cropproduction_tons_Beans:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Beans.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Beans_default_style.sld
   poldep_cropproduction_tons_Berries:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Berries.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Berries_default_style.sld
   poldep_cropproduction_tons_Blueberry:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Blueberry.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Blueberry_default_style.sld
   poldep_cropproduction_tons_Borage:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Borage.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Borage_default_style.sld
   poldep_cropproduction_tons_Camelina:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Camelina.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Camelina_default_style.sld
   poldep_cropproduction_tons_Canola_rapeseed:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Canola_rapeseed.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Canola_rapeseed_default_style.sld
   poldep_cropproduction_tons_Cranberry:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Cranberry.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Cranberry_default_style.sld
   poldep_cropproduction_tons_Fababeans:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Fababeans.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Fababeans_default_style.sld
   poldep_cropproduction_tons_Flaxseed:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Flaxseed.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Flaxseed_default_style.sld
   poldep_cropproduction_tons_Fruits:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Fruits.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Fruits_default_style.sld
   poldep_cropproduction_tons_Mustard:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Mustard.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Mustard_default_style.sld
   poldep_cropproduction_tons_Oilseeds:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Oilseeds.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Oilseeds_default_style.sld
   poldep_cropproduction_tons_Orchards:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Orchards.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Orchards_default_style.sld
   poldep_cropproduction_tons_Other berry:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Other
       berry.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Other
-      berry_default_style.sld
   poldep_cropproduction_tons_Other fruits:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Other
       fruits.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Other
-      fruits_default_style.sld
   poldep_cropproduction_tons_Other pulses:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Other
       pulses.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Other
-      pulses_default_style.sld
   poldep_cropproduction_tons_Peas:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Peas.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Peas_default_style.sld
   poldep_cropproduction_tons_Pulses:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Pulses.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Pulses_default_style.sld
   poldep_cropproduction_tons_Safflower:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Safflower.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Safflower_default_style.sld
   poldep_cropproduction_tons_Soybeans:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Soybeans.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Soybeans_default_style.sld
   poldep_cropproduction_tons_Sunflower:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Sunflower.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Sunflower_default_style.sld
   poldep_cropproduction_tons_Tomatoes:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Tomatoes.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Tomatoes_default_style.sld
   poldep_cropproduction_tons_Vegetables:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Vegetables.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/poldep_cropproduction_tons_Vegetables_default_style.sld
   prr_perpixel:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/prr_perpixel.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/prr_perpixel_default_style.sld
   recreation_capacity_std:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/recreation_capacity_std.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/recreation_capacity_std_default_style.sld
   runoff_proxy_ca:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/runoff_proxy_ca.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/runoff_proxy_ca_default_style.sld
   water_capacity_std:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/water_capacity_std.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/water_capacity_std_default_style.sld
   water_demand_std:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/water_demand_std.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/water_demand_std_default_style.sld
   water_provision_std-001:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/water_provision_std-001.tif
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/water_provision_std-001_default_style.sld
   wpnp_sum_DFE_mcg:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/wpnp_sum_DFE_mcg.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/wpnp_sum_DFE_mcg_default_style.sld
   wpnp_sum_KJ_kJ:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/wpnp_sum_KJ_kJ.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/wpnp_sum_KJ_kJ_default_style.sld
   wpnp_sum_RAE_mcg:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/wpnp_sum_RAE_mcg.tiff
-    default_style: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/styles/wpnp_sum_RAE_mcg_default_style.sld

@@ -510,7 +510,6 @@ def geometry_stats(q: GeometryStatsIn):
                 lambda x, y, z=None: transformer.transform(x, y), geom
             )
 
-        # --- safe window builder (avoids zero-sized windows) ---
         def _safe_window_for_geom(dataset, g):
             b = g.bounds
             w = rasterio.windows.from_bounds(*b, transform=dataset.transform)

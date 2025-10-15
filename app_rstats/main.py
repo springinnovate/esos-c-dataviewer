@@ -202,7 +202,9 @@ def _load_registry() -> dict:
     raw_yaml = RASTERS_YAML_PATH.read_text()
     expanded_yaml = os.path.expandvars(raw_yaml)
     y = yaml.safe_load(expanded_yaml)
-    return y.get("layers", {})
+    # geoserver expects all the raster ids to be lowercase
+    layer_dict = {k.lower(): v for k, v in y.get("layers", {}).items()}
+    return layer_dict
 
 
 REGISTRY = _load_registry()

@@ -25,6 +25,7 @@ Functions:
 """
 
 from pathlib import Path
+import logging
 import os
 
 from fastapi import FastAPI, HTTPException
@@ -33,6 +34,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import yaml
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ESSOSC Viewer")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -68,15 +76,18 @@ def _collect_layers(config: dict) -> list:
     """
     layers = []
     workspace_id = config["workspace_id"]
-    for layer_id, layer in config.get("layers", []).items():
+    for _, layer in config.get("layers", []).items():
+        layer_name = Path(layer["file_path"]).stem
         if layer.get("type") != "raster_geotiff":
             continue
         layers.append(
             {
                 "workspace": workspace_id,
-                "name": layer_id,
+                # the geoserver inserts these as lowercase
+                "name": layer_name.lower(),
             }
         )
+    logging.debug(f"layers: {layers}")
     return layers
 
 

@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 import yaml
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -76,7 +76,7 @@ def _collect_layers(config: dict) -> list:
     """
     layers = []
     workspace_id = config["workspace_id"]
-    for _, layer in config.get("layers", []).items():
+    for layer in config.get("layers", []).values():
         layer_name = Path(layer["file_path"]).stem
         if layer.get("type") != "raster_geotiff":
             continue

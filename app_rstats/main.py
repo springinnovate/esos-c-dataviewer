@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal, Optional, Dict, Tuple, Any
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -50,6 +51,13 @@ import yaml
 load_dotenv()
 
 RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 class PixelStatsIn(BaseModel):
@@ -530,7 +538,9 @@ def geometry_stats(q: GeometryStatsIn):
         return w
 
     window = _safe_window_for_geom(ds, geom)
+    logger.debug(f"this is the safe window: {window}")
     data = ds.read(1, window=window, boundless=True, masked=False)
+    logger.debug(f"here's the data: {data}")
     if data.size == 0:
         raise HTTPException(
             status_code=400,
@@ -553,9 +563,11 @@ def geometry_stats(q: GeometryStatsIn):
         arr = np.where(np.isclose(arr, nodata), np.nan, arr)
     # keep only pixels inside polygon
     arr = np.where(mask, arr, np.nan)
+    logger.debug(f"here's the masked data: {arr}")
 
     # Stats over valid (finite) values
     vals = arr[np.isfinite(arr)]
+    logger.debug(f"here is the finite data: {vals}")
 
     stats = {
         "count": int(vals.size),
@@ -588,9 +600,11 @@ def geometry_stats(q: GeometryStatsIn):
             bin_width = np.ptp(vals) / 10 or 1  # fallback
 
         num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
-        num_bins = min(
-            num_bins_fd, 64
-        )  # cap at 32 bins (or whatever limit you want)
+        # at least 1 to 64 bins
+        num_bins = max(1, min(num_bins_fd, 64))
+        logger.debug(
+            f"number of bins {num_bins}; bin width {bin_width}; bin_edges {bin_edges}; qs: {qs}"
+        )
 
         hist, bin_edges = np.histogram(vals, bins=num_bins)
         # hist, bin_edges = np.histogram(vals, bins="doane")

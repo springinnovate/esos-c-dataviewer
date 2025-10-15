@@ -551,8 +551,7 @@ function _ensureHistTooltip() {
     tip = document.createElement('div')
     tip.className = 'hist-tooltip'
     tip.style.display = 'none'
-    // append to overlay so positioning is local
-    document.getElementById('statsOverlay').appendChild(tip)
+    document.body.appendChild(tip)
   }
   return tip
 }

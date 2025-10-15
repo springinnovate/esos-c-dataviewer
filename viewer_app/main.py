@@ -67,13 +67,13 @@ def _collect_layers(config: dict) -> list:
         list: List of layer metadata dictionaries.
     """
     layers = []
-    workspace = config.get("workspaces")[0]["name"]
+    workspace_id = config["workspace_id"]
     for layer_id, layer in config.get("layers", []).items():
         if layer.get("type") != "raster_geotiff":
             continue
         layers.append(
             {
-                "workspace": workspace,
+                "workspace": workspace_id,
                 "name": layer_id,
             }
         )

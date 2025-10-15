@@ -29,6 +29,24 @@
           <input id='windowSize' type='range' min='1' max='1000' step='1' value='10' />
           <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='10' />
         </span>
+
+        <!-- Dynamic style controls -->
+        <details class='style-panel'>
+          <summary>Style</summary>
+          <div class='style-grid'>
+            <label>Min <input id='minInput' type='number' step='any' /></label>
+            <label>Med <input id='medInput' type='number' step='any' /></label>
+            <label>Max <input id='maxInput' type='number' step='any' /></label>
+
+            <label>Color min <input id='cminInput' type='color' value='#f7f7f7' /></label>
+            <label>Color med <input id='cmedInput' type='color' value='#31a354' /></label>
+            <label>Color max <input id='cmaxInput' type='color' value='#006837' /></label>
+
+            <button id='styleFromStatsBtn' type='button' title='Use current stats for min/med/max'>
+              Use stats
+            </button>
+          </div>
+        </details>
       </div>
     </header>
 

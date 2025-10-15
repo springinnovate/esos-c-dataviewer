@@ -19,6 +19,7 @@ const state = {
   boxSizeKm: 10,
   lastMouseLatLng: null,
   outlineLayer: null,
+  lastStats: null,
 }
 
 /**
@@ -237,7 +238,9 @@ function addWmsLayer(qualifiedName) {
   const l = L.tileLayer.wms(wmsUrl, params)
   l.addTo(state.map)
   state.wmsLayer = l
+  applyDefaultDynamicStyle()
 }
+
 
 /**
  * Handle layer change from the <select>.
@@ -296,8 +299,9 @@ function wireAreaSamplerClick() {
       statsObj: stats.stats,
       units: stats.units
     })
-  })
-}
+    applyDefaultDynamicStyle(stats.stats)
+})}
+
 
 /**
  * POST a geometry to the rstats service and return statistics.
@@ -378,6 +382,14 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
   overlay.classList.remove('hidden')
 
   const s = statsObj || {}
+  state.lastStats = s
+  const setIf = (id, val) => {
+    const el = document.getElementById(id)
+    if (el && Number.isFinite(val)) el.value = String(val)
+  }
+  setIf('minInput', s.min)
+  setIf('medInput', s.median)
+  setIf('maxInput', s.max)
 
   const centerRow = document.createElement('div')
   centerRow.className = 'overlay-row'
@@ -582,6 +594,126 @@ function _hideHistTooltip() {
   if (tip) tip.style.display = 'none'
 }
 
+function _clearStyleParams(layer) {
+  if (!layer) return
+  delete layer.wmsParams.styles
+  delete layer.wmsParams.sld
+  delete layer.wmsParams.sld_body
+  delete layer.wmsParams.env
+}
+
+/**
+ * Build a GeoServer env string from a dict, skipping undefined values.
+ * Colors may be passed with or without '#'.
+ * @param {Record<string, string|number|boolean>} obj
+ * @returns {string}
+ * @private
+ */
+function _buildEnvString(obj) {
+  const normColor = (v) => {
+    if (v == null) return v
+    const s = String(v).trim()
+    return s.startsWith('#') ? s : '#' + s
+  }
+  const entries = Object.entries(obj || {}).map(([k, v]) => {
+    if (v == null) return null
+    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = normColor(v)
+    return `${k}:${v}`
+  }).filter(Boolean)
+  return entries.join(';')
+}
+
+/**
+ * Apply a published GeoServer named style and pass dynamic env() vars.
+ * The SLD must use env('min'), env('med'), env('max'), env('cmin'), env('cmed'),
+ * env('cmax'), env('opacity'), and optionally env('nval'), env('nopacity'), env('ncolor')
+ * @param {string} styleName e.g. 'workspace:agb_biomass_dynamic'
+ * @param {{
+ *   min:number, med:number, max:number,
+ *   cmin:string, cmed:string, cmax:string, // '#rrggbb'
+ *   opacity?:number, nval?:number, nopacity?:number, ncolor?:string
+ * }} vars
+ */
+function setDynamicNamedStyle(styleName, vars) {
+  if (!state.wmsLayer) return
+  _clearStyleParams(state.wmsLayer)
+  const env = _buildEnvString(vars)
+  state.wmsLayer.setParams({ styles: styleName, env })
+}
+
+/**
+ * Apply a dynamic style to the active WMS layer using stats for min/median/max.
+ * Computes median or mid value from stats and updates GeoServer env vars.
+ * @param {object} s Stats object returned by /stats/geometry
+ */
+function applyDefaultDynamicStyle(s) {
+  if (!s || !state.wmsLayer) return
+
+  // Derive numeric range from stats safely
+  const minVal = Number.isFinite(s.min) ? s.min : 0
+  const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
+  const medVal = Number.isFinite(s.median)
+    ? s.median
+    : minVal + (maxVal - minVal) / 2
+
+  const toCol = (el) => String(el?.value || '').trim()
+  setDynamicNamedStyle('esosc:dynamic_style', {
+    min: minVal,
+    med: medVal,
+    max: maxVal,
+    cmin: toCol(document.getElementById('cminInput')),
+    cmed: toCol(document.getElementById('cmedInput')),
+    cmax: toCol(document.getElementById('cmaxInput')),
+    opacity: 0.9,
+    nval: -9999,
+    nopacity: 0.0,
+    ncolor: '#000000',
+  })
+}
+
+// --- Optional: hook up a simple UI for live updates ---
+// Example: sliders/inputs with ids: minInput, medInput, maxInput, cminInput, cmedInput, cmaxInput, opacityInput
+function wireDynamicStyleControls() {
+  const get = (id) => document.getElementById(id)
+
+  const update = () => {
+    const toNum = (el) => Number(el?.value)
+    const toCol = (el) => String(el?.value || '').trim()
+    setDynamicNamedStyle('esosc:dynamic_style', {
+      min: toNum(get('minInput')),
+      med: toNum(get('medInput')),
+      max: toNum(get('maxInput')),
+      cmin: toCol(get('cminInput')),
+      cmed: toCol(get('cmedInput')),
+      cmax: toCol(get('cmaxInput')),
+      opacity: Number(get('opacityRange')?.value ?? 1),
+    })
+  }
+
+  ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']
+    .forEach(id => get(id)?.addEventListener('input', update))
+
+  // "Use stats" button wires stats -> inputs -> update
+  const btn = get('styleFromStatsBtn')
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const s = state.lastStats || {}
+      const minVal = Number.isFinite(s.min) ? s.min : 0
+      const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
+      const medVal = Number.isFinite(s.median) ? s.median : minVal + (maxVal - minVal) / 2
+
+      if (get('minInput')) get('minInput').value = String(minVal)
+      if (get('medInput')) get('medInput').value = String(medVal)
+      if (get('maxInput')) get('maxInput').value = String(maxVal)
+      update()
+    })
+  }
+
+  // initialize once
+  update()
+}
+
+
 /**
  * App entrypoint.
  * Initializes UI, loads config, and selects the first layer if available.
@@ -592,6 +724,7 @@ function _hideHistTooltip() {
   wireOpacity()
   wireRadiusControls()
   wireAreaSamplerClick()
+  wireDynamicStyleControls()
 
   const cfg = await loadConfig()
   state.baseUrl = cfg.geoserver_base_url
@@ -602,5 +735,7 @@ function _hideHistTooltip() {
   if (state.layers.length > 0) {
     document.getElementById('layerSelect').value = '0'
     addWmsLayer(state.layers[0].name)
+
   }
 })()
+

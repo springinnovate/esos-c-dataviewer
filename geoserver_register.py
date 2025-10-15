@@ -529,18 +529,17 @@ def main():
     seconds_to_wait_for_geoserver_start = 420
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
 
-    for workspace_def in config_data.get("workspaces", []):
-        purge_and_create_workspace(
-            geoserver_client,
-            workspace_def["name"],
-        )
-        workspace_name = workspace_def["name"]
+    workspace_id = config_data["workspace_id"]
+    purge_and_create_workspace(
+        geoserver_client,
+        workspace_id,
+    )
 
     for style_id, style_def in config_data.get("styles").items():
         style_path = Path(style_def["file_path"])
         create_style_if_not_exists(
             geoserver_client,
-            workspace_name,
+            workspace_id,
             style_id,
             "sld",
             style_path,
@@ -560,7 +559,7 @@ def main():
         if layer_type == "raster_geotiff":
             create_layer(
                 geoserver_client,
-                workspace_name,
+                workspace_id,
                 file_path,
                 ds_crs,
                 default_style_id,

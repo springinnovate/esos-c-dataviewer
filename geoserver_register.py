@@ -282,6 +282,7 @@ def crs_info_from_rasterio_crs(crs):
 def create_layer(
     geoserver_client: Gs,
     workspace_name: str,
+    raster_name: str,
     geotiff_path: str,
     spatial_ref_system: str,
     default_style_name: str,
@@ -295,6 +296,7 @@ def create_layer(
     Args:
         geoserver_client (Gs): An authenticated GeoServer REST client.
         workspace_name (str): The workspace in which to publish the layer.
+        raster_name (str): The id/name used to register the layer in Geoserver
         geotiff_path (str): The absolute path to the GeoTIFF file inside the
             GeoServer data directory or mounted volume.
         spatial_ref_system (str): The EPSG code for the spatial reference
@@ -302,21 +304,13 @@ def create_layer(
         default_style_name (str): The name of the default style to apply to
             the published layer.
 
-    Returns:
-        str: The name of the published coverage/layer.
-
     Raises:
         RuntimeError: If any REST API request for creating the store,
             coverage, or layer fails.
     """
-    # coverage is confusing but it's an internal metadata object that is
-    # created when a raster layer is created, so by creating a "coverage" you
-    # create a raster layer...
-    coverage_name = Path(geotiff_path).stem
-
     # the store is where the data are 'stored' and a coveragestore is where
     # raster data are stored
-    coveragestore_name = f"{coverage_name}_store"
+    coveragestore_name = f"{raster_name}_store"
 
     coveragestore_payload = {
         "coverageStore": {
@@ -333,15 +327,15 @@ def create_layer(
     )
     if store_response.status_code not in (200, 201):
         raise RuntimeError(
-            f"Coverage store creation failed {workspace_name}:{coverage_name}: "
+            f"Coverage store creation failed {workspace_name}:{raster_name}: "
             f"{store_response.status_code} {store_response.text}"
         )
 
     info = crs_info_from_rasterio_crs(spatial_ref_system)
     coverage_payload = {
         "coverage": {
-            "name": coverage_name,
-            "nativeName": coverage_name,
+            "name": raster_name,
+            "nativeName": raster_name,
             "enabled": True,
             "projectionPolicy": info["policy"],
             "srs": info["declared_srs"],
@@ -363,7 +357,7 @@ def create_layer(
     )
     if coverage_response.status_code not in (200, 201):
         raise RuntimeError(
-            f"Coverage creation failed {workspace_name}:{coverage_name}: "
+            f"Coverage creation failed {workspace_name}:{raster_name}: "
             f"{coverage_response.status_code} {coverage_response.text}"
         )
 
@@ -376,17 +370,15 @@ def create_layer(
     }
 
     style_response = geoserver_client.put(
-        f"/rest/layers/{workspace_name}:{coverage_name}.json",
+        f"/rest/layers/{workspace_name}:{raster_name}.json",
         style_payload,
     )
     if style_response.status_code not in (200, 201):
         raise RuntimeError(
             f"Setting default style failed "
-            f"{workspace_name}:{coverage_name}:{default_style_name}: "
+            f"{workspace_name}:{raster_name}:{default_style_name}: "
             f"{style_response.status_code} {style_response.text}"
         )
-
-    return coverage_name
 
 
 def ping_until_up(geoserver_client: Gs, timeout_sec: int) -> None:
@@ -560,6 +552,7 @@ def main():
             create_layer(
                 geoserver_client,
                 workspace_id,
+                raster_id.lower(),
                 file_path,
                 ds_crs,
                 default_style_id,

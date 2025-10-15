@@ -494,151 +494,166 @@ def geometry_stats(q: GeometryStatsIn):
         - For geographic rasters, area metrics are in square degrees.
         - Uses a safe windowing strategy to handle small or edge geometries.
     """
-    ds, nodata, units = _open_raster(q.raster_id)
+    try:
+        ds, nodata, units = _open_raster(q.raster_id)
 
-    geom = shape(q.geometry)
+        geom = shape(q.geometry)
 
-    # Reproject geometry to raster CRS if needed
-    if q.from_crs != ds.crs.to_string():
-        transformer = Transformer.from_crs(q.from_crs, ds.crs, always_xy=True)
-        geom = shp_transform(
-            lambda x, y, z=None: transformer.transform(x, y), geom
-        )
+        # Reproject geometry to raster CRS if needed
+        if q.from_crs != ds.crs.to_string():
+            transformer = Transformer.from_crs(
+                q.from_crs, ds.crs, always_xy=True
+            )
+            geom = shp_transform(
+                lambda x, y, z=None: transformer.transform(x, y), geom
+            )
 
-    # --- safe window builder (avoids zero-sized windows) ---
-    def _safe_window_for_geom(dataset, g):
-        b = g.bounds
-        w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
-        w = w.round_offsets().round_lengths()
-        w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+        # --- safe window builder (avoids zero-sized windows) ---
+        def _safe_window_for_geom(dataset, g):
+            b = g.bounds
+            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
 
-        if int(w.width) > 0 and int(w.height) > 0:
+            if int(w.width) > 0 and int(w.height) > 0:
+                return w
+
+            # pad by half a pixel and retry
+            xres, yres = map(abs, dataset.res)
+            bpad = (
+                b[0] - 0.5 * xres,
+                b[1] - 0.5 * yres,
+                b[2] + 0.5 * xres,
+                b[3] + 0.5 * yres,
+            )
+            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+
+            # fallback: centroid pixel
+            if int(w.width) == 0 or int(w.height) == 0:
+                cx, cy = g.centroid.x, g.centroid.y
+                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
+                rr = min(max(rr, 0), dataset.height - 1)
+                cc = min(max(cc, 0), dataset.width - 1)
+                w = Window(cc, rr, 1, 1)
+
             return w
 
-        # pad by half a pixel and retry
-        xres, yres = map(abs, dataset.res)
-        bpad = (
-            b[0] - 0.5 * xres,
-            b[1] - 0.5 * yres,
-            b[2] + 0.5 * xres,
-            b[3] + 0.5 * yres,
-        )
-        w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
-        w = w.round_offsets().round_lengths()
-        w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+        window = _safe_window_for_geom(ds, geom)
+        logger.debug(f"this is the safe window: {window}")
+        data = ds.read(1, window=window, boundless=True, masked=False)
+        logger.debug(f"here's the data: {data}")
+        if data.size == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Empty read window (geometry outside raster).",
+            )
 
-        # fallback: centroid pixel
-        if int(w.width) == 0 or int(w.height) == 0:
-            cx, cy = g.centroid.x, g.centroid.y
-            rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
-            rr = min(max(rr, 0), dataset.height - 1)
-            cc = min(max(cc, 0), dataset.width - 1)
-            w = Window(cc, rr, 1, 1)
-
-        return w
-
-    window = _safe_window_for_geom(ds, geom)
-    logger.debug(f"this is the safe window: {window}")
-    data = ds.read(1, window=window, boundless=True, masked=False)
-    logger.debug(f"here's the data: {data}")
-    if data.size == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Empty read window (geometry outside raster).",
+        # Build geometry mask in the window’s transform
+        window_transform = ds.window_transform(window)
+        mask = geometry_mask(
+            [mapping(geom)],
+            transform=window_transform,
+            invert=True,
+            out_shape=data.shape,
+            all_touched=False,
         )
 
-    # Build geometry mask in the window’s transform
-    window_transform = ds.window_transform(window)
-    mask = geometry_mask(
-        [mapping(geom)],
-        transform=window_transform,
-        invert=True,
-        out_shape=data.shape,
-        all_touched=False,
-    )
+        # Apply mask + nodata
+        arr = data.astype("float64", copy=False)
+        if nodata is not None:
+            arr = np.where(np.isclose(arr, nodata), np.nan, arr)
+        # keep only pixels inside polygon
+        arr = np.where(mask, arr, np.nan)
+        logger.debug(f"here's the masked data: {arr}")
 
-    # Apply mask + nodata
-    arr = data.astype("float64", copy=False)
-    if nodata is not None:
-        arr = np.where(np.isclose(arr, nodata), np.nan, arr)
-    # keep only pixels inside polygon
-    arr = np.where(mask, arr, np.nan)
-    logger.debug(f"here's the masked data: {arr}")
+        # Stats over valid (finite) values
+        vals = arr[np.isfinite(arr)]
+        logger.debug(f"here is the finite data: {vals}")
 
-    # Stats over valid (finite) values
-    vals = arr[np.isfinite(arr)]
-    logger.debug(f"here is the finite data: {vals}")
+        stats = {
+            "count": int(vals.size),
+            "min": None,
+            "max": None,
+            "mean": None,
+            "median": None,
+            "sum": None,
+            "std": None,
+            "hist": None,
+            "bin_edges": None,
+        }
+        if vals.size > 0:
+            stats.update(
+                {
+                    "min": float(np.min(vals)),
+                    "max": float(np.max(vals)),
+                    "mean": float(np.mean(vals)),
+                    "median": float(np.median(vals)),
+                    "sum": float(np.sum(vals)),
+                    "std": float(
+                        np.std(vals, ddof=1) if vals.size > 1 else 0.0
+                    ),
+                }
+            )
+            qs = np.linspace(0, 1, 17)
+            bin_edges = np.quantile(vals, qs)
+            q25, q75 = np.percentile(vals, [25, 75])
+            iqr = q75 - q25
+            bin_width = 2 * iqr * len(vals) ** (-1 / 3)
+            if bin_width == 0:
+                bin_width = np.ptp(vals) / 10 or 1  # fallback
 
-    stats = {
-        "count": int(vals.size),
-        "min": None,
-        "max": None,
-        "mean": None,
-        "median": None,
-        "sum": None,
-        "std": None,
-        "hist": None,
-        "bin_edges": None,
-    }
-    if vals.size > 0:
-        stats.update(
-            {
-                "min": float(np.min(vals)),
-                "max": float(np.max(vals)),
-                "mean": float(np.mean(vals)),
-                "median": float(np.median(vals)),
-                "sum": float(np.sum(vals)),
-                "std": float(np.std(vals, ddof=1) if vals.size > 1 else 0.0),
-            }
+            num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
+            # at least 1 to 64 bins
+            num_bins = max(1, min(num_bins_fd, 64))
+            logger.debug(
+                f"number of bins {num_bins}; bin width {bin_width}; bin_edges {bin_edges}; qs: {qs}"
+            )
+
+            hist, bin_edges = np.histogram(vals, bins=num_bins)
+            # hist, bin_edges = np.histogram(vals, bins="doane")
+            stats["hist"] = hist.tolist()
+            stats["bin_edges"] = bin_edges.tolist()
+
+        # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree^2")
+        # pixel area from affine determinant (handles rotations too)
+        det = ds.transform.a * ds.transform.e - ds.transform.b * ds.transform.d
+        pixel_area = abs(det)
+        total_mask_pixels = int(np.count_nonzero(mask))
+        valid_pixels = int(np.count_nonzero(np.isfinite(arr)))
+        nodata_pixels = total_mask_pixels - valid_pixels
+
+        area_stats = {
+            "pixel_area": pixel_area,  # m^2 per pixel if CRS in meters
+            "window_mask_pixels": total_mask_pixels,
+            "valid_pixels": valid_pixels,
+            "nodata_pixels": nodata_pixels,
+            "window_mask_area_m2": float(total_mask_pixels * pixel_area),
+            "valid_area_m2": float(valid_pixels * pixel_area),
+            "nodata_area_m2": float(nodata_pixels * pixel_area),
+            "coverage_ratio": (
+                float(valid_pixels / total_mask_pixels)
+                if total_mask_pixels
+                else 0.0
+            ),
+        }
+        stats.update(area_stats)
+
+        # json does not handle nans so we need to convert to nones
+        clean_units = (
+            units if units is not None and np.isfinite(units) else None
         )
-        qs = np.linspace(0, 1, 17)
-        bin_edges = np.quantile(vals, qs)
-        q25, q75 = np.percentile(vals, [25, 75])
-        iqr = q75 - q25
-        bin_width = 2 * iqr * len(vals) ** (-1 / 3)
-        if bin_width == 0:
-            bin_width = np.ptp(vals) / 10 or 1  # fallback
-
-        num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
-        # at least 1 to 64 bins
-        num_bins = max(1, min(num_bins_fd, 64))
-        logger.debug(
-            f"number of bins {num_bins}; bin width {bin_width}; bin_edges {bin_edges}; qs: {qs}"
+        clean_nodata = (
+            nodata if nodata is not None and np.isfinite(nodata) else None
         )
-
-        hist, bin_edges = np.histogram(vals, bins=num_bins)
-        # hist, bin_edges = np.histogram(vals, bins="doane")
-        stats["hist"] = hist.tolist()
-        stats["bin_edges"] = bin_edges.tolist()
-
-    # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree^2")
-    # pixel area from affine determinant (handles rotations too)
-    det = ds.transform.a * ds.transform.e - ds.transform.b * ds.transform.d
-    pixel_area = abs(det)
-    total_mask_pixels = int(np.count_nonzero(mask))
-    valid_pixels = int(np.count_nonzero(np.isfinite(arr)))
-    nodata_pixels = total_mask_pixels - valid_pixels
-
-    area_stats = {
-        "pixel_area": pixel_area,  # m^2 per pixel if CRS in meters
-        "window_mask_pixels": total_mask_pixels,
-        "valid_pixels": valid_pixels,
-        "nodata_pixels": nodata_pixels,
-        "window_mask_area_m2": float(total_mask_pixels * pixel_area),
-        "valid_area_m2": float(valid_pixels * pixel_area),
-        "nodata_area_m2": float(nodata_pixels * pixel_area),
-        "coverage_ratio": (
-            float(valid_pixels / total_mask_pixels)
-            if total_mask_pixels
-            else 0.0
-        ),
-    }
-    stats.update(area_stats)
-
-    return StatsOut(
-        raster_id=q.raster_id,
-        stats=stats,
-        nodata=(None if nodata is None else nodata),
-        units=units,
-        geometry=q.geometry,
-    )
+        result = StatsOut(
+            raster_id=q.raster_id,
+            stats=stats,
+            nodata=clean_nodata,
+            units=clean_units,
+            geometry=q.geometry,
+        )
+        return result
+    except Exception:
+        logger.exception("something bad happened")

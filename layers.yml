@@ -40,9 +40,9 @@ layers:
   nature_landcarbon_ca:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/nature_landcarbon_ca.tif
-  poldep_cropproduction_tons_Beans:
+  poldep_cropproduction_tons_Beans_wgs84:
     type: raster_geotiff
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Beans.tiff
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Beans_wgs84.tiff
   poldep_cropproduction_tons_Berries:
     type: raster_geotiff
     file_path: ${GEOSERVER_LOCAL_DATA_DIR}/rasters/poldep_cropproduction_tons_Berries.tiff

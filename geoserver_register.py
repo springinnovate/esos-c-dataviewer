@@ -180,8 +180,7 @@ def purge_and_create_workspace(
 ) -> None:
     """Deletes all existing GeoServer workspaces and creates a single new one.
 
-    This function retrieves all workspaces from the GeoServer REST API and deletes
-    them using the `?recurse=true` flag to remove all associated layers and stores.
+    This deletes all workspaces from the GeoServer using its REST API.
     After purging, it creates a new workspace with the given name and sets it as
     the default workspace.
 

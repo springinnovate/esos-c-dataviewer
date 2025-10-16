@@ -531,6 +531,25 @@ def _sample_percentiles(src, samples, frac):
 
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)
 def minmax_stats(r: MinMaxIn):
+    """Compute approximate 5th and 95th percentile values for a raster.
+
+    This endpoint estimates the low and high value range for a given raster by
+    sampling multiple random windows and aggregating valid pixel values.
+    The computed percentiles are used as approximate minimum and maximum values
+    for visualization or dynamic styling.
+
+    Args:
+        r (MinMaxIn): Input model containing the raster identifier (`raster_id`)
+            to locate and open the raster file.
+
+    Returns:
+        RasterMinMaxOut: Object containing the raster ID along with the estimated
+        5th percentile (`min_`) and 95th percentile (`max_`) values.
+
+    Raises:
+        HTTPException: If any error occurs while reading the raster or computing
+        percentiles. Returns HTTP 500 with detail "Failed to compute min/max".
+    """
     try:
         ds, _, _ = _open_raster(r.raster_id)
         # 10 samples  0.05 proportion

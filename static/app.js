@@ -53,8 +53,6 @@ function initMap() {
   wireOverlayClose()
 
   const overlay = document.getElementById('statsOverlay')
-  /*L.DomEvent.disableClickPropagation(overlay)
-  L.DomEvent.disableScrollPropagation(overlay)*/
 }
 
 /**

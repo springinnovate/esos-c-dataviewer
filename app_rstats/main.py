@@ -1,7 +1,4 @@
-"""
-ESSOSC Raster Stats API
------------------------
-Main entrypoint for the raster statistics microservice.
+"""ESSOSC Raster Stats API.
 
 This FastAPI application exposes endpoints for retrieving pixel-level,
 window-level, and geometry-based statistics from registered GeoTIFF rasters.

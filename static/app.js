@@ -183,7 +183,7 @@ function wireSquareSamplerControls() {
   const max = 1000
 
   function sliderToLog(val) {
-    const exp = Math.pow(val / 100, 2)
+    const exp = Math.pow(val / 100, 0.5)
     return min * Math.pow(max / min, exp)
   }
 

@@ -1,7 +1,4 @@
-"""
-ESSOSC Raster Stats API
------------------------
-Main entrypoint for the raster statistics microservice.
+"""ESSOSC Raster Stats API.
 
 This FastAPI application exposes endpoints for retrieving pixel-level,
 window-level, and geometry-based statistics from registered GeoTIFF rasters.
@@ -58,6 +55,16 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+class MinMaxIn(BaseModel):
+    """Input model for min max value query.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+    """
+
+    raster_id: str
 
 
 class PixelStatsIn(BaseModel):
@@ -179,6 +186,20 @@ class WindowStatsOut(BaseModel):
     units: Optional[str] = None
     stats: Dict[str, Any]
     histogram: Dict[str, Any]
+
+
+class RasterMinMaxOut(BaseModel):
+    """Output model for just min max of the raster.
+
+    Attributes:
+        raster_id (str): Identifier of the raster used for analysis.
+        min_ (float): minimum value in the raster
+        max_ (float): maximum value in the raster
+    """
+
+    raster_id: str
+    min_: float
+    max_: float
 
 
 def _load_registry() -> dict:
@@ -466,6 +487,80 @@ def pixel_stats(q: PixelWindowStatsIn):
         histogram=histogram,
     )
     return out
+
+
+def _sample_percentiles(src, samples, frac):
+    """Estimate approximate 5th and 95th percentiles from random raster windows.
+
+    This function samples multiple random windows from the input raster, extracts
+    valid (non-masked) pixel values, and computes approximate percentile bounds.
+    The sampling is fractional, meaning each window covers a fraction of the total
+    raster area defined by `frac`.
+
+    Args:
+        src (rasterio.io.DatasetReader): An open rasterio dataset to sample from.
+        samples (int): Number of random windows to sample.
+        frac (float): Fraction (0-1) of the raster dimensions to use for each window
+            in both height and width.
+
+    Returns:
+        numpy.ndarray: A 1D array of two elements `[p5, p95]` representing the
+        approximate 5th and 95th percentile values of the sampled pixels.
+
+    Raises:
+        ValueError: If `frac` is not within the range (0, 1].
+    """
+    sample_values = []
+    raster_height, raster_width = src.height, src.width
+    window_height, window_width = int(raster_height * frac), int(
+        raster_width * frac
+    )
+
+    for _ in range(samples):
+        row_offset = np.random.randint(0, raster_height - window_height)
+        col_offset = np.random.randint(0, raster_width - window_width)
+        window = rasterio.windows.Window(
+            col_offset, row_offset, window_width, window_height
+        )
+        band_data = src.read(1, window=window, masked=True)
+        sample_values.append(band_data.compressed())
+
+    sample_values = np.concatenate(sample_values)
+    return np.nanpercentile(sample_values, [5, 95])
+
+
+@app.post("/stats/minmax", response_model=RasterMinMaxOut)
+def minmax_stats(r: MinMaxIn):
+    """Compute approximate 5th and 95th percentile values for a raster.
+
+    This endpoint estimates the low and high value range for a given raster by
+    sampling multiple random windows and aggregating valid pixel values.
+    The computed percentiles are used as approximate minimum and maximum values
+    for visualization or dynamic styling.
+
+    Args:
+        r (MinMaxIn): Input model containing the raster identifier (`raster_id`)
+            to locate and open the raster file.
+
+    Returns:
+        RasterMinMaxOut: Object containing the raster ID along with the estimated
+        5th percentile (`min_`) and 95th percentile (`max_`) values.
+
+    Raises:
+        HTTPException: If any error occurs while reading the raster or computing
+        percentiles. Returns HTTP 500 with detail "Failed to compute min/max".
+    """
+    try:
+        ds, _, _ = _open_raster(r.raster_id)
+        # 10 samples  0.05 proportion
+        p5, p95 = _sample_percentiles(ds, 10, 0.05)
+        return RasterMinMaxOut(
+            raster_id=r.raster_id, min_=float(p5), max_=float(p95)
+        )
+
+    except Exception:
+        logger.exception("minmax_stats failed")
+        raise HTTPException(status_code=500, detail="Failed to compute min/max")
 
 
 @app.post("/stats/geometry", response_model=StatsOut)

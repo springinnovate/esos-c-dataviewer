@@ -10,7 +10,7 @@
 
 const state = {
   map: null,
-  baseUrl: '',
+  geoserverBaseUrl: '',
   baseStatsUrl: '',
   wmsLayer: null,
   layers: [],
@@ -19,6 +19,7 @@ const state = {
   boxSizeKm: 10,
   lastMouseLatLng: null,
   outlineLayer: null,
+  lastStats: null,
 }
 
 /**
@@ -52,8 +53,6 @@ function initMap() {
   wireOverlayClose()
 
   const overlay = document.getElementById('statsOverlay')
-  L.DomEvent.disableClickPropagation(overlay)
-  L.DomEvent.disableScrollPropagation(overlay)
 }
 
 /**
@@ -173,22 +172,25 @@ function initMouseFollowBox() {
  * Wire UI controls that set the sampling window size (km).
  * Keeps range and numeric inputs in sync and updates hover rectangle.
  */
-function wireRadiusControls() {
+function wireSquareSamplerControls() {
   const rRange = document.getElementById('windowSize')
   const rNum = document.getElementById('windowSizeNumber')
 
-  const clamp = (v) => {
-    const min = Number(rRange?.min) || 0
-    const max = Number(rRange?.max) || 1000
-    return Math.max(min, Math.min(max, v))
+  // Configure the log mapping range
+  const min = 1
+  const max = 1000
+
+  function sliderToLog(val) {
+    const exp = Math.pow(val / 100, 0.5)
+    return min * Math.pow(max / min, exp)
   }
 
   const setVal = (v) => {
     const vAsInt = Number.parseInt(v, 10)
-    const vv = clamp(Number.isNaN(vAsInt) ? 0 : vAsInt)
-    rRange.value = String(vv)
-    rNum.value = String(vv)
-    state.boxSizeKm = vv
+    const logValue = sliderToLog(vAsInt)
+    rRange.value = String(vAsInt)
+    rNum.value = String(logValue)
+    state.boxSizeKm = logValue
     if (state.hoverRect) {
       const ll = state.lastMouseLatLng || state.map.getCenter()
       state.hoverRect.setBounds(latLngBoundsForSquareKilometers(ll, state.boxSizeKm))
@@ -226,7 +228,7 @@ function addWmsLayer(qualifiedName) {
     state.map.removeLayer(state.wmsLayer)
     state.wmsLayer = null
   }
-  const wmsUrl = `${state.baseUrl}/wms`
+  const wmsUrl = `${state.geoserverBaseUrl}/wms`
   const params = {
     layers: qualifiedName,
     format: 'image/png',
@@ -239,21 +241,43 @@ function addWmsLayer(qualifiedName) {
   state.wmsLayer = l
 }
 
+
 /**
  * Handle layer change from the <select>.
  * Sets active layer, updates WMS, hides overlay, and clears outline.
+ * Also fetches the layer-wide min/max and applies dynamic styling.
  * @param {Event & {target: HTMLSelectElement}} e
  */
-function onLayerChange(e) {
+async function onLayerChange(e) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.layers[idx]
   if (!lyr) return
-  state.activeLayerIdx = idx
-  addWmsLayer(lyr.name)
-  // close the stats window if open
+
+
+  // close overlay and clear outline
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
   _hideOutline()
+
+  try {
+    const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ raster_id: lyr.name })
+    })
+    if (!res.ok) throw new Error(await res.text())
+    const { min_, max_ } = await res.json()
+
+    const med = (max_ + min_) / 2
+    document.getElementById('minInput').value = min_
+    document.getElementById('medInput').value = med
+    document.getElementById('maxInput').value = max_
+    state.activeLayerIdx = idx
+    addWmsLayer(lyr.name)
+    _applyDynamicStyle()
+  } catch (err) {
+    console.error('Failed to fetch min/max for layer', err)
+  }
 }
 
 /**
@@ -275,7 +299,7 @@ function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
     const lyr = state.layers[state.activeLayerIdx]
     if (!lyr) return
-    const rasterId = lyr.raster_id || lyr.name
+    const rasterId = lyr.name
 
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
@@ -296,8 +320,8 @@ function wireAreaSamplerClick() {
       statsObj: stats.stats,
       units: stats.units
     })
-  })
-}
+})}
+
 
 /**
  * POST a geometry to the rstats service and return statistics.
@@ -378,6 +402,7 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
   overlay.classList.remove('hidden')
 
   const s = statsObj || {}
+  state.lastStats = s
 
   const centerRow = document.createElement('div')
   centerRow.className = 'overlay-row'
@@ -506,7 +531,7 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     const lo = binEdges[i]
     const hi = binEdges[i + 1]
     const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : String(n)
-    const text = `Range: [${fmt(lo)}, ${fmt(hi)})\nCount: ${v.toLocaleString()}`
+    const text = `Range: [${fmt(lo)}, ${fmt(hi)}) Count: ${v.toLocaleString()}`
 
     rect.addEventListener('mouseenter', (ev) => {
       _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
@@ -583,6 +608,210 @@ function _hideHistTooltip() {
 }
 
 /**
+ * Normalize a color string to ensure it begins with a '#' prefix.
+ *
+ * Trims whitespace from the input and converts it to a string.
+ * If the value is null or empty, returns an empty string.
+ * If the string already starts with '#', it is returned unchanged;
+ * otherwise, '#' is prepended.
+ *
+ * @param {string|number|null|undefined} v - The color value to normalize.
+ * @returns {string} A normalized color string beginning with '#' or an empty string.
+ */
+function _normColor(v) {
+  if (v == null) return ''
+  const s = String(v).trim()
+  return s ? (s.startsWith('#') ? s : '#' + s) : ''
+}
+
+/**
+ * Build a GeoServer env string from a dict, skipping undefined values.
+ * Colors may be passed with or without '#'.
+ * @param {Record<string, string|number|boolean>} obj
+ * @returns {string}
+ * @private
+ */
+function _buildEnvString(obj) {
+  const entries = Object.entries(obj || {}).map(([k, v]) => {
+    if (v == null) return null
+    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = _normColor(v)
+    return `${k}:${v}`
+  }).filter(Boolean)
+  return entries.join(';')
+}
+
+/**
+ * Read current style parameter values from the UI controls.
+ *
+ * Extracts numeric and color values from input elements controlling
+ * raster styling (min, median, max, and corresponding colors). Normalizes
+ * color values to ensure they are prefixed with '#'. Returns an object
+ * suitable for constructing GeoServer `env` parameters.
+ *
+ * @returns {Object} Style parameters for dynamic raster rendering.
+ * @returns {number} return.min - Minimum data value.
+ * @returns {number} return.med - Median or midpoint data value.
+ * @returns {number} return.max - Maximum data value.
+ * @returns {string} return.cmin - Color for minimum value (normalized '#RRGGBB').
+ * @returns {string} return.cmed - Color for median value (normalized '#RRGGBB').
+ * @returns {string} return.cmax - Color for maximum value (normalized '#RRGGBB').
+ * @returns {number} return.opacity - Overall layer opacity (0–1).
+ * @returns {string} return.ncolor - Color for NoData pixels (default '#000000').
+ */
+function _readStyleInputsFromUI() {
+  const get = (id) => document.getElementById(id)
+  const toNum = (el) => Number(el?.value)
+  const toCol = (el) => _normColor(el?.value)
+  return {
+    min: toNum(get('minInput')),
+    med: toNum(get('medInput')),
+    max: toNum(get('maxInput')),
+    cmin: toCol(get('cminInput')),
+    cmed: toCol(get('cmedInput')),
+    cmax: toCol(get('cmaxInput')),
+    opacity: Number(get('opacityRange').value),
+    ncolor: '#000000'
+  }
+}
+
+/**
+ * Apply a dynamic style to the active WMS layer using stats for min/median/max.
+ */
+function _applyDynamicStyle() {
+  if (!state.wmsLayer) return
+  // clear conflicting params
+  delete state.wmsLayer.wmsParams?.sld
+  delete state.wmsLayer.wmsParams?.sld_body
+  const styleVars = _readStyleInputsFromUI()
+  const env = _buildEnvString(styleVars)
+  state.wmsLayer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
+}
+
+/**
+ * Wire UI controls that manage dynamic raster styling parameters.
+ *
+ * Attaches event listeners to style-related input elements controlling
+ * minimum, median, and maximum values as well as color and opacity settings.
+ * Whenever any of these inputs change, the active WMS layer’s style is updated
+ * through `_applyDynamicStyle()`.
+ *
+ * Also wires the "Use stats" button (`#styleFromStatsBtn`), which populates
+ * the style inputs using the most recent raster statistics stored in
+ * `state.lastStats`, then triggers an immediate style update.
+ *
+ * Finally, performs an initial call to `_applyDynamicStyle()` to ensure the
+ * current UI state is reflected in the layer style at startup.
+ *
+ * @returns {void}
+ */
+function wireDynamicStyleControls() {
+  const get = (id) => document.getElementById(id)
+  const update = () => {
+    _applyDynamicStyle()
+  }
+
+  ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']
+    .forEach(id => get(id)?.addEventListener('input', update))
+
+  // "Use stats" button wires stats -> inputs -> update
+  const btn = get('styleFromStatsBtn')
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const s = state.lastStats || {}
+      const minVal = Number.isFinite(s.min) ? s.min : 0
+      const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
+      const medVal = Number.isFinite(s.median) ? s.median : minVal + (maxVal - minVal) / 2
+
+      if (get('minInput')) get('minInput').value = String(minVal)
+      if (get('medInput')) get('medInput').value = String(medVal)
+      if (get('maxInput')) get('maxInput').value = String(maxVal)
+      update()
+    })
+  }
+
+  // initialize once
+  update()
+}
+
+/**
+ * Enable Alt+mouse-wheel adjustment for the sampling window size slider.
+ *
+ * When the user holds the Alt key and scrolls the mouse wheel, this function
+ * adjusts the sampling window size slider (`#windowSize`) up or down according
+ * to its defined step value. The associated numeric input (`#windowSizeNumber`)
+ * is kept synchronized. While Alt is held, Leaflet's default scroll-to-zoom
+ * behavior is temporarily disabled to prevent map zoom interference.
+ *
+ * Listeners are attached globally to the window for:
+ * - `keydown` / `keyup`: toggling Leaflet scroll zoom enable/disable.
+ * - `wheel`: intercepting Alt+scroll to modify the slider value.
+ *
+ * @returns {void}
+ */
+function enableAltWheelSlider() {
+  const slider = document.getElementById('windowSize')
+  const number = document.getElementById('windowSizeNumber')
+
+  const clamp = (v) => {
+    const min = parseFloat(slider.min) || 0
+    const max = parseFloat(slider.max) || 1000
+    return Math.max(min, Math.min(max, v))
+  }
+
+  const apply = (v) => {
+    const vv = clamp(v)
+    slider.value = String(vv)
+    // keep existing listeners (from wireSquareSamplerControls) in sync
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    if (number) number.value = String(vv)
+  }
+
+  // temporarily disable Leaflet wheel zoom when Alt is held
+  const onKeyDown = (e) => {
+    if (e.altKey && window.state?.map) window.state.map.scrollWheelZoom.disable()
+  }
+  const onKeyUp = () => {
+    if (window.state?.map) window.state.map.scrollWheelZoom.enable()
+  }
+
+  const onWheel = (e) => {
+    if (!e.altKey) return
+    e.preventDefault()
+    // capture before Leaflet stops propagation
+    const delta = e.deltaY > 0 ? 1 : -1
+    const step = parseFloat(slider.step) || 1
+    const cur = parseFloat(slider.value)
+    apply(cur - delta * step)
+  }
+
+  window.addEventListener('keydown', onKeyDown, true)
+  window.addEventListener('keyup', onKeyUp, true)
+  window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+}
+
+/**
+ * Prevent Leaflet map zooming when the Alt key is held during scroll.
+ *
+ * Adds a capturing `wheel` event listener on the map container that intercepts
+ * Alt+scroll actions and stops them from propagating to Leaflet’s default
+ * zoom handler. This ensures Alt+scroll can be safely repurposed for other
+ * UI interactions (e.g., resizing the sampling window) without triggering
+ * map zoom.
+ *
+ * @returns {void}
+ */
+function disableLeafletScrollOnAlt() {
+  //disable leaflet scroll zoom when alt is held
+  const mapEl = state.map.getContainer()
+  mapEl.addEventListener('wheel', e => {
+  if (e.altKey) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+  }
+  }, { passive: false, capture: true })
+}
+
+/**
  * App entrypoint.
  * Initializes UI, loads config, and selects the first layer if available.
  * Self-invoking to avoid leaking names.
@@ -590,17 +819,23 @@ function _hideHistTooltip() {
 ;(async function main() {
   initMap()
   wireOpacity()
-  wireRadiusControls()
+  wireSquareSamplerControls()
   wireAreaSamplerClick()
+  wireDynamicStyleControls()
+  enableAltWheelSlider()
+  disableLeafletScrollOnAlt()
 
   const cfg = await loadConfig()
-  state.baseUrl = cfg.geoserver_base_url
+  state.geoserverBaseUrl = cfg.geoserver_base_url
   state.layers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
 
   populateLayerSelect()
   if (state.layers.length > 0) {
-    document.getElementById('layerSelect').value = '0'
-    addWmsLayer(state.layers[0].name)
+    const sel = document.getElementById('layerSelect')
+    sel.value = '0'
+    // this triggers the stats and color change event for a new raster
+    sel.dispatchEvent(new Event('change', { bubbles: true }))
   }
 })()
+

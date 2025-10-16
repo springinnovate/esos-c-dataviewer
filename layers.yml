@@ -6,8 +6,8 @@ geoserver:
 workspace_id: esosc
 
 styles:
-  agb_biomass_style:
-    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/styles/agb_biomass.sld
+  dynamic_style:
+    file_path: ${GEOSERVER_LOCAL_DATA_DIR}/styles/dynamic_style.sld
 
 layers:
   carbon_above:

@@ -789,6 +789,17 @@ function enableAltWheelSlider() {
   window.addEventListener('wheel', onWheel, { passive: false, capture: true })
 }
 
+/**
+ * Prevent Leaflet map zooming when the Alt key is held during scroll.
+ *
+ * Adds a capturing `wheel` event listener on the map container that intercepts
+ * Alt+scroll actions and stops them from propagating to Leaflet’s default
+ * zoom handler. This ensures Alt+scroll can be safely repurposed for other
+ * UI interactions (e.g., resizing the sampling window) without triggering
+ * map zoom.
+ *
+ * @returns {void}
+ */
 function disableLeafletScrollOnAlt() {
   //disable leaflet scroll zoom when alt is held
   const mapEl = state.map.getContainer()

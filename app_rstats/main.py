@@ -45,6 +45,9 @@ import numpy as np
 import rasterio
 import yaml
 
+
+from rasterio.warp import reproject, Resampling
+
 load_dotenv()
 
 RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
@@ -200,6 +203,38 @@ class RasterMinMaxOut(BaseModel):
     raster_id: str
     min_: float
     max_: float
+
+
+class GeometryScatterIn(BaseModel):
+    raster_id_x: str
+    raster_id_y: str
+    geometry: dict
+    from_crs: str = "EPSG:4326"
+    bins: int = 50
+    max_points: int = 50000
+    all_touched: bool = False
+
+
+class ScatterOut(BaseModel):
+    raster_id_x: str
+    raster_id_y: str
+    n_pairs: int
+    x: Optional[List[float]] = None
+    y: Optional[List[float]] = None
+    hist2d: Optional[List[List[int]]] = None
+    x_edges: Optional[List[float]] = None
+    y_edges: Optional[List[float]] = None
+    corr: Optional[float] = None
+    slope: Optional[float] = None
+    intercept: Optional[float] = None
+    units_x: Optional[float] = None
+    units_y: Optional[float] = None
+    nodata_x: Optional[float] = None
+    nodata_y: Optional[float] = None
+    window_mask_pixels: Optional[int] = None
+    valid_pixels: Optional[int] = None
+    coverage_ratio: Optional[float] = None
+    geometry: dict
 
 
 def _load_registry() -> dict:
@@ -753,3 +788,203 @@ def geometry_stats(q: GeometryStatsIn):
         return result
     except Exception:
         logger.exception("something bad happened")
+
+
+@app.post("/stats/scatter", response_model=ScatterOut)
+def geometry_scatter(q: GeometryScatterIn):
+    try:
+        dsx, nodata_x, units_x = _open_raster(q.raster_id_x)
+        dsy, nodata_y, units_y = _open_raster(q.raster_id_y)
+
+        geom = shape(q.geometry)
+
+        # reproject geometry to X raster CRS
+        if q.from_crs != dsx.crs.to_string():
+            transformer = Transformer.from_crs(
+                q.from_crs, dsx.crs, always_xy=True
+            )
+            geom = shp_transform(
+                lambda x, y, z=None: transformer.transform(x, y), geom
+            )
+
+        def _safe_window_for_geom(dataset, g):
+            b = g.bounds
+            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+            if int(w.width) > 0 and int(w.height) > 0:
+                return w
+            xres, yres = map(abs, dataset.res)
+            bpad = (
+                b[0] - 0.5 * xres,
+                b[1] - 0.5 * yres,
+                b[2] + 0.5 * xres,
+                b[3] + 0.5 * yres,
+            )
+            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+            if int(w.width) == 0 or int(w.height) == 0:
+                cx, cy = g.centroid.x, g.centroid.y
+                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
+                rr = min(max(rr, 0), dataset.height - 1)
+                cc = min(max(cc, 0), dataset.width - 1)
+                w = Window(cc, rr, 1, 1)
+            return w
+
+        # window on X grid
+        win_x = _safe_window_for_geom(dsx, geom)
+        data_x = dsx.read(1, window=win_x, boundless=True, masked=False)
+        if data_x.size == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Empty read window (geometry outside raster_x).",
+            )
+
+        transform_x = dsx.window_transform(win_x)
+
+        # geometry mask on X window
+        mask = geometry_mask(
+            [mapping(geom)],
+            transform=transform_x,
+            invert=True,
+            out_shape=data_x.shape,
+            all_touched=bool(q.all_touched),
+        )
+
+        arr_x = data_x.astype("float64", copy=False)
+        if nodata_x is not None:
+            arr_x = np.where(np.isclose(arr_x, nodata_x), np.nan, arr_x)
+        arr_x = np.where(mask, arr_x, np.nan)
+
+        # reproject Y raster into the X window grid
+        dest_y = np.full(arr_x.shape, np.nan, dtype="float64")
+        reproject(
+            source=dsy.read(1, masked=False).astype("float64", copy=False),
+            destination=dest_y,
+            src_transform=dsy.transform,
+            src_crs=dsy.crs,
+            src_nodata=nodata_y if nodata_y is not None else None,
+            dst_transform=transform_x,
+            dst_crs=dsx.crs,
+            dst_nodata=np.nan,
+            resampling=Resampling.nearest,
+        )
+
+        # apply same polygon mask
+        arr_y = np.where(mask, dest_y, np.nan)
+
+        # paired finite values
+        finite_mask = np.isfinite(arr_x) & np.isfinite(arr_y)
+        x_vals = arr_x[finite_mask]
+        y_vals = arr_y[finite_mask]
+
+        n_pairs = int(x_vals.size)
+        if n_pairs == 0:
+            return ScatterOut(
+                raster_id_x=q.raster_id_x,
+                raster_id_y=q.raster_id_y,
+                n_pairs=0,
+                units_x=(
+                    units_x
+                    if units_x is not None and np.isfinite(units_x)
+                    else None
+                ),
+                units_y=(
+                    units_y
+                    if units_y is not None and np.isfinite(units_y)
+                    else None
+                ),
+                nodata_x=(
+                    nodata_x
+                    if nodata_x is not None and np.isfinite(nodata_x)
+                    else None
+                ),
+                nodata_y=(
+                    nodata_y
+                    if nodata_y is not None and np.isfinite(nodata_y)
+                    else None
+                ),
+                window_mask_pixels=int(np.count_nonzero(mask)),
+                valid_pixels=0,
+                coverage_ratio=0.0,
+                geometry=q.geometry,
+            )
+
+        # optional downsample for payload
+        if n_pairs > q.max_points:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(n_pairs, size=q.max_points, replace=False)
+            x_plot = x_vals[idx]
+            y_plot = y_vals[idx]
+        else:
+            x_plot = x_vals
+            y_plot = y_vals
+
+        # correlation and simple OLS fit
+        corr = float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
+        if n_pairs > 1:
+            A = np.vstack([x_vals, np.ones_like(x_vals)]).T
+            slope, intercept = np.linalg.lstsq(A, y_vals, rcond=None)[0]
+            slope = float(slope)
+            intercept = float(intercept)
+        else:
+            slope = None
+            intercept = None
+
+        # 2D histogram
+        bins = int(max(1, min(256, q.bins)))
+        H, x_edges, y_edges = np.histogram2d(x_vals, y_vals, bins=bins)
+        H = H.astype("int64")
+
+        total_mask_pixels = int(np.count_nonzero(mask))
+        valid_pixels = int(n_pairs)
+
+        return ScatterOut(
+            raster_id_x=q.raster_id_x,
+            raster_id_y=q.raster_id_y,
+            n_pairs=n_pairs,
+            x=x_plot.astype("float64").tolist(),
+            y=y_plot.astype("float64").tolist(),
+            hist2d=H.tolist(),
+            x_edges=x_edges.astype("float64").tolist(),
+            y_edges=y_edges.astype("float64").tolist(),
+            corr=corr,
+            slope=slope,
+            intercept=intercept,
+            units_x=(
+                units_x
+                if units_x is not None and np.isfinite(units_x)
+                else None
+            ),
+            units_y=(
+                units_y
+                if units_y is not None and np.isfinite(units_y)
+                else None
+            ),
+            nodata_x=(
+                nodata_x
+                if nodata_x is not None and np.isfinite(nodata_x)
+                else None
+            ),
+            nodata_y=(
+                nodata_y
+                if nodata_y is not None and np.isfinite(nodata_y)
+                else None
+            ),
+            window_mask_pixels=total_mask_pixels,
+            valid_pixels=valid_pixels,
+            coverage_ratio=(
+                float(valid_pixels / total_mask_pixels)
+                if total_mask_pixels
+                else 0.0
+            ),
+            geometry=q.geometry,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("scatter stats failed")
+        raise HTTPException(
+            status_code=500, detail="Scatter computation failed."
+        )

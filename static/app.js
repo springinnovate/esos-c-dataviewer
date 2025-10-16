@@ -319,52 +319,30 @@ function wireOpacity() {
  * On success, renders the overlay; on failure, shows an error message.
  * Uses the primary active layer (A).
  */
-// Replace wireAreaSamplerClick with this version (and add the two helpers below)
-
-function wireAreaSamplerClick() {
+async function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
-    const blocks = []
+    const lyrA = state.layers[state.activeLayerIdxA]
+    const lyrB = state.layers[state.activeLayerIdxB]
+    if (!lyrA || !lyrB) return
+
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
 
-    const pick = (idx) => (Number.isInteger(idx) ? state.layers[idx] : null)
-    const lyrA = pick(state.activeLayerIdxA)
-    const lyrB = pick(state.activeLayerIdxB)
-
-    const fetchOne = async (layer) => {
-      if (!layer) return null
-      try {
-        const r = await fetchGeometryStats(layer.name, poly)
-        return { rasterId: layer.name, statsObj: r.stats, units: r.units }
-      } catch (e) {
-        return { rasterId: layer.name, error: e?.message || String(e) }
-      }
-    }
-
-    const [resA, resB] = await Promise.all([fetchOne(lyrA), fetchOne(lyrB)])
-
-    if (resA && !resA.error) {
-      state.lastStats = resA.statsObj || null
-      blocks.push(resA)
-    } else if (resA && resA.error) {
-      blocks.push({ rasterId: resA.rasterId, error: resA.error })
-    }
-
-    if (resB) {
-      if (!resB.error) blocks.push(resB)
-      else blocks.push({ rasterId: resB.rasterId, error: resB.error })
-    }
-
-    if (blocks.length === 0) {
-      showOverlayError('No layers selected or failed to fetch stats.')
+    let scatter
+    try {
+      scatter = await fetchScatterStats(lyrA.name, lyrB.name, poly)
+    } catch (e) {
+      showOverlayError(`Scatter error: ${e.message || String(e)}`)
       return
     }
 
-    renderAreaStatsOverlayMulti({
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,
-      blocks
+      scatterObj: scatter,
     })
   })
 }
@@ -499,6 +477,31 @@ async function fetchGeometryStats(rasterId, geojson) {
       raster_id: rasterId,
       geometry: (geojson.geometry ? geojson.geometry : geojson),
       from_crs: 'EPSG:4326',
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+/**
+ * POST a geometry to the rstats service and return scatter data for two rasters.
+ * @param {string} rasterIdX
+ * @param {string} rasterIdY
+ * @param {{type:'Feature'|'Polygon',geometry?:object}} geojson Feature or bare geometry in EPSG:4326
+ * @returns {Promise<{x:number[],y:number[],hist2d:number[][],x_edges:number[],y_edges:number[],corr:number,slope:number,intercept:number}>}
+ * @throws {Error} if the request fails
+ */
+async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
+  const res = await fetch(`${state.baseStatsUrl}/stats/scatter`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      raster_id_x: rasterIdX,
+      raster_id_y: rasterIdY,
+      geometry: geojson.geometry ? geojson.geometry : geojson,
+      from_crs: 'EPSG:4326',
+      bins: 50,
+      max_points: 20000,
     }),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -893,6 +896,133 @@ function enableAltWheelSlider() {
   window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+}
+
+/**
+ * Render a scatterplot of two rasters’ values within a polygon.
+ * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
+ */
+function renderScatterOverlay({ rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj }) {
+  const overlay = document.getElementById('statsOverlay')
+  const body = document.getElementById('overlayBody')
+  overlay.classList.remove('hidden')
+  body.innerHTML = ''
+
+  const title = document.createElement('div')
+  title.textContent = `Scatter: ${rasterX} vs ${rasterY}`
+  title.style.fontWeight = '600'
+  title.style.marginBottom = '6px'
+  body.appendChild(title)
+
+  const meta = document.createElement('pre')
+  meta.textContent = [
+    `Points: ${scatterObj.n_pairs}`,
+    `Correlation: ${numFmt(scatterObj.corr)}`,
+    `Slope: ${numFmt(scatterObj.slope)}`,
+    `Intercept: ${numFmt(scatterObj.intercept)}`,
+    '',
+    `Box size: ${boxKm} km`,
+  ].join('\n')
+  body.appendChild(meta)
+
+  if (scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
+    const svg = buildScatterSVG(
+      scatterObj.x_edges,
+      scatterObj.y_edges,
+      scatterObj.hist2d,
+      { width: 420, height: 320, pad: 40 }
+    )
+    body.appendChild(svg)
+  }
+
+  function numFmt(v) {
+    return typeof v === 'number' && isFinite(v) ? v.toFixed(3) : '—'
+  }
+}
+
+/**
+ * Build a simple 2D scatter/heatmap SVG from histogram2d data.
+ * @param {number[]} xEdges
+ * @param {number[]} yEdges
+ * @param {number[][]} hist2d
+ * @param {{width?:number,height?:number,pad?:number}} opts
+ * @returns {SVGSVGElement}
+ */
+function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
+  const w = opts.width ?? 400
+  const h = opts.height ?? 300
+  const pad = opts.pad ?? 40
+  const innerW = w - pad * 2
+  const innerH = h - pad * 2
+
+  const xMin = Math.min(...xEdges)
+  const xMax = Math.max(...xEdges)
+  const yMin = Math.min(...yEdges)
+  const yMax = Math.max(...yEdges)
+  const nx = hist2d.length
+  const ny = hist2d[0].length
+  const maxCount = Math.max(1, ...hist2d.flat())
+
+  const svgNS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(svgNS, 'svg')
+  svg.setAttribute('width', String(w))
+  svg.setAttribute('height', String(h))
+  svg.style.background = '#11151c'
+
+  const scaleX = (v) => pad + ((v - xMin) / (xMax - xMin)) * innerW
+  const scaleY = (v) => h - pad - ((v - yMin) / (yMax - yMin)) * innerH
+
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < ny; j++) {
+      const val = hist2d[i][j]
+      if (val <= 0) continue
+      const x0 = scaleX(xEdges[i])
+      const x1 = scaleX(xEdges[i + 1])
+      const y0 = scaleY(yEdges[j])
+      const y1 = scaleY(yEdges[j + 1])
+      const rect = document.createElementNS(svgNS, 'rect')
+      rect.setAttribute('x', String(x0))
+      rect.setAttribute('y', String(y1))
+      rect.setAttribute('width', String(x1 - x0))
+      rect.setAttribute('height', String(y0 - y1))
+      const intensity = val / maxCount
+      const color = `rgba(30,144,255,${Math.min(1, 0.2 + 0.8 * intensity)})`
+      rect.setAttribute('fill', color)
+      svg.appendChild(rect)
+    }
+  }
+
+  // axes
+  const axisColor = '#666'
+  const mkLine = (x1, y1, x2, y2) => {
+    const l = document.createElementNS(svgNS, 'line')
+    l.setAttribute('x1', x1)
+    l.setAttribute('y1', y1)
+    l.setAttribute('x2', x2)
+    l.setAttribute('y2', y2)
+    l.setAttribute('stroke', axisColor)
+    l.setAttribute('stroke-width', '1')
+    return l
+  }
+  svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad))
+  svg.appendChild(mkLine(pad, pad, pad, h - pad))
+
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text')
+    t.textContent = txt
+    t.setAttribute('x', x)
+    t.setAttribute('y', y)
+    t.setAttribute('fill', '#aaa')
+    t.setAttribute('font-size', '10')
+    t.setAttribute('text-anchor', anchor)
+    return t
+  }
+  svg.appendChild(mkText(xMin.toFixed(2), pad, h - pad + 12, 'start'))
+  svg.appendChild(mkText(xMax.toFixed(2), w - pad, h - pad + 12, 'end'))
+  svg.appendChild(mkText(yMin.toFixed(2), pad - 6, h - pad, 'end'))
+  svg.appendChild(mkText(yMax.toFixed(2), pad - 6, pad + 4, 'end'))
+
+  return svg
 }
 
 /**

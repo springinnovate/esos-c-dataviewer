@@ -252,8 +252,6 @@ async function onLayerChange(e) {
   const lyr = state.layers[idx]
   if (!lyr) return
 
-  state.activeLayerIdx = idx
-  addWmsLayer(lyr.name)
 
   // close overlay and clear outline
   document.getElementById('statsOverlay').classList.add('hidden')
@@ -287,6 +285,8 @@ async function onLayerChange(e) {
     document.getElementById('minInput').value = min_
     document.getElementById('medInput').value = med
     document.getElementById('maxInput').value = max_
+    state.activeLayerIdx = idx
+    addWmsLayer(lyr.name)
     _applyDynamicStyle(vars)
   } catch (err) {
     console.error('Failed to fetch min/max for layer', err)
@@ -333,7 +333,6 @@ function wireAreaSamplerClick() {
       statsObj: stats.stats,
       units: stats.units
     })
-    _applyDynamicStyle(stats.stats)
 })}
 
 
@@ -417,13 +416,13 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
 
   const s = statsObj || {}
   state.lastStats = s
-  const setIf = (id, val) => {
+  /*const setIf = (id, val) => {
     const el = document.getElementById(id)
     if (el && Number.isFinite(val)) el.value = String(val)
   }
   setIf('minInput', s.min)
   setIf('medInput', s.median)
-  setIf('maxInput', s.max)
+  setIf('maxInput', s.max)*/
 
   const centerRow = document.createElement('div')
   centerRow.className = 'overlay-row'
@@ -748,9 +747,10 @@ function wireDynamicStyleControls() {
 
   populateLayerSelect()
   if (state.layers.length > 0) {
-    document.getElementById('layerSelect').value = '0'
-    addWmsLayer(state.layers[0].name)
-
+    const sel = document.getElementById('layerSelect')
+    sel.value = '0'
+    // this triggers the stats and color change event for a new raster
+    sel.dispatchEvent(new Event('change', { bubbles: true }))
   }
 })()
 

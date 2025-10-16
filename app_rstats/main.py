@@ -489,7 +489,27 @@ def pixel_stats(q: PixelWindowStatsIn):
     return out
 
 
-def _sample_percentiles(src, samples=10, frac=0.05):
+def _sample_percentiles(src, samples, frac):
+    """Estimate approximate 5th and 95th percentiles from random raster windows.
+
+    This function samples multiple random windows from the input raster, extracts
+    valid (non-masked) pixel values, and computes approximate percentile bounds.
+    The sampling is fractional, meaning each window covers a fraction of the total
+    raster area defined by `frac`.
+
+    Args:
+        src (rasterio.io.DatasetReader): An open rasterio dataset to sample from.
+        samples (int): Number of random windows to sample.
+        frac (float): Fraction (0–1) of the raster dimensions to use for each window
+            in both height and width.
+
+    Returns:
+        numpy.ndarray: A 1D array of two elements `[p5, p95]` representing the
+        approximate 5th and 95th percentile values of the sampled pixels.
+
+    Raises:
+        ValueError: If `frac` is not within the range (0, 1].
+    """
     vals = []
     h, w = src.height, src.width
     win_h, win_w = int(h * frac), int(w * frac)

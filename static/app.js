@@ -178,6 +178,15 @@ function wireRadiusControls() {
   const rRange = document.getElementById('windowSize')
   const rNum = document.getElementById('windowSizeNumber')
 
+  // Configure the log mapping range
+  const min = 1
+  const max = 1000
+
+  function sliderToLog(val) {
+    const exp = Math.pow(val / 100, 2)
+    return min * Math.pow(max / min, exp)
+  }
+
   const clamp = (v) => {
     const min = Number(rRange?.min) || 0
     const max = Number(rRange?.max) || 1000
@@ -186,10 +195,10 @@ function wireRadiusControls() {
 
   const setVal = (v) => {
     const vAsInt = Number.parseInt(v, 10)
-    const vv = clamp(Number.isNaN(vAsInt) ? 0 : vAsInt)
-    rRange.value = String(vv)
-    rNum.value = String(vv)
-    state.boxSizeKm = vv
+    const logValue = sliderToLog(vAsInt)
+    rRange.value = String(vAsInt)
+    rNum.value = String(logValue)
+    state.boxSizeKm = logValue
     if (state.hoverRect) {
       const ll = state.lastMouseLatLng || state.map.getCenter()
       state.hoverRect.setBounds(latLngBoundsForSquareKilometers(ll, state.boxSizeKm))
@@ -416,13 +425,6 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
 
   const s = statsObj || {}
   state.lastStats = s
-  /*const setIf = (id, val) => {
-    const el = document.getElementById(id)
-    if (el && Number.isFinite(val)) el.value = String(val)
-  }
-  setIf('minInput', s.min)
-  setIf('medInput', s.median)
-  setIf('maxInput', s.max)*/
 
   const centerRow = document.createElement('div')
   centerRow.className = 'overlay-row'
@@ -727,6 +729,46 @@ function wireDynamicStyleControls() {
   update()
 }
 
+function enableAltWheelSlider() {
+  const slider = document.getElementById('windowSize')
+  const number = document.getElementById('windowSizeNumber')
+
+  const clamp = (v) => {
+    const min = parseFloat(slider.min) || 0
+    const max = parseFloat(slider.max) || 1000
+    return Math.max(min, Math.min(max, v))
+  }
+
+  const apply = (v) => {
+    const vv = clamp(v)
+    slider.value = String(vv)
+    // keep existing listeners (from wireRadiusControls) in sync
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    if (number) number.value = String(vv)
+  }
+
+  // temporarily disable Leaflet wheel zoom when Alt is held
+  const onKeyDown = (e) => {
+    if (e.altKey && window.state?.map) window.state.map.scrollWheelZoom.disable()
+  }
+  const onKeyUp = () => {
+    if (window.state?.map) window.state.map.scrollWheelZoom.enable()
+  }
+
+  const onWheel = (e) => {
+    if (!e.altKey) return
+    e.preventDefault()
+    // capture before Leaflet stops propagation
+    const delta = e.deltaY > 0 ? 1 : -1
+    const step = parseFloat(slider.step) || 1
+    const cur = parseFloat(slider.value)
+    apply(cur - delta * step)
+  }
+
+  window.addEventListener('keydown', onKeyDown, true)
+  window.addEventListener('keyup', onKeyUp, true)
+  window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+}
 
 /**
  * App entrypoint.
@@ -739,6 +781,25 @@ function wireDynamicStyleControls() {
   wireRadiusControls()
   wireAreaSamplerClick()
   wireDynamicStyleControls()
+  enableAltWheelSlider()
+
+  //disable leaflet scroll zoom when alt is held
+  const mapEl = state.map.getContainer()
+  mapEl.addEventListener('wheel', e => {
+  if (e.altKey) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+  }
+  }, { passive: false, capture: true })
+
+  // Optional: also guard legacy Firefox event name
+  mapEl.addEventListener('DOMMouseScroll', e => {
+    if (e.altKey) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    }
+  }, { passive: false, capture: true })
+
 
   const cfg = await loadConfig()
   state.baseUrl = cfg.geoserver_base_url

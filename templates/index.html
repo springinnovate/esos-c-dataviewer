@@ -27,14 +27,13 @@
           </label>
           <span class='inline'>
             <label for='windowSize'>Window Size (km)</label>
-            <input id='windowSize' type='range' min='1' max='1000' step='1' value='10' />
+            <input id='windowSize' type='range' min='0' max='100' step='1' value='10' />
             <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='10' />
           </span>
         </div>
 
         <!-- Dynamic style controls TODO: make it one down not wide-->
-        <div>
-          <details class='style-panel'>
+        <div class='style-panel'>
             <summary>Style</summary>
             <div class='style-grid'>
               <label>Min <input id='minInput' type='number' step='any' /></label>
@@ -49,7 +48,6 @@
                 Use stats
               </button>
             </div>
-          </details>
         </div>
       </div>
     </header>

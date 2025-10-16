@@ -10,7 +10,7 @@
 
 const state = {
   map: null,
-  baseUrl: '',
+  geoserverBaseUrl: '',
   baseStatsUrl: '',
   wmsLayer: null,
   layers: [],
@@ -53,8 +53,8 @@ function initMap() {
   wireOverlayClose()
 
   const overlay = document.getElementById('statsOverlay')
-  L.DomEvent.disableClickPropagation(overlay)
-  L.DomEvent.disableScrollPropagation(overlay)
+  /*L.DomEvent.disableClickPropagation(overlay)
+  L.DomEvent.disableScrollPropagation(overlay)*/
 }
 
 /**
@@ -174,7 +174,7 @@ function initMouseFollowBox() {
  * Wire UI controls that set the sampling window size (km).
  * Keeps range and numeric inputs in sync and updates hover rectangle.
  */
-function wireRadiusControls() {
+function wireSquareSamplerControls() {
   const rRange = document.getElementById('windowSize')
   const rNum = document.getElementById('windowSizeNumber')
 
@@ -185,12 +185,6 @@ function wireRadiusControls() {
   function sliderToLog(val) {
     const exp = Math.pow(val / 100, 2)
     return min * Math.pow(max / min, exp)
-  }
-
-  const clamp = (v) => {
-    const min = Number(rRange?.min) || 0
-    const max = Number(rRange?.max) || 1000
-    return Math.max(min, Math.min(max, v))
   }
 
   const setVal = (v) => {
@@ -236,7 +230,7 @@ function addWmsLayer(qualifiedName) {
     state.map.removeLayer(state.wmsLayer)
     state.wmsLayer = null
   }
-  const wmsUrl = `${state.baseUrl}/wms`
+  const wmsUrl = `${state.geoserverBaseUrl}/wms`
   const params = {
     layers: qualifiedName,
     format: 'image/png',
@@ -276,27 +270,13 @@ async function onLayerChange(e) {
     if (!res.ok) throw new Error(await res.text())
     const { min_, max_ } = await res.json()
 
-    // compute mid and build vars
-    const med = min_ + (max_ - min_) / 2
-    const vars = {
-      min: min_,
-      med: med,
-      max: max_,
-      cmin: '#f7f7f7',
-      cmed: '#31a354',
-      cmax: '#006837',
-      opacity: 1,
-      nval: -9999,
-      nopacity: 0,
-      ncolor: '#000000',
-      beyond: max_ * 1.1
-    }
+    const med = (max_ + min_) / 2
     document.getElementById('minInput').value = min_
     document.getElementById('medInput').value = med
     document.getElementById('maxInput').value = max_
     state.activeLayerIdx = idx
     addWmsLayer(lyr.name)
-    _applyDynamicStyle(vars)
+    _applyDynamicStyle()
   } catch (err) {
     console.error('Failed to fetch min/max for layer', err)
   }
@@ -321,7 +301,7 @@ function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
     const lyr = state.layers[state.activeLayerIdx]
     if (!lyr) return
-    const rasterId = lyr.raster_id || lyr.name
+    const rasterId = lyr.name
 
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
@@ -553,7 +533,7 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     const lo = binEdges[i]
     const hi = binEdges[i + 1]
     const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : String(n)
-    const text = `Range: [${fmt(lo)}, ${fmt(hi)})\nCount: ${v.toLocaleString()}`
+    const text = `Range: [${fmt(lo)}, ${fmt(hi)}) Count: ${v.toLocaleString()}`
 
     rect.addEventListener('mouseenter', (ev) => {
       _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
@@ -629,12 +609,10 @@ function _hideHistTooltip() {
   if (tip) tip.style.display = 'none'
 }
 
-function _clearStyleParams(layer) {
-  if (!layer) return
-  delete layer.wmsParams.styles
-  delete layer.wmsParams.sld
-  delete layer.wmsParams.sld_body
-  delete layer.wmsParams.env
+function _normColor(v) {
+  if (v == null) return ''
+  const s = String(v).trim()
+  return s ? (s.startsWith('#') ? s : '#' + s) : ''
 }
 
 /**
@@ -645,24 +623,14 @@ function _clearStyleParams(layer) {
  * @private
  */
 function _buildEnvString(obj) {
-  const normColor = (v) => {
-    if (v == null) return v
-    const s = String(v).trim()
-    return s.startsWith('#') ? s : '#' + s
-  }
   const entries = Object.entries(obj || {}).map(([k, v]) => {
     if (v == null) return null
-    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = normColor(v)
+    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = _normColor(v)
     return `${k}:${v}`
   }).filter(Boolean)
   return entries.join(';')
 }
 
-function _normColor(v) {
-  if (v == null) return ''
-  const s = String(v).trim()
-  return s ? (s.startsWith('#') ? s : '#' + s) : ''
-}
 
 function _readStyleInputsFromUI() {
   const get = (id) => document.getElementById(id)
@@ -672,21 +640,18 @@ function _readStyleInputsFromUI() {
     min: toNum(get('minInput')),
     med: toNum(get('medInput')),
     max: toNum(get('maxInput')),
-    cmin: toCol(get('cminInput') || { value: '#f7f7f7' }),
-    cmed: toCol(get('cmedInput') || { value: '#31a354' }),
-    cmax: toCol(get('cmaxInput') || { value: '#006837' }),
-    opacity: Number(get('opacityRange')?.value ?? 1),
-    nopacity: 0,
+    cmin: toCol(get('cminInput')),
+    cmed: toCol(get('cmedInput')),
+    cmax: toCol(get('cmaxInput')),
+    opacity: Number(get('opacityRange').value),
     ncolor: '#000000'
   }
 }
 
 /**
  * Apply a dynamic style to the active WMS layer using stats for min/median/max.
- * Computes median or mid value from stats and updates GeoServer env vars.
- * @param {object} s Stats object returned by /stats/geometry
  */
-function _applyDynamicStyle(vars) {
+function _applyDynamicStyle() {
   if (!state.wmsLayer) return
   // clear conflicting params
   delete state.wmsLayer.wmsParams?.sld
@@ -699,10 +664,8 @@ function _applyDynamicStyle(vars) {
 
 function wireDynamicStyleControls() {
   const get = (id) => document.getElementById(id)
-
   const update = () => {
-    const vars = _readStyleInputsFromUI(state.lastStats)
-    _applyDynamicStyle(vars)
+    _applyDynamicStyle()
   }
 
   ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']
@@ -741,7 +704,7 @@ function enableAltWheelSlider() {
   const apply = (v) => {
     const vv = clamp(v)
     slider.value = String(vv)
-    // keep existing listeners (from wireRadiusControls) in sync
+    // keep existing listeners (from wireSquareSamplerControls) in sync
     slider.dispatchEvent(new Event('input', { bubbles: true }))
     if (number) number.value = String(vv)
   }
@@ -769,19 +732,7 @@ function enableAltWheelSlider() {
   window.addEventListener('wheel', onWheel, { passive: false, capture: true })
 }
 
-/**
- * App entrypoint.
- * Initializes UI, loads config, and selects the first layer if available.
- * Self-invoking to avoid leaking names.
- */
-;(async function main() {
-  initMap()
-  wireOpacity()
-  wireRadiusControls()
-  wireAreaSamplerClick()
-  wireDynamicStyleControls()
-  enableAltWheelSlider()
-
+function disableLeafletScrollOnAlt() {
   //disable leaflet scroll zoom when alt is held
   const mapEl = state.map.getContainer()
   mapEl.addEventListener('wheel', e => {
@@ -790,18 +741,24 @@ function enableAltWheelSlider() {
     e.stopImmediatePropagation()
   }
   }, { passive: false, capture: true })
+}
 
-  // Optional: also guard legacy Firefox event name
-  mapEl.addEventListener('DOMMouseScroll', e => {
-    if (e.altKey) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-    }
-  }, { passive: false, capture: true })
-
+/**
+ * App entrypoint.
+ * Initializes UI, loads config, and selects the first layer if available.
+ * Self-invoking to avoid leaking names.
+ */
+;(async function main() {
+  initMap()
+  wireOpacity()
+  wireSquareSamplerControls()
+  wireAreaSamplerClick()
+  wireDynamicStyleControls()
+  enableAltWheelSlider()
+  disableLeafletScrollOnAlt()
 
   const cfg = await loadConfig()
-  state.baseUrl = cfg.geoserver_base_url
+  state.geoserverBaseUrl = cfg.geoserver_base_url
   state.layers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
 

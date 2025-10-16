@@ -640,7 +640,24 @@ function _buildEnvString(obj) {
   return entries.join(';')
 }
 
-
+/**
+ * Read current style parameter values from the UI controls.
+ *
+ * Extracts numeric and color values from input elements controlling
+ * raster styling (min, median, max, and corresponding colors). Normalizes
+ * color values to ensure they are prefixed with '#'. Returns an object
+ * suitable for constructing GeoServer `env` parameters.
+ *
+ * @returns {Object} Style parameters for dynamic raster rendering.
+ * @returns {number} return.min - Minimum data value.
+ * @returns {number} return.med - Median or midpoint data value.
+ * @returns {number} return.max - Maximum data value.
+ * @returns {string} return.cmin - Color for minimum value (normalized '#RRGGBB').
+ * @returns {string} return.cmed - Color for median value (normalized '#RRGGBB').
+ * @returns {string} return.cmax - Color for maximum value (normalized '#RRGGBB').
+ * @returns {number} return.opacity - Overall layer opacity (0–1).
+ * @returns {string} return.ncolor - Color for NoData pixels (default '#000000').
+ */
 function _readStyleInputsFromUI() {
   const get = (id) => document.getElementById(id)
   const toNum = (el) => Number(el?.value)

@@ -687,7 +687,23 @@ function _applyDynamicStyle() {
   state.wmsLayer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
 }
 
-
+/**
+ * Wire UI controls that manage dynamic raster styling parameters.
+ *
+ * Attaches event listeners to style-related input elements controlling
+ * minimum, median, and maximum values as well as color and opacity settings.
+ * Whenever any of these inputs change, the active WMS layer’s style is updated
+ * through `_applyDynamicStyle()`.
+ *
+ * Also wires the "Use stats" button (`#styleFromStatsBtn`), which populates
+ * the style inputs using the most recent raster statistics stored in
+ * `state.lastStats`, then triggers an immediate style update.
+ *
+ * Finally, performs an initial call to `_applyDynamicStyle()` to ensure the
+ * current UI state is reflected in the layer style at startup.
+ *
+ * @returns {void}
+ */
 function wireDynamicStyleControls() {
   const get = (id) => document.getElementById(id)
   const update = () => {

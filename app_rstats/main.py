@@ -500,7 +500,7 @@ def _sample_percentiles(src, samples, frac):
     Args:
         src (rasterio.io.DatasetReader): An open rasterio dataset to sample from.
         samples (int): Number of random windows to sample.
-        frac (float): Fraction (0–1) of the raster dimensions to use for each window
+        frac (float): Fraction (0-1) of the raster dimensions to use for each window
             in both height and width.
 
     Returns:
@@ -510,17 +510,23 @@ def _sample_percentiles(src, samples, frac):
     Raises:
         ValueError: If `frac` is not within the range (0, 1].
     """
-    vals = []
-    h, w = src.height, src.width
-    win_h, win_w = int(h * frac), int(w * frac)
+    sample_values = []
+    raster_height, raster_width = src.height, src.width
+    window_height, window_width = int(raster_height * frac), int(
+        raster_width * frac
+    )
+
     for _ in range(samples):
-        row = np.random.randint(0, h - win_h)
-        col = np.random.randint(0, w - win_w)
-        window = rasterio.windows.Window(col, row, win_w, win_h)
-        arr = src.read(1, window=window, masked=True)
-        vals.append(arr.compressed())
-    vals = np.concatenate(vals)
-    return np.nanpercentile(vals, [5, 95])
+        row_offset = np.random.randint(0, raster_height - window_height)
+        col_offset = np.random.randint(0, raster_width - window_width)
+        window = rasterio.windows.Window(
+            col_offset, row_offset, window_width, window_height
+        )
+        band_data = src.read(1, window=window, masked=True)
+        sample_values.append(band_data.compressed())
+
+    sample_values = np.concatenate(sample_values)
+    return np.nanpercentile(sample_values, [5, 95])
 
 
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)

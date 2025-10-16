@@ -676,7 +676,6 @@ function _readStyleInputsFromUI() {
     cmed: toCol(get('cmedInput') || { value: '#31a354' }),
     cmax: toCol(get('cmaxInput') || { value: '#006837' }),
     opacity: Number(get('opacityRange')?.value ?? 1),
-    nval: -9999,
     nopacity: 0,
     ncolor: '#000000'
   }

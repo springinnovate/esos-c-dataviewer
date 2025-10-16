@@ -717,6 +717,21 @@ function wireDynamicStyleControls() {
   update()
 }
 
+/**
+ * Enable Alt+mouse-wheel adjustment for the sampling window size slider.
+ *
+ * When the user holds the Alt key and scrolls the mouse wheel, this function
+ * adjusts the sampling window size slider (`#windowSize`) up or down according
+ * to its defined step value. The associated numeric input (`#windowSizeNumber`)
+ * is kept synchronized. While Alt is held, Leaflet's default scroll-to-zoom
+ * behavior is temporarily disabled to prevent map zoom interference.
+ *
+ * Listeners are attached globally to the window for:
+ * - `keydown` / `keyup`: toggling Leaflet scroll zoom enable/disable.
+ * - `wheel`: intercepting Alt+scroll to modify the slider value.
+ *
+ * @returns {void}
+ */
 function enableAltWheelSlider() {
   const slider = document.getElementById('windowSize')
   const number = document.getElementById('windowSizeNumber')

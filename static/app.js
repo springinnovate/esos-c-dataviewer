@@ -238,25 +238,59 @@ function addWmsLayer(qualifiedName) {
   const l = L.tileLayer.wms(wmsUrl, params)
   l.addTo(state.map)
   state.wmsLayer = l
-  applyDefaultDynamicStyle()
 }
 
 
 /**
  * Handle layer change from the <select>.
  * Sets active layer, updates WMS, hides overlay, and clears outline.
+ * Also fetches the layer-wide min/max and applies dynamic styling.
  * @param {Event & {target: HTMLSelectElement}} e
  */
-function onLayerChange(e) {
+async function onLayerChange(e) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.layers[idx]
   if (!lyr) return
+
   state.activeLayerIdx = idx
   addWmsLayer(lyr.name)
-  // close the stats window if open
+
+  // close overlay and clear outline
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
   _hideOutline()
+
+  try {
+    const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ raster_id: lyr.name })
+    })
+    if (!res.ok) throw new Error(await res.text())
+    const { min_, max_ } = await res.json()
+
+    // compute mid and build vars
+    const med = min_ + (max_ - min_) / 2
+    const vars = {
+      min: min_,
+      med: med,
+      max: max_,
+      cmin: '#f7f7f7',
+      cmed: '#31a354',
+      cmax: '#006837',
+      opacity: 1,
+      nval: -9999,
+      nopacity: 0,
+      ncolor: '#000000',
+      beyond: max_ * 1.1
+    }
+    document.getElementById('minInput').value = min_
+    document.getElementById('medInput').value = med
+    document.getElementById('maxInput').value = max_
+    _applyDynamicStyle(vars)
+  } catch (err) {
+    console.error('Failed to fetch min/max for layer', err)
+  }
 }
 
 /**
@@ -299,7 +333,7 @@ function wireAreaSamplerClick() {
       statsObj: stats.stats,
       units: stats.units
     })
-    applyDefaultDynamicStyle(stats.stats)
+    _applyDynamicStyle(stats.stats)
 })}
 
 
@@ -623,22 +657,28 @@ function _buildEnvString(obj) {
   return entries.join(';')
 }
 
-/**
- * Apply a published GeoServer named style and pass dynamic env() vars.
- * The SLD must use env('min'), env('med'), env('max'), env('cmin'), env('cmed'),
- * env('cmax'), env('opacity'), and optionally env('nval'), env('nopacity'), env('ncolor')
- * @param {string} styleName e.g. 'workspace:agb_biomass_dynamic'
- * @param {{
- *   min:number, med:number, max:number,
- *   cmin:string, cmed:string, cmax:string, // '#rrggbb'
- *   opacity?:number, nval?:number, nopacity?:number, ncolor?:string
- * }} vars
- */
-function setDynamicNamedStyle(styleName, vars) {
-  if (!state.wmsLayer) return
-  _clearStyleParams(state.wmsLayer)
-  const env = _buildEnvString(vars)
-  state.wmsLayer.setParams({ styles: styleName, env })
+function _normColor(v) {
+  if (v == null) return ''
+  const s = String(v).trim()
+  return s ? (s.startsWith('#') ? s : '#' + s) : ''
+}
+
+function _readStyleInputsFromUI() {
+  const get = (id) => document.getElementById(id)
+  const toNum = (el) => Number(el?.value)
+  const toCol = (el) => _normColor(el?.value)
+  return {
+    min: toNum(get('minInput')),
+    med: toNum(get('medInput')),
+    max: toNum(get('maxInput')),
+    cmin: toCol(get('cminInput') || { value: '#f7f7f7' }),
+    cmed: toCol(get('cmedInput') || { value: '#31a354' }),
+    cmax: toCol(get('cmaxInput') || { value: '#006837' }),
+    opacity: Number(get('opacityRange')?.value ?? 1),
+    nval: -9999,
+    nopacity: 0,
+    ncolor: '#000000'
+  }
 }
 
 /**
@@ -646,48 +686,23 @@ function setDynamicNamedStyle(styleName, vars) {
  * Computes median or mid value from stats and updates GeoServer env vars.
  * @param {object} s Stats object returned by /stats/geometry
  */
-function applyDefaultDynamicStyle(s) {
-  if (!s || !state.wmsLayer) return
-
-  // Derive numeric range from stats safely
-  const minVal = Number.isFinite(s.min) ? s.min : 0
-  const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
-  const medVal = Number.isFinite(s.median)
-    ? s.median
-    : minVal + (maxVal - minVal) / 2
-
-  const toCol = (el) => String(el?.value || '').trim()
-  setDynamicNamedStyle('esosc:dynamic_style', {
-    min: minVal,
-    med: medVal,
-    max: maxVal,
-    cmin: toCol(document.getElementById('cminInput')),
-    cmed: toCol(document.getElementById('cmedInput')),
-    cmax: toCol(document.getElementById('cmaxInput')),
-    opacity: 0.9,
-    nval: -9999,
-    nopacity: 0.0,
-    ncolor: '#000000',
-  })
+function _applyDynamicStyle(vars) {
+  if (!state.wmsLayer) return
+  // clear conflicting params
+  delete state.wmsLayer.wmsParams?.sld
+  delete state.wmsLayer.wmsParams?.sld_body
+  const styleVars = _readStyleInputsFromUI()
+  const env = _buildEnvString(styleVars)
+  state.wmsLayer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
 }
 
-// --- Optional: hook up a simple UI for live updates ---
-// Example: sliders/inputs with ids: minInput, medInput, maxInput, cminInput, cmedInput, cmaxInput, opacityInput
+
 function wireDynamicStyleControls() {
   const get = (id) => document.getElementById(id)
 
   const update = () => {
-    const toNum = (el) => Number(el?.value)
-    const toCol = (el) => String(el?.value || '').trim()
-    setDynamicNamedStyle('esosc:dynamic_style', {
-      min: toNum(get('minInput')),
-      med: toNum(get('medInput')),
-      max: toNum(get('maxInput')),
-      cmin: toCol(get('cminInput')),
-      cmed: toCol(get('cmedInput')),
-      cmax: toCol(get('cmaxInput')),
-      opacity: Number(get('opacityRange')?.value ?? 1),
-    })
+    const vars = _readStyleInputsFromUI(state.lastStats)
+    _applyDynamicStyle(vars)
   }
 
   ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']

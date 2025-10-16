@@ -60,6 +60,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class MinMaxIn(BaseModel):
+    """Input model for min max value query.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+    """
+
+    raster_id: str
+
+
 class PixelStatsIn(BaseModel):
     """Input model for single-pixel raster queries.
 
@@ -179,6 +189,20 @@ class WindowStatsOut(BaseModel):
     units: Optional[str] = None
     stats: Dict[str, Any]
     histogram: Dict[str, Any]
+
+
+class RasterMinMaxOut(BaseModel):
+    """Output model for just min max of the raster.
+
+    Attributes:
+        raster_id (str): Identifier of the raster used for analysis.
+        min_ (float): minimum value in the raster
+        max_ (float): maximum value in the raster
+    """
+
+    raster_id: str
+    min_: float
+    max_: float
 
 
 def _load_registry() -> dict:
@@ -466,6 +490,35 @@ def pixel_stats(q: PixelWindowStatsIn):
         histogram=histogram,
     )
     return out
+
+
+def _sample_percentiles(src, samples=10, frac=0.05):
+    vals = []
+    h, w = src.height, src.width
+    win_h, win_w = int(h * frac), int(w * frac)
+    for _ in range(samples):
+        row = np.random.randint(0, h - win_h)
+        col = np.random.randint(0, w - win_w)
+        window = rasterio.windows.Window(col, row, win_w, win_h)
+        arr = src.read(1, window=window, masked=True)
+        vals.append(arr.compressed())
+    vals = np.concatenate(vals)
+    return np.nanpercentile(vals, [5, 95])
+
+
+@app.post("/stats/minmax", response_model=RasterMinMaxOut)
+def minmax_stats(r: MinMaxIn):
+    try:
+        ds, _, _ = _open_raster(r.raster_id)
+        # 10 samples  0.05 proportion
+        p5, p95 = _sample_percentiles(ds, 10, 0.05)
+        return RasterMinMaxOut(
+            raster_id=r.raster_id, min_=float(p5), max_=float(p95)
+        )
+
+    except Exception:
+        logger.exception("minmax_stats failed")
+        raise HTTPException(status_code=500, detail="Failed to compute min/max")
 
 
 @app.post("/stats/geometry", response_model=StatsOut)

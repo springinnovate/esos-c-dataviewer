@@ -607,6 +607,17 @@ function _hideHistTooltip() {
   if (tip) tip.style.display = 'none'
 }
 
+/**
+ * Normalize a color string to ensure it begins with a '#' prefix.
+ *
+ * Trims whitespace from the input and converts it to a string.
+ * If the value is null or empty, returns an empty string.
+ * If the string already starts with '#', it is returned unchanged;
+ * otherwise, '#' is prepended.
+ *
+ * @param {string|number|null|undefined} v - The color value to normalize.
+ * @returns {string} A normalized color string beginning with '#' or an empty string.
+ */
 function _normColor(v) {
   if (v == null) return ''
   const s = String(v).trim()

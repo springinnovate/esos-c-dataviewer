@@ -319,33 +319,170 @@ function wireOpacity() {
  * On success, renders the overlay; on failure, shows an error message.
  * Uses the primary active layer (A).
  */
+// Replace wireAreaSamplerClick with this version (and add the two helpers below)
+
 function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
-    const lyr = state.layers[state.activeLayerIdxA]
-    if (!lyr) return
-    const rasterId = lyr.name
-
+    const blocks = []
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
 
-    let stats
-    try {
-      stats = await fetchGeometryStats(rasterId, poly)
-    } catch (e) {
-      showOverlayError(`Error: ${e.message || String(e)}`)
+    const pick = (idx) => (Number.isInteger(idx) ? state.layers[idx] : null)
+    const lyrA = pick(state.activeLayerIdxA)
+    const lyrB = pick(state.activeLayerIdxB)
+
+    const fetchOne = async (layer) => {
+      if (!layer) return null
+      try {
+        const r = await fetchGeometryStats(layer.name, poly)
+        return { rasterId: layer.name, statsObj: r.stats, units: r.units }
+      } catch (e) {
+        return { rasterId: layer.name, error: e?.message || String(e) }
+      }
+    }
+
+    const [resA, resB] = await Promise.all([fetchOne(lyrA), fetchOne(lyrB)])
+
+    if (resA && !resA.error) {
+      state.lastStats = resA.statsObj || null
+      blocks.push(resA)
+    } else if (resA && resA.error) {
+      blocks.push({ rasterId: resA.rasterId, error: resA.error })
+    }
+
+    if (resB) {
+      if (!resB.error) blocks.push(resB)
+      else blocks.push({ rasterId: resB.rasterId, error: resB.error })
+    }
+
+    if (blocks.length === 0) {
+      showOverlayError('No layers selected or failed to fetch stats.')
       return
     }
 
-    renderAreaStatsOverlay({
-      rasterId,
+    renderAreaStatsOverlayMulti({
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,
-      statsObj: stats.stats,
-      units: stats.units
+      blocks
     })
   })
 }
+
+/**
+ * Render multiple stats blocks one after another in the overlay.
+ * @param {{centerLng:number,centerLat:number,boxKm:number,blocks:Array<{rasterId:string,statsObj?:object,units?:string,error?:string}>}} args
+ */
+function renderAreaStatsOverlayMulti({ centerLng, centerLat, boxKm, blocks }) {
+  const overlay = document.getElementById('statsOverlay')
+  const body = document.getElementById('overlayBody')
+  overlay.classList.remove('hidden')
+  body.innerHTML = ''
+
+  // top row with center/zoom control
+  const centerRow = document.createElement('div')
+  centerRow.className = 'overlay-row'
+  const centerBtn = document.createElement('button')
+  centerBtn.className = 'link-btn'
+  centerBtn.type = 'button'
+  centerBtn.textContent = `Center: ${centerLng.toFixed(6)}, ${centerLat.toFixed(6)}`
+  centerBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    _zoomToOutline(centerLng, centerLat)
+  })
+  centerRow.appendChild(centerBtn)
+  body.appendChild(centerRow)
+
+  // blocks
+  blocks.forEach((blk, i) => {
+    if (i > 0) {
+      const hr = document.createElement('hr')
+      hr.style.border = '0'
+      hr.style.borderTop = '1px solid var(--border)'
+      hr.style.margin = '8px 0'
+      body.appendChild(hr)
+    }
+    body.appendChild(buildStatsBlock(blk.rasterId, boxKm, blk.statsObj, blk.units, blk.error))
+  })
+}
+
+/**
+ * Build a single stats block element (title, summary lines, optional histogram or error).
+ * @param {string} rasterId
+ * @param {number} boxKm
+ * @param {object|undefined} statsObj
+ * @param {string|undefined} units
+ * @param {string|undefined} error
+ * @returns {HTMLElement}
+ */
+function buildStatsBlock(rasterId, boxKm, statsObj, units, error) {
+  const wrap = document.createElement('div')
+
+  const title = document.createElement('div')
+  title.style.fontWeight = '600'
+  title.style.marginBottom = '4px'
+  title.textContent = rasterId
+  wrap.appendChild(title)
+
+  if (error) {
+    const pre = document.createElement('pre')
+    pre.textContent = `Box size: ${boxKm} km\nError: ${error}`
+    wrap.appendChild(pre)
+    return wrap
+  }
+
+  const s = statsObj || {}
+  const lines = [
+    `Box size: ${boxKm} km`,
+    '',
+    `Count: ${s.count ?? 0}`,
+    `Mean: ${numFmt(s.mean)}`,
+    `Median: ${numFmt(s.median)}`,
+    `Min: ${numFmt(s.min)}`,
+    `Max: ${numFmt(s.max)}`,
+    `Sum: ${numFmt(s.sum)}`,
+    `Std Dev: ${numFmt(s.std)}`,
+    '',
+    `Valid pixels: ${s.valid_pixels ?? 0}`,
+    `Nodata pixels: ${s.nodata_pixels ?? 0}`,
+    `Coverage: ${pctFmt(s.coverage_ratio)}`,
+    '',
+    `Valid area: ${areaFmt(s.valid_area_m2)}`,
+    `Total mask area: ${areaFmt(s.window_mask_area_m2)}`,
+    units ? `Units: ${units}` : null,
+  ].filter(Boolean)
+
+  const pre = document.createElement('pre')
+  pre.textContent = lines.join('\n')
+  wrap.appendChild(pre)
+
+  if (Array.isArray(s.hist) && Array.isArray(s.bin_edges) && s.hist.length > 0 && s.bin_edges.length === s.hist.length + 1) {
+    const histTitle = document.createElement('div')
+    histTitle.style.marginTop = '0.5rem'
+    histTitle.textContent = 'Histogram'
+    wrap.appendChild(histTitle)
+
+    const svg = buildHistogramSVG(s.hist, s.bin_edges, { width: 420, height: 140, pad: 30 })
+    wrap.appendChild(svg)
+
+    const label = document.createElement('div')
+    label.style.display = 'flex'
+    label.style.justifyContent = 'space-between'
+    label.style.fontSize = '12px'
+    label.style.color = '#aaa'
+    label.style.marginTop = '2px'
+    label.innerHTML = `<span>${numFmt(s.bin_edges[0])}</span><span>${numFmt(s.bin_edges[s.bin_edges.length - 1])}</span>`
+    wrap.appendChild(label)
+  }
+
+  return wrap
+
+  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '—' }
+  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '—' }
+  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
+}
+
 
 /**
  * POST a geometry to the rstats service and return statistics.

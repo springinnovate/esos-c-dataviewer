@@ -41,13 +41,13 @@ import os
 import sys
 import time
 
-from ecoshard import taskgraph
 from dotenv import load_dotenv
+from ecoshard import taskgraph
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
-import psutil
 import numpy as np
+import psutil
 import rasterio
 import requests
 import yaml
@@ -91,7 +91,7 @@ class Gs:
         self.headers_xml = {"Content-Type": "text/xml"}
         self.headers_json = {"Content-Type": "application/json"}
 
-    # defining these so the identtity is stable for the taskgraph
+    # defining these so the identity is stable for the taskgraph
     def _key(self):
         return (self.base, self.auth[0], self._cred_fp, int(self.timeout))
 

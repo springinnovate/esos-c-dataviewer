@@ -534,31 +534,6 @@ def create_style_if_not_exists(
         )
 
 
-def is_in_projection(src_path: str | Path, target_projection: str) -> bool:
-    """Check whether a raster file is already in the target projection.
-
-    Opens the raster file, reads its coordinate reference system (CRS),
-    and compares it to the specified target projection. Returns False if
-    the raster has no defined CRS or if it differs from the target.
-
-    Args:
-        src_path (str | Path): Path to the source raster file.
-        target_projection (str): Target projection to check against
-            (e.g., 'EPSG:4326').
-
-    Returns:
-        bool: True if the raster’s CRS matches the target projection,
-        False otherwise.
-    """
-    src_path = Path(src_path)
-    with rasterio.open(src_path) as src:
-        if src.crs is None:
-            return False
-        return CRS.from_user_input(src.crs) == CRS.from_user_input(
-            target_projection
-        )
-
-
 def _pick_resampling(
     dtype: str, explicit: Resampling | None = None
 ) -> Resampling:

@@ -45,7 +45,7 @@ RUN echo 'if [ -f "/usr/local/ecoshard.gitversion" ]; then' >> /home/mambauser/.
 USER mambauser
 COPY geoserver_register.py /app/geoserver_register.py
 
-
+# Need to make sure mambauser can write to $GEOSERVER_LOCAL_DATA_DIR
 USER root
 ARG GEOSERVER_LOCAL_DATA_DIR
 RUN echo $GEOSERVER_LOCAL_DATA_DIR

@@ -40,14 +40,19 @@ import os
 import sys
 import time
 
+from ecoshard import taskgraph
 from dotenv import load_dotenv
+from rasterio.crs import CRS
+from rasterio.enums import Resampling
+from rasterio.warp import calculate_default_transform, reproject
+import numpy as np
+import rasterio
 import requests
 import yaml
-import rasterio
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -494,6 +499,135 @@ def create_style_if_not_exists(
         )
 
 
+def is_in_projection(src_path: str | Path, target_projection: str) -> bool:
+    src_path = Path(src_path)
+    with rasterio.open(src_path) as src:
+        if src.crs is None:
+            return False
+        return CRS.from_user_input(src.crs) == CRS.from_user_input(
+            target_projection
+        )
+
+
+def _pick_resampling(dtype: str, explicit: Resampling | None) -> Resampling:
+    if explicit is not None:
+        return explicit
+    kind = np.dtype(dtype).kind
+    return Resampling.nearest if kind in ("i", "u") else Resampling.bilinear
+
+
+def _build_overviews_inplace(
+    tif_path: str | Path,
+    factors: tuple[int, ...] = (2, 4, 8, 16),
+    resampling: Resampling | None = None,
+    overview_env: dict | None = None,
+) -> None:
+    env = {
+        "COMPRESS_OVERVIEW": "LZW",
+        "INTERLEAVE_OVERVIEW": "PIXEL",
+        "BIGTIFF_OVERVIEW": "IF_SAFER",
+        "GDAL_TIFF_OVR_BLOCKSIZE": "256",
+    }
+    if overview_env:
+        env.update(overview_env)
+
+    with rasterio.Env(**env):
+        with rasterio.open(tif_path, "r+") as ds:
+            rs = _pick_resampling(ds.dtypes[0], resampling)
+            ds.build_overviews(factors, rs)
+            ds.update_tags(ns="rio_overview", resampling=rs.name)
+
+
+def reproject_if_needed(
+    src_path: str | Path,
+    target_projection: str,
+    dst_path: str | Path | None = None,
+    resampling: Resampling | None = None,
+    creation_options: dict | None = None,
+    make_overviews: bool = True,
+    overview_factors: tuple[int, ...] = (2, 4, 8, 16),
+    overview_resampling: Resampling | None = None,
+    overview_env: dict | None = None,
+) -> str:
+    src_path = Path(src_path)
+    if dst_path is None:
+        dst_path = src_path.with_name(
+            f'{src_path.stem}_{CRS.from_user_input(target_projection).to_epsg() or "dst"}.tif'
+        )
+    else:
+        dst_path = Path(dst_path)
+
+    with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
+        with rasterio.open(src_path) as src:
+            src_crs = src.crs
+            if src_crs is not None and CRS.from_user_input(
+                src_crs
+            ) == CRS.from_user_input(target_projection):
+                out_path = str(src_path)
+                if make_overviews:
+                    _build_overviews_inplace(
+                        out_path,
+                        overview_factors,
+                        overview_resampling,
+                        overview_env,
+                    )
+                return out_path
+
+            if src_crs is None:
+                raise ValueError(
+                    "source raster has no CRS; cannot reproject reliably"
+                )
+
+            dst_crs = CRS.from_user_input(target_projection)
+
+            transform, width, height = calculate_default_transform(
+                src_crs, dst_crs, src.width, src.height, *src.bounds
+            )
+
+            dst_profile = src.profile.copy()
+            dst_profile.update(
+                {
+                    "crs": dst_crs,
+                    "transform": transform,
+                    "width": width,
+                    "height": height,
+                    "compress": "lzw",
+                    "tiled": True,
+                    "blockxsize": 256,
+                    "blockysize": 256,
+                    "BIGTIFF": "IF_SAFER",
+                }
+            )
+            if creation_options:
+                dst_profile.update(creation_options)
+
+            rs = _pick_resampling(src.dtypes[0], resampling)
+
+            os.makedirs(dst_path.parent, exist_ok=True)
+
+            with rasterio.open(dst_path, "w", **dst_profile) as dst:
+                if src.nodata is not None:
+                    dst.nodata = src.nodata
+                for bidx in range(1, src.count + 1):
+                    reproject(
+                        source=rasterio.band(src, bidx),
+                        destination=rasterio.band(dst, bidx),
+                        src_transform=src.transform,
+                        src_crs=src_crs,
+                        dst_transform=transform,
+                        dst_crs=dst_crs,
+                        resampling=rs,
+                        num_threads=0,
+                    )
+
+    out_path = str(dst_path)
+    if make_overviews:
+        _build_overviews_inplace(
+            out_path, overview_factors, overview_resampling, overview_env
+        )
+    return out_path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
@@ -512,6 +646,11 @@ def main():
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_password = config_data["geoserver"]["password"]
+
+    target_projection = config_data["target_projection"]
+    local_working_dir = Path(config_data["local_working_dir"])
+    local_working_dir.mkdir(parents=True, exist_ok=True)
+    task_graph = taskgraph.TaskGraph(local_working_dir, -1)
 
     timeout_seconds = 30
     geoserver_client = Gs(
@@ -542,23 +681,35 @@ def main():
     default_style_id = style_id
     for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
-        layer_type = layer_def["type"]
         file_path = layer_def["file_path"]
+        if not is_in_projection(file_path, target_projection):
+            target_path = local_working_dir / Path(file_path).name
+            task_graph.add_task(
+                func=reproject_if_needed,
+                args=(
+                    file_path,
+                    target_projection,
+                    target_path,
+                    Resampling.nearest,
+                ),
+                target_path_list=[target_path],
+            )
+            task_graph.join()
+            file_path = target_path
+            logger.debug(f"****************** the file path: {file_path}")
 
         with rasterio.open(file_path) as ds:
             ds_crs = ds.crs
 
-        if layer_type == "raster_geotiff":
-            create_layer(
-                geoserver_client,
-                workspace_id,
-                raster_id.lower(),
-                file_path,
-                ds_crs,
-                default_style_id,
-            )
-        else:
-            raise ValueError(f"Unknown layer type: {layer_type}")
+        create_layer(
+            geoserver_client,
+            workspace_id,
+            raster_id.lower(),
+            file_path,
+            ds_crs,
+            default_style_id,
+        )
+        break
     logger.info("All done.")
 
 

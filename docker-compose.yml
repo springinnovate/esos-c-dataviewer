@@ -67,6 +67,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.geoserver-init
+      args:
+        GEOSERVER_LOCAL_DATA_DIR: ${GEOSERVER_LOCAL_DATA_DIR}
     depends_on:
       geoserver:
         condition: service_healthy
@@ -77,6 +79,7 @@ services:
       - ./layers.yml:/app/layers.yml:ro
       - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ./local_data/processed_rasters:${GEOSERVER_LOCAL_DATA_DIR}/processed_rasters
     command: ['/app/layers.yml']
 
   rstats:

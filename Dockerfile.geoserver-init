@@ -45,5 +45,12 @@ RUN echo 'if [ -f "/usr/local/ecoshard.gitversion" ]; then' >> /home/mambauser/.
 USER mambauser
 COPY geoserver_register.py /app/geoserver_register.py
 
+
+USER root
+ARG GEOSERVER_LOCAL_DATA_DIR
+RUN echo $GEOSERVER_LOCAL_DATA_DIR
+RUN mkdir -p $GEOSERVER_LOCAL_DATA_DIR && \
+    chown -R mambauser:mambauser $GEOSERVER_LOCAL_DATA_DIR
+
 WORKDIR /app
 ENTRYPOINT ["/opt/conda/envs/geopy311/bin/python", "geoserver_register.py"]

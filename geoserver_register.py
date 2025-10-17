@@ -587,10 +587,10 @@ def _build_overviews_inplace(
 
 
 def reproject_and_build_overviews_if_needed(
-    src_path: str | Path,
+    src_path: Path,
     target_projection: str,
-    dst_path: str | Path,
     resampling: Resampling,
+    dst_path: Path,
 ) -> str:
     """Reproject a raster to a target projection if not already aligned.
 
@@ -601,12 +601,12 @@ def reproject_and_build_overviews_if_needed(
     internal overviews are built to improve rendering performance.
 
     Args:
-        src_path (str | Path): Path to the source raster file.
+        src_path (Path): Path to the source raster file.
         target_projection (str): Target projection (e.g., 'EPSG:4326' or 'EPSG:3857').
-        dst_path (str | Path | None): Output path for the reprojected raster.
-            If None, a new filename is generated with the EPSG code appended.
-        resampling (Resampling | None): Resampling method to use during reprojection.
+        resampling (Resampling): Resampling method to use during reprojection.
             Defaults to nearest-neighbor for categorical data if unspecified.
+        dst_path (Path): Output path for the reprojected raster.
+            If None, a new filename is generated with the EPSG code appended.
 
     Raises:
         ValueError: If the source raster lacks a valid CRS.
@@ -769,8 +769,8 @@ def main():
             args=(
                 file_path,
                 target_projection,
-                target_path,
                 Resampling.nearest,
+                target_path,
             ),
             target_path_list=[target_path],
             task_name=f"process {raster_id}",

@@ -36,6 +36,17 @@ async function loadConfig() {
   return res.json()
 }
 
+const CRS3347 = new L.Proj.CRS(
+  'EPSG:3347',
+  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
+  {
+    origin: [0, 0],
+    resolutions: [
+      4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
+    ]
+  }
+)
+
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -43,14 +54,16 @@ async function loadConfig() {
 function initMap() {
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
+    crs: CRS3347,
     center: [37.8, -96.9],
     zoom: 4,
     zoomControl: false,
   })
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  /*L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    crs: CRS3347,
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
-  }).addTo(map)
+  }).addTo(map)*/
   state.map = map
   initMouseFollowBox()
   wireOverlayClose()
@@ -243,6 +256,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
     transparent: true,
     tiled: true,
     version: '1.1.1',
+    crs: CRS3347,
   }
   const l = L.tileLayer.wms(wmsUrl, params)
 

@@ -53,7 +53,7 @@ load_dotenv()
 RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -793,13 +793,15 @@ def geometry_stats(q: GeometryStatsIn):
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(q: GeometryScatterIn):
     try:
+        logging.debug("Opening rasters")
         dsx, nodata_x, units_x = _open_raster(q.raster_id_x)
         dsy, nodata_y, units_y = _open_raster(q.raster_id_y)
 
+        logging.debug("Shaping geometry")
         geom = shape(q.geometry)
 
-        # reproject geometry to X raster CRS
         if q.from_crs != dsx.crs.to_string():
+            logging.debug("Reprojecting geometry to X raster CRS")
             transformer = Transformer.from_crs(
                 q.from_crs, dsx.crs, always_xy=True
             )
@@ -832,8 +834,9 @@ def geometry_scatter(q: GeometryScatterIn):
                 w = Window(cc, rr, 1, 1)
             return w
 
-        # window on X grid
+        logging.debug("Building window on X grid")
         win_x = _safe_window_for_geom(dsx, geom)
+        logging.debug("Reading data_x from raster")
         data_x = dsx.read(1, window=win_x, boundless=True, masked=False)
         if data_x.size == 0:
             raise HTTPException(
@@ -841,9 +844,10 @@ def geometry_scatter(q: GeometryScatterIn):
                 detail="Empty read window (geometry outside raster_x).",
             )
 
+        logging.debug("Computing transform for X window")
         transform_x = dsx.window_transform(win_x)
 
-        # geometry mask on X window
+        logging.debug("Building geometry mask")
         mask = geometry_mask(
             [mapping(geom)],
             transform=transform_x,
@@ -852,12 +856,13 @@ def geometry_scatter(q: GeometryScatterIn):
             all_touched=bool(q.all_touched),
         )
 
+        logging.debug("Applying nodata mask for X")
         arr_x = data_x.astype("float64", copy=False)
         if nodata_x is not None:
             arr_x = np.where(np.isclose(arr_x, nodata_x), np.nan, arr_x)
         arr_x = np.where(mask, arr_x, np.nan)
 
-        # reproject Y raster into the X window grid
+        logging.debug("Reprojecting Y raster into X window grid")
         dest_y = np.full(arr_x.shape, np.nan, dtype="float64")
         reproject(
             source=dsy.read(1, masked=False).astype("float64", copy=False),
@@ -871,16 +876,19 @@ def geometry_scatter(q: GeometryScatterIn):
             resampling=Resampling.nearest,
         )
 
-        # apply same polygon mask
+        logging.debug("Applying same polygon mask to Y array")
         arr_y = np.where(mask, dest_y, np.nan)
 
-        # paired finite values
+        logging.debug("Extracting finite paired values")
         finite_mask = np.isfinite(arr_x) & np.isfinite(arr_y)
         x_vals = arr_x[finite_mask]
         y_vals = arr_y[finite_mask]
 
         n_pairs = int(x_vals.size)
+        logging.debug(f"Found {n_pairs} finite pairs")
+
         if n_pairs == 0:
+            logging.debug("No valid pairs found; returning empty ScatterOut")
             return ScatterOut(
                 raster_id_x=q.raster_id_x,
                 raster_id_y=q.raster_id_y,
@@ -911,7 +919,7 @@ def geometry_scatter(q: GeometryScatterIn):
                 geometry=q.geometry,
             )
 
-        # optional downsample for payload
+        logging.debug("Downsampling data if needed")
         if n_pairs > q.max_points:
             rng = np.random.default_rng(0)
             idx = rng.choice(n_pairs, size=q.max_points, replace=False)
@@ -921,7 +929,7 @@ def geometry_scatter(q: GeometryScatterIn):
             x_plot = x_vals
             y_plot = y_vals
 
-        # correlation and simple OLS fit
+        logging.debug("Computing correlation and linear fit")
         corr = float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
         if n_pairs > 1:
             A = np.vstack([x_vals, np.ones_like(x_vals)]).T
@@ -932,7 +940,7 @@ def geometry_scatter(q: GeometryScatterIn):
             slope = None
             intercept = None
 
-        # 2D histogram
+        logging.debug("Computing 2D histogram")
         bins = int(max(1, min(256, q.bins)))
         H, x_edges, y_edges = np.histogram2d(x_vals, y_vals, bins=bins)
         H = H.astype("int64")
@@ -940,6 +948,7 @@ def geometry_scatter(q: GeometryScatterIn):
         total_mask_pixels = int(np.count_nonzero(mask))
         valid_pixels = int(n_pairs)
 
+        logging.debug("Assembling ScatterOut response")
         return ScatterOut(
             raster_id_x=q.raster_id_x,
             raster_id_y=q.raster_id_y,

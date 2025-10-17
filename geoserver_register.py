@@ -45,6 +45,7 @@ from dotenv import load_dotenv
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
+import psutil
 import numpy as np
 import rasterio
 import requests
@@ -650,7 +651,9 @@ def main():
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
-    task_graph = taskgraph.TaskGraph(local_working_dir, -1)
+    task_graph = taskgraph.TaskGraph(
+        local_working_dir, psutil.cpu_count(logical=False), 15.0
+    )
 
     timeout_seconds = 30
     geoserver_client = Gs(
@@ -682,35 +685,54 @@ def main():
     for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
         file_path = layer_def["file_path"]
-        if not is_in_projection(file_path, target_projection):
-            target_path = local_working_dir / Path(file_path).name
-            task_graph.add_task(
-                func=reproject_if_needed,
-                args=(
-                    file_path,
-                    target_projection,
-                    target_path,
-                    Resampling.nearest,
-                ),
-                target_path_list=[target_path],
-            )
-            task_graph.join()
-            file_path = target_path
-            logger.debug(f"****************** the file path: {file_path}")
-
-        with rasterio.open(file_path) as ds:
-            ds_crs = ds.crs
-
-        create_layer(
-            geoserver_client,
-            workspace_id,
-            raster_id.lower(),
-            file_path,
-            ds_crs,
-            default_style_id,
+        task_graph.add_task(
+            func=process_raster,
+            args=(
+                file_path,
+                target_projection,
+                local_working_dir,
+                geoserver_client,
+                workspace_id,
+                raster_id,
+                default_style_id,
+            ),
+            task_name=f"process {raster_id}",
         )
-        break
+    task_graph.join()
+    task_graph.close()
     logger.info("All done.")
+
+
+def process_raster(
+    file_path,
+    target_projection,
+    local_working_dir,
+    geoserver_client,
+    workspace_id,
+    raster_id,
+    default_style_id,
+):
+    if not is_in_projection(file_path, target_projection):
+        target_path = local_working_dir / Path(file_path).name
+        reproject_if_needed(
+            file_path,
+            target_projection,
+            target_path,
+            Resampling.nearest,
+        )
+        file_path = target_path
+
+    with rasterio.open(file_path) as ds:
+        ds_crs = ds.crs
+
+    create_layer(
+        geoserver_client,
+        workspace_id,
+        raster_id.lower(),
+        file_path,
+        ds_crs,
+        default_style_id,
+    )
 
 
 if __name__ == "__main__":

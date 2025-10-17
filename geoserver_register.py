@@ -53,7 +53,7 @@ import yaml
 
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -89,6 +89,19 @@ class Gs:
         self.timeout = timeout
         self.headers_xml = {"Content-Type": "text/xml"}
         self.headers_json = {"Content-Type": "application/json"}
+
+    # defining these so the identtity is stable for the taskgraph
+    def _key(self):
+        return (self.base, self.auth[0], self._cred_fp, int(self.timeout))
+
+    def __eq__(self, other):
+        return isinstance(other, Gs) and self._key() == other._key()
+
+    def __hash__(self):
+        return hash(self._key())
+
+    def __repr__(self):
+        return f"Gs(base={self.base!r}, user={self.auth[0]!r}, timeout={self.timeout!r})"
 
     def _url(self, path: str) -> str:
         """Builds a fully qualified GeoServer REST URL.

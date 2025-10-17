@@ -612,13 +612,16 @@ def reproject_and_build_overviews_if_needed(
         ValueError: If the source raster lacks a valid CRS.
 
     """
-    src_path = Path(src_path)
-    dst_path = Path(dst_path)
-
-    overview_factors = (2, 4, 8, 16)
-
     with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
         with rasterio.open(src_path) as src:
+            # dynamic overview factors: include 2**k while min_side / 2**k > 256
+            m = min(src.width, src.height)
+            factors = []
+            k = 1
+            while m / (2**k) > 256:
+                factors.append(2**k)
+                k += 1
+            overview_factors = tuple(factors)
             src_crs = src.crs
             if src_crs is not None and CRS.from_user_input(
                 src_crs

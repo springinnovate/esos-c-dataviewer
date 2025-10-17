@@ -33,6 +33,7 @@ Example:
 """
 
 from pathlib import Path
+from shutil import copy2
 from typing import Any
 import argparse
 import logging
@@ -95,12 +96,31 @@ class Gs:
         return (self.base, self.auth[0], self._cred_fp, int(self.timeout))
 
     def __eq__(self, other):
+        """Check equality between two GeoServer client instances.
+
+        Args:
+            other (Gs): Another GeoServer client to compare.
+
+        Returns:
+            bool: True if both instances have identical configuration parameters,
+            False otherwise.
+        """
         return isinstance(other, Gs) and self._key() == other._key()
 
     def __hash__(self):
+        """Return a hash value based on the client's configuration.
+
+        Returns:
+            int: Deterministic hash value derived from the connection parameters.
+        """
         return hash(self._key())
 
     def __repr__(self):
+        """Return a readable and deterministic string representation of the client.
+
+        Returns:
+            str: A concise representation showing base URL, user, and timeout.
+        """
         return f"Gs(base={self.base!r}, user={self.auth[0]!r}, timeout={self.timeout!r})"
 
     def _url(self, path: str) -> str:
@@ -303,7 +323,6 @@ def create_layer(
     workspace_name: str,
     raster_name: str,
     geotiff_path: str,
-    spatial_ref_system: str,
     default_style_name: str,
 ) -> str:
     """Publishes a GeoTIFF as a new raster layer.
@@ -327,6 +346,8 @@ def create_layer(
         RuntimeError: If any REST API request for creating the store,
             coverage, or layer fails.
     """
+    with rasterio.open(geotiff_path) as ds:
+        spatial_ref_system = ds.crs
     # the store is where the data are 'stored' and a coveragestore is where
     # raster data are stored
     coveragestore_name = f"{raster_name}_store"
@@ -514,6 +535,21 @@ def create_style_if_not_exists(
 
 
 def is_in_projection(src_path: str | Path, target_projection: str) -> bool:
+    """Check whether a raster file is already in the target projection.
+
+    Opens the raster file, reads its coordinate reference system (CRS),
+    and compares it to the specified target projection. Returns False if
+    the raster has no defined CRS or if it differs from the target.
+
+    Args:
+        src_path (str | Path): Path to the source raster file.
+        target_projection (str): Target projection to check against
+            (e.g., 'EPSG:4326').
+
+    Returns:
+        bool: True if the raster’s CRS matches the target projection,
+        False otherwise.
+    """
     src_path = Path(src_path)
     with rasterio.open(src_path) as src:
         if src.crs is None:
@@ -523,7 +559,9 @@ def is_in_projection(src_path: str | Path, target_projection: str) -> bool:
         )
 
 
-def _pick_resampling(dtype: str, explicit: Resampling | None) -> Resampling:
+def _pick_resampling(
+    dtype: str, explicit: Resampling | None = None
+) -> Resampling:
     if explicit is not None:
         return explicit
     kind = np.dtype(dtype).kind
@@ -532,9 +570,7 @@ def _pick_resampling(dtype: str, explicit: Resampling | None) -> Resampling:
 
 def _build_overviews_inplace(
     tif_path: str | Path,
-    factors: tuple[int, ...] = (2, 4, 8, 16),
-    resampling: Resampling | None = None,
-    overview_env: dict | None = None,
+    factors: tuple[int, ...],
 ) -> None:
     env = {
         "COMPRESS_OVERVIEW": "LZW",
@@ -542,34 +578,43 @@ def _build_overviews_inplace(
         "BIGTIFF_OVERVIEW": "IF_SAFER",
         "GDAL_TIFF_OVR_BLOCKSIZE": "256",
     }
-    if overview_env:
-        env.update(overview_env)
-
     with rasterio.Env(**env):
         with rasterio.open(tif_path, "r+") as ds:
-            rs = _pick_resampling(ds.dtypes[0], resampling)
+            rs = _pick_resampling(ds.dtypes[0])
             ds.build_overviews(factors, rs)
             ds.update_tags(ns="rio_overview", resampling=rs.name)
 
 
-def reproject_if_needed(
+def reproject_and_build_overviews_if_needed(
     src_path: str | Path,
     target_projection: str,
-    dst_path: str | Path | None = None,
-    resampling: Resampling | None = None,
-    creation_options: dict | None = None,
-    make_overviews: bool = True,
-    overview_factors: tuple[int, ...] = (2, 4, 8, 16),
-    overview_resampling: Resampling | None = None,
-    overview_env: dict | None = None,
+    dst_path: str | Path,
+    resampling: Resampling,
 ) -> str:
+    """Reproject a raster to a target projection if not already aligned.
+
+    This function checks whether a source raster matches the target CRS. If it
+    differs, the raster is reprojected using a specified resampling method and
+    written to a new file. If the raster is already in the target projection,
+    no reprojection occurs and the original path is returned. Additionally,
+    internal overviews are built to improve rendering performance.
+
+    Args:
+        src_path (str | Path): Path to the source raster file.
+        target_projection (str): Target projection (e.g., 'EPSG:4326' or 'EPSG:3857').
+        dst_path (str | Path | None): Output path for the reprojected raster.
+            If None, a new filename is generated with the EPSG code appended.
+        resampling (Resampling | None): Resampling method to use during reprojection.
+            Defaults to nearest-neighbor for categorical data if unspecified.
+
+    Raises:
+        ValueError: If the source raster lacks a valid CRS.
+
+    """
     src_path = Path(src_path)
-    if dst_path is None:
-        dst_path = src_path.with_name(
-            f'{src_path.stem}_{CRS.from_user_input(target_projection).to_epsg() or "dst"}.tif'
-        )
-    else:
-        dst_path = Path(dst_path)
+    dst_path = Path(dst_path)
+
+    overview_factors = (2, 4, 8, 16)
 
     with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
         with rasterio.open(src_path) as src:
@@ -577,15 +622,13 @@ def reproject_if_needed(
             if src_crs is not None and CRS.from_user_input(
                 src_crs
             ) == CRS.from_user_input(target_projection):
-                out_path = str(src_path)
-                if make_overviews:
-                    _build_overviews_inplace(
-                        out_path,
-                        overview_factors,
-                        overview_resampling,
-                        overview_env,
-                    )
-                return out_path
+                copy2(src_path, dst_path)
+                out_path = str(dst_path)
+
+                _build_overviews_inplace(
+                    out_path,
+                    overview_factors,
+                )
 
             if src_crs is None:
                 raise ValueError(
@@ -612,9 +655,6 @@ def reproject_if_needed(
                     "BIGTIFF": "IF_SAFER",
                 }
             )
-            if creation_options:
-                dst_profile.update(creation_options)
-
             rs = _pick_resampling(src.dtypes[0], resampling)
 
             os.makedirs(dst_path.parent, exist_ok=True)
@@ -635,14 +675,40 @@ def reproject_if_needed(
                     )
 
     out_path = str(dst_path)
-    if make_overviews:
-        _build_overviews_inplace(
-            out_path, overview_factors, overview_resampling, overview_env
-        )
+    _build_overviews_inplace(out_path, overview_factors)
     return out_path
 
 
 def main():
+    """Configure a GeoServer instance from a YAML definition file.
+
+    This function parses a configuration YAML file defining GeoServer connection
+    parameters, workspaces, styles, and raster layers. It initializes a GeoServer
+    REST client, ensures the server is online, recreates the target workspace,
+    uploads defined styles, and processes each raster for publication. Raster
+    processing tasks (including reprojection and registration) are executed in
+    parallel using a TaskGraph for efficiency.
+
+    Command-Line Arguments:
+        config (str): Path to the YAML configuration file (e.g., `layers.yml`).
+
+    Workflow:
+        1. Load and expand environment variables in the YAML configuration.
+        2. Initialize a `Gs` GeoServer client with credentials and timeout.
+        3. Wait until the GeoServer instance responds to REST API pings.
+        4. Purge and recreate the target workspace.
+        5. Upload or create all defined styles.
+        6. Schedule raster processing and layer creation tasks.
+        7. Wait for all tasks to complete and close the TaskGraph.
+
+    Raises:
+        FileNotFoundError: If the configuration file cannot be found or opened.
+        KeyError: If required keys are missing from the YAML configuration.
+        Exception: For unexpected errors during GeoServer configuration or task execution.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
@@ -682,70 +748,48 @@ def main():
         workspace_id,
     )
 
-    for style_id, style_def in config_data.get("styles").items():
-        style_path = Path(style_def["file_path"])
-        create_style_if_not_exists(
-            geoserver_client,
-            workspace_id,
-            style_id,
-            "sld",
-            style_path,
-        )
+    style_path = config_data["style"]
+    style_id = Path(style_path).stem
+    create_style_if_not_exists(
+        geoserver_client,
+        workspace_id,
+        style_id,
+        "sld",
+        style_path,
+    )
 
-    # TODO: i need to make a better style generator here, but for now this just does it
-    # on the last one that was put in
-    default_style_id = style_id
     for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
-        file_path = layer_def["file_path"]
-        task_graph.add_task(
-            func=process_raster,
+        file_path = Path(layer_def["file_path"])
+        target_path = local_working_dir / Path(file_path).name
+
+        process_task = task_graph.add_task(
+            func=reproject_and_build_overviews_if_needed,
             args=(
                 file_path,
                 target_projection,
-                local_working_dir,
+                target_path,
+                Resampling.nearest,
+            ),
+            target_path_list=[target_path],
+            task_name=f"process {raster_id}",
+        )
+        task_graph.add_task(
+            func=create_layer,
+            args=(
                 geoserver_client,
                 workspace_id,
-                raster_id,
-                default_style_id,
+                raster_id.lower(),
+                file_path,
+                style_id,
             ),
-            task_name=f"process {raster_id}",
+            dependent_task_list=[process_task],
+            task_name=f"create layer {raster_id}",
+            transient_run=True,
         )
     task_graph.join()
     task_graph.close()
     logger.info("All done.")
-
-
-def process_raster(
-    file_path,
-    target_projection,
-    local_working_dir,
-    geoserver_client,
-    workspace_id,
-    raster_id,
-    default_style_id,
-):
-    if not is_in_projection(file_path, target_projection):
-        target_path = local_working_dir / Path(file_path).name
-        reproject_if_needed(
-            file_path,
-            target_projection,
-            target_path,
-            Resampling.nearest,
-        )
-        file_path = target_path
-
-    with rasterio.open(file_path) as ds:
-        ds_crs = ds.crs
-
-    create_layer(
-        geoserver_client,
-        workspace_id,
-        raster_id.lower(),
-        file_path,
-        ds_crs,
-        default_style_id,
-    )
 
 
 if __name__ == "__main__":

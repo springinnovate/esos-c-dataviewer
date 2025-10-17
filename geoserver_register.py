@@ -537,6 +537,17 @@ def create_style_if_not_exists(
 def _pick_resampling(
     dtype: str, explicit: Resampling | None = None
 ) -> Resampling:
+    """Select an appropriate resampling method for the given data type.
+
+    Args:
+        dtype (str): The NumPy dtype string of the raster band (e.g., 'uint16', 'float32').
+        explicit (Resampling | None): Optional. If provided, this resampling method
+            will be used directly instead of selecting one automatically.
+
+    Returns:
+        Resampling: The chosen resampling method. Uses `Resampling.nearest` for
+        integer or unsigned types and `Resampling.bilinear` for others.
+    """
     if explicit is not None:
         return explicit
     kind = np.dtype(dtype).kind
@@ -547,6 +558,21 @@ def _build_overviews_inplace(
     tif_path: str | Path,
     factors: tuple[int, ...],
 ) -> None:
+    """Build internal overviews for a GeoTIFF file in place.
+
+    Args:
+        tif_path (str | Path): Path to the GeoTIFF file to process.
+        factors (tuple[int, ...]): Downsampling factors to build overviews at
+            (e.g., (2, 4, 8)).
+
+    Returns:
+        None: This function modifies the GeoTIFF file in place by adding overview levels.
+
+    Notes:
+        Overviews are generated with LZW compression, pixel interleaving, and
+        a block size of 256. The function automatically chooses a suitable
+        resampling method based on the raster's data type.
+    """
     env = {
         "COMPRESS_OVERVIEW": "LZW",
         "INTERLEAVE_OVERVIEW": "PIXEL",

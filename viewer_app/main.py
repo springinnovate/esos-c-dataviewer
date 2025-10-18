@@ -78,8 +78,6 @@ def _collect_layers(config: dict) -> list:
     workspace_id = config["workspace_id"]
     for layer in config.get("layers", []).values():
         layer_name = Path(layer["file_path"]).stem
-        if layer.get("type") != "raster_geotiff":
-            continue
         layers.append(
             {
                 "workspace": workspace_id,

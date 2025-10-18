@@ -33,6 +33,7 @@ Example:
 """
 
 from pathlib import Path
+from shutil import copy2
 from typing import Any
 import argparse
 import logging
@@ -41,9 +42,15 @@ import sys
 import time
 
 from dotenv import load_dotenv
+from ecoshard import taskgraph
+from rasterio.crs import CRS
+from rasterio.enums import Resampling
+from rasterio.warp import calculate_default_transform, reproject
+import numpy as np
+import psutil
+import rasterio
 import requests
 import yaml
-import rasterio
 
 
 logging.basicConfig(
@@ -83,6 +90,38 @@ class Gs:
         self.timeout = timeout
         self.headers_xml = {"Content-Type": "text/xml"}
         self.headers_json = {"Content-Type": "application/json"}
+
+    # defining these so the identity is stable for the taskgraph
+    def _key(self):
+        return (self.base, self.auth[0], self._cred_fp, int(self.timeout))
+
+    def __eq__(self, other):
+        """Check equality between two GeoServer client instances.
+
+        Args:
+            other (Gs): Another GeoServer client to compare.
+
+        Returns:
+            bool: True if both instances have identical configuration parameters,
+            False otherwise.
+        """
+        return isinstance(other, Gs) and self._key() == other._key()
+
+    def __hash__(self):
+        """Return a hash value based on the client's configuration.
+
+        Returns:
+            int: Deterministic hash value derived from the connection parameters.
+        """
+        return hash(self._key())
+
+    def __repr__(self):
+        """Return a readable and deterministic string representation of the client.
+
+        Returns:
+            str: A concise representation showing base URL, user, and timeout.
+        """
+        return f"Gs(base={self.base!r}, user={self.auth[0]!r}, timeout={self.timeout!r})"
 
     def _url(self, path: str) -> str:
         """Builds a fully qualified GeoServer REST URL.
@@ -284,7 +323,6 @@ def create_layer(
     workspace_name: str,
     raster_name: str,
     geotiff_path: str,
-    spatial_ref_system: str,
     default_style_name: str,
 ) -> str:
     """Publishes a GeoTIFF as a new raster layer.
@@ -308,6 +346,8 @@ def create_layer(
         RuntimeError: If any REST API request for creating the store,
             coverage, or layer fails.
     """
+    with rasterio.open(geotiff_path) as ds:
+        spatial_ref_system = ds.crs
     # the store is where the data are 'stored' and a coveragestore is where
     # raster data are stored
     coveragestore_name = f"{raster_name}_store"
@@ -494,7 +534,185 @@ def create_style_if_not_exists(
         )
 
 
+def _pick_resampling(
+    dtype: str, explicit: Resampling | None = None
+) -> Resampling:
+    """Select an appropriate resampling method for the given data type.
+
+    Args:
+        dtype (str): The NumPy dtype string of the raster band (e.g., 'uint16', 'float32').
+        explicit (Resampling | None): Optional. If provided, this resampling method
+            will be used directly instead of selecting one automatically.
+
+    Returns:
+        Resampling: The chosen resampling method. Uses `Resampling.nearest` for
+        integer or unsigned types and `Resampling.bilinear` for others.
+    """
+    if explicit is not None:
+        return explicit
+    kind = np.dtype(dtype).kind
+    return Resampling.nearest if kind in ("i", "u") else Resampling.bilinear
+
+
+def _build_overviews_inplace(
+    tif_path: str | Path,
+    factors: tuple[int, ...],
+) -> None:
+    """Build internal overviews for a GeoTIFF file in place.
+
+    Args:
+        tif_path (str | Path): Path to the GeoTIFF file to process.
+        factors (tuple[int, ...]): Downsampling factors to build overviews at
+            (e.g., (2, 4, 8)).
+
+    Returns:
+        None: This function modifies the GeoTIFF file in place by adding overview levels.
+
+    Notes:
+        Overviews are generated with LZW compression, pixel interleaving, and
+        a block size of 256. The function automatically chooses a suitable
+        resampling method based on the raster's data type.
+    """
+    env = {
+        "COMPRESS_OVERVIEW": "LZW",
+        "INTERLEAVE_OVERVIEW": "PIXEL",
+        "BIGTIFF_OVERVIEW": "IF_SAFER",
+        "GDAL_TIFF_OVR_BLOCKSIZE": "256",
+    }
+    with rasterio.Env(**env):
+        with rasterio.open(tif_path, "r+") as ds:
+            rs = _pick_resampling(ds.dtypes[0])
+            ds.build_overviews(factors, rs)
+            ds.update_tags(ns="rio_overview", resampling=rs.name)
+
+
+def reproject_and_build_overviews_if_needed(
+    src_path: Path,
+    target_projection: str,
+    resampling: Resampling,
+    dst_path: Path,
+) -> str:
+    """Reproject a raster to a target projection if not already aligned.
+
+    This function checks whether a source raster matches the target CRS. If it
+    differs, the raster is reprojected using a specified resampling method and
+    written to a new file. If the raster is already in the target projection,
+    no reprojection occurs and the original path is returned. Additionally,
+    internal overviews are built to improve rendering performance.
+
+    Args:
+        src_path (Path): Path to the source raster file.
+        target_projection (str): Target projection (e.g., 'EPSG:4326' or 'EPSG:3857').
+        resampling (Resampling): Resampling method to use during reprojection.
+            Defaults to nearest-neighbor for categorical data if unspecified.
+        dst_path (Path): Output path for the reprojected raster.
+            If None, a new filename is generated with the EPSG code appended.
+
+    Raises:
+        ValueError: If the source raster lacks a valid CRS.
+
+    """
+    with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
+        with rasterio.open(src_path) as src:
+            # dynamic overview factors: include 2**k while min_side / 2**k > 256
+            m = min(src.width, src.height)
+            factors = []
+            k = 1
+            while m / (2**k) > 256:
+                factors.append(2**k)
+                k += 1
+            overview_factors = tuple(factors)
+            src_crs = src.crs
+            if src_crs is not None and CRS.from_user_input(
+                src_crs
+            ) == CRS.from_user_input(target_projection):
+                copy2(src_path, dst_path)
+                out_path = str(dst_path)
+
+                _build_overviews_inplace(
+                    out_path,
+                    overview_factors,
+                )
+
+            if src_crs is None:
+                raise ValueError(
+                    "source raster has no CRS; cannot reproject reliably"
+                )
+
+            dst_crs = CRS.from_user_input(target_projection)
+
+            transform, width, height = calculate_default_transform(
+                src_crs, dst_crs, src.width, src.height, *src.bounds
+            )
+
+            dst_profile = src.profile.copy()
+            dst_profile.update(
+                {
+                    "crs": dst_crs,
+                    "transform": transform,
+                    "width": width,
+                    "height": height,
+                    "compress": "lzw",
+                    "tiled": True,
+                    "blockxsize": 256,
+                    "blockysize": 256,
+                    "BIGTIFF": "IF_SAFER",
+                }
+            )
+            rs = _pick_resampling(src.dtypes[0], resampling)
+
+            os.makedirs(dst_path.parent, exist_ok=True)
+
+            with rasterio.open(dst_path, "w", **dst_profile) as dst:
+                if src.nodata is not None:
+                    dst.nodata = src.nodata
+                for bidx in range(1, src.count + 1):
+                    reproject(
+                        source=rasterio.band(src, bidx),
+                        destination=rasterio.band(dst, bidx),
+                        src_transform=src.transform,
+                        src_crs=src_crs,
+                        dst_transform=transform,
+                        dst_crs=dst_crs,
+                        resampling=rs,
+                        num_threads=0,
+                    )
+
+    out_path = str(dst_path)
+    _build_overviews_inplace(out_path, overview_factors)
+    return out_path
+
+
 def main():
+    """Configure a GeoServer instance from a YAML definition file.
+
+    This function parses a configuration YAML file defining GeoServer connection
+    parameters, workspaces, styles, and raster layers. It initializes a GeoServer
+    REST client, ensures the server is online, recreates the target workspace,
+    uploads defined styles, and processes each raster for publication. Raster
+    processing tasks (including reprojection and registration) are executed in
+    parallel using a TaskGraph for efficiency.
+
+    Command-Line Arguments:
+        config (str): Path to the YAML configuration file (e.g., `layers.yml`).
+
+    Workflow:
+        1. Load and expand environment variables in the YAML configuration.
+        2. Initialize a `Gs` GeoServer client with credentials and timeout.
+        3. Wait until the GeoServer instance responds to REST API pings.
+        4. Purge and recreate the target workspace.
+        5. Upload or create all defined styles.
+        6. Schedule raster processing and layer creation tasks.
+        7. Wait for all tasks to complete and close the TaskGraph.
+
+    Raises:
+        FileNotFoundError: If the configuration file cannot be found or opened.
+        KeyError: If required keys are missing from the YAML configuration.
+        Exception: For unexpected errors during GeoServer configuration or task execution.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
@@ -513,6 +731,13 @@ def main():
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_password = config_data["geoserver"]["password"]
 
+    target_projection = config_data["target_projection"]
+    local_working_dir = Path(config_data["local_working_dir"])
+    local_working_dir.mkdir(parents=True, exist_ok=True)
+    task_graph = taskgraph.TaskGraph(
+        local_working_dir, psutil.cpu_count(logical=False), 15.0
+    )
+
     timeout_seconds = 30
     geoserver_client = Gs(
         geoserver_base_url, geoserver_user, geoserver_password, timeout_seconds
@@ -527,38 +752,47 @@ def main():
         workspace_id,
     )
 
-    for style_id, style_def in config_data.get("styles").items():
-        style_path = Path(style_def["file_path"])
-        create_style_if_not_exists(
-            geoserver_client,
-            workspace_id,
-            style_id,
-            "sld",
-            style_path,
-        )
+    style_path = config_data["style"]
+    style_id = Path(style_path).stem
+    create_style_if_not_exists(
+        geoserver_client,
+        workspace_id,
+        style_id,
+        "sld",
+        style_path,
+    )
 
-    # TODO: i need to make a better style generator here, but for now this just does it
-    # on the last one that was put in
-    default_style_id = style_id
     for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
-        layer_type = layer_def["type"]
-        file_path = layer_def["file_path"]
+        file_path = Path(layer_def["file_path"])
+        target_path = local_working_dir / Path(file_path).name
 
-        with rasterio.open(file_path) as ds:
-            ds_crs = ds.crs
-
-        if layer_type == "raster_geotiff":
-            create_layer(
+        process_task = task_graph.add_task(
+            func=reproject_and_build_overviews_if_needed,
+            args=(
+                file_path,
+                target_projection,
+                Resampling.nearest,
+                target_path,
+            ),
+            target_path_list=[target_path],
+            task_name=f"process {raster_id}",
+        )
+        task_graph.add_task(
+            func=create_layer,
+            args=(
                 geoserver_client,
                 workspace_id,
                 raster_id.lower(),
                 file_path,
-                ds_crs,
-                default_style_id,
-            )
-        else:
-            raise ValueError(f"Unknown layer type: {layer_type}")
+                style_id,
+            ),
+            dependent_task_list=[process_task],
+            task_name=f"create layer {raster_id}",
+            transient_run=True,
+        )
+    task_graph.join()
+    task_graph.close()
     logger.info("All done.")
 
 

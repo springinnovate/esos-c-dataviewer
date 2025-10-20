@@ -170,3 +170,40 @@ select, input[type='range'], input[type='number'] {
 @media (max-width: 900px) {
   .style-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 }
+
+#overlayBody { overflow-x: hidden; }
+
+.overlay-content {
+  display: grid;
+  grid-template-columns: 1fr !important;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+
+.stats-grid .label { color: #666; }
+.stats-grid .value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.plot-holder {
+  min-height: 220px;
+  min-width: 0;         /* allow grid child to shrink without forcing scrollbar */
+  width: 100%;
+  overflow: hidden;     /* hide overflows from large SVGs */
+}
+
+#scatterPlot svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}

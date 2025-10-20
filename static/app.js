@@ -23,6 +23,62 @@ const state = {
   lastMouseLatLng: null,
   outlineLayer: null,
   lastStats: null,
+  didInitialCenter: false
+}
+
+// helper: center on centroid of Layer A only once
+async function _centerOnLayerACentroidOnce(qualifiedName) {
+  if (state.didInitialCenter || !state.map || !state.geoserverBaseUrl) return
+  try {
+    const url = `${state.geoserverBaseUrl}/wms?service=WMS&request=GetCapabilities&version=1.1.1`
+    const res = await fetch(url, { method: 'GET' })
+    if (!res.ok) throw new Error('capabilities fetch failed')
+    const text = await res.text()
+    const doc = new DOMParser().parseFromString(text, 'application/xml')
+
+    // find the matching <Layer><Name>qualifiedName</Name></Layer>
+    const names = Array.from(doc.getElementsByTagName('Name'))
+    const nameNode = names.find(n => ((n.textContent || '').split(':').pop().trim()) === qualifiedName)
+    if (!nameNode) throw new Error('layer name not found in capabilities')
+
+    let layerEl = nameNode.parentElement
+    // climb to the nearest Layer element if needed
+    while (layerEl && layerEl.tagName !== 'Layer') layerEl = layerEl.parentElement
+    if (!layerEl) throw new Error('layer element not found')
+
+    // WMS 1.1.1 LatLonBoundingBox or WMS 1.3.0 EX_GeographicBoundingBox fallback
+    const llbb = layerEl.getElementsByTagName('LatLonBoundingBox')[0]
+    let minx, miny, maxx, maxy
+    if (llbb) {
+      minx = parseFloat(llbb.getAttribute('minx'))
+      miny = parseFloat(llbb.getAttribute('miny'))
+      maxx = parseFloat(llbb.getAttribute('maxx'))
+      maxy = parseFloat(llbb.getAttribute('maxy'))
+    } else {
+      const exg = layerEl.getElementsByTagName('EX_GeographicBoundingBox')[0]
+      if (!exg) throw new Error('no geographic bbox')
+      const west = exg.getElementsByTagName('westBoundLongitude')[0]
+      const east = exg.getElementsByTagName('eastBoundLongitude')[0]
+      const south = exg.getElementsByTagName('southBoundLatitude')[0]
+      const north = exg.getElementsByTagName('northBoundLatitude')[0]
+      minx = parseFloat(west.textContent)
+      maxx = parseFloat(east.textContent)
+      miny = parseFloat(south.textContent)
+      maxy = parseFloat(north.textContent)
+    }
+
+    if (
+      [minx, miny, maxx, maxy].some(v => !Number.isFinite(v)) ||
+      minx >= maxx || miny >= maxy
+    ) throw new Error('invalid bbox')
+
+    const lon = (minx + maxx) / 2
+    const lat = (miny + maxy) / 2
+    state.map.setView([lat, lon], Math.max(state.map.getZoom(), 6))
+    state.didInitialCenter = true
+  } catch (_e) {
+    // no-op on failure; leave map as-is
+  }
 }
 
 /**
@@ -47,6 +103,19 @@ const CRS3347 = new L.Proj.CRS(
   }
 )
 
+const CRS4326 = new L.Proj.CRS(
+  'EPSG:4326',
+  '+proj=longlat +datum=WGS84 +no_defs',
+  {
+    origin: [-180, 90],
+    resolutions: [
+      1.40625, 0.703125, 0.3515625, 0.17578125,
+      0.087890625, 0.0439453125, 0.02197265625,
+      0.010986328125, 0.0054931640625, 0.00274658203125
+    ]
+  }
+)
+
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -55,8 +124,8 @@ function initMap() {
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
     crs: CRS3347,
-    center: [37.8, -96.9],
-    zoom: 4,
+    center: [55, -96.9], //[37.8, -96.9],
+    zoom: 0,
     zoomControl: false,
   })
   /*L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -233,8 +302,8 @@ function populateLayerSelects() {
     })
   }
 
-  const selA = document.getElementById('layerSelect')
-  const selB = document.getElementById('layerSelect2')
+  const selA = document.getElementById('layerSelectA')
+  const selB = document.getElementById('layerSelectB')
   fill(selA)
   fill(selB)
 
@@ -312,6 +381,7 @@ async function onLayerChange(e, slot = 'A') {
     state.activeLayerIdxA = idx
     addWmsLayer(lyr.name, 'A')
     _applyDynamicStyle()
+    //await _centerOnLayerACentroidOnce(lyr.name)
   } catch (err) {
     console.error('Failed to fetch min/max for layer', err)
   }
@@ -342,6 +412,16 @@ async function wireAreaSamplerClick() {
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
 
+    // show placeholder overlay immediately
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: null,
+    })
+
     let scatter
     try {
       scatter = await fetchScatterStats(lyrA.name, lyrB.name, poly)
@@ -350,6 +430,7 @@ async function wireAreaSamplerClick() {
       return
     }
 
+    // update overlay with real data
     renderScatterOverlay({
       rasterX: lyrA.name,
       rasterY: lyrB.name,
@@ -916,42 +997,76 @@ function enableAltWheelSlider() {
  * Render a scatterplot of two rasters’ values within a polygon.
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
-function renderScatterOverlay({ rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj }) {
+function renderScatterOverlay(opts) {
+  const {
+    rasterX, rasterY,
+    centerLng, centerLat,
+    boxKm,
+    scatterObj // optional
+  } = opts
+
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
+  if (!overlay || !body) return
+
+  const hasData = !!scatterObj
+
+  // derive stats (optional keys guarded)
+  const s = scatterObj || {}
+  const stats = {
+    n: s.n ?? s.n_pairs ?? null,
+    r: s.r ?? s.pearson_r ?? null,
+    slope: s.slope ?? null,
+    intercept: s.intercept ?? null,
+    corr: s.corr ?? null,
+  }
+
+  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
+
+  // replace the inline grid div with class="overlay-content"
+   body.innerHTML = `
+     <div class='overlay-header'>
+       <div>
+         <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
+         <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} • box: ${boxKm} km</div>
+       </div>
+     </div>
+
+     <div class='overlay-content'>
+
+       <div>
+         <div class='muted' style='margin-bottom:6px;'>Summary</div>
+         <div class='stats-grid'>
+           <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '—'}</div>
+           <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '—'}</div>
+           <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '—'}</div>
+           <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '—'}</div>
+         </div>
+       </div>
+
+       <div>
+         <div class='muted' style='margin-bottom:6px;'>Scatter</div>
+         <div id='scatterPlot' class='plot-holder'>
+           ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+         </div>
+       </div>
+
+     </div>
+   `
+
   overlay.classList.remove('hidden')
-  body.innerHTML = ''
 
-  const title = document.createElement('div')
-  title.textContent = `Scatter: ${rasterX} vs ${rasterY}`
-  title.style.fontWeight = '600'
-  title.style.marginBottom = '6px'
-  body.appendChild(title)
-
-  const meta = document.createElement('pre')
-  meta.textContent = [
-    `Points: ${scatterObj.n_pairs}`,
-    `Correlation: ${numFmt(scatterObj.corr)}`,
-    `Slope: ${numFmt(scatterObj.slope)}`,
-    `Intercept: ${numFmt(scatterObj.intercept)}`,
-    '',
-    `Box size: ${boxKm} km`,
-  ].join('\n')
-  body.appendChild(meta)
-
-  if (scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
-    const svg = buildScatterSVG(
-      scatterObj.x_edges,
-      scatterObj.y_edges,
-      scatterObj.hist2d,
-      { width: 420, height: 320, pad: 40 }
-    )
-    body.appendChild(svg)
-  }
-
-  function numFmt(v) {
-    return typeof v === 'number' && isFinite(v) ? v.toFixed(3) : '—'
-  }
+  if (hasData && scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
+      const svg = buildScatterSVG(
+        scatterObj.x_edges,
+        scatterObj.y_edges,
+        scatterObj.hist2d,
+        { width: 420, height: 320, pad: 40 }
+      )
+      const plotEl = document.getElementById('scatterPlot')
+      plotEl.innerHTML = ''
+      plotEl.appendChild(svg)
+    }
 }
 
 /**
@@ -1073,12 +1188,12 @@ function disableLeafletScrollOnAlt() {
   populateLayerSelects()
 
   if (state.layers.length > 0) {
-    const selA = document.getElementById('layerSelect')
+    const selA = document.getElementById('layerSelectA')
     selA.value = '0'
     selA.dispatchEvent(new Event('change', { bubbles: true }))
   }
   if (state.layers.length > 1) {
-    const selB = document.getElementById('layerSelect2')
+    const selB = document.getElementById('layerSelectB')
     selB.value = '1'
     selB.dispatchEvent(new Event('change', { bubbles: true }))
   }

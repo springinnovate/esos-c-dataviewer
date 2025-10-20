@@ -27,7 +27,7 @@ Intended usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional, Dict, Tuple, Any
+from typing import Literal, Optional, Dict, Tuple, Any, List
 import logging
 import os
 
@@ -224,13 +224,9 @@ class ScatterOut(BaseModel):
     hist2d: Optional[List[List[int]]] = None
     x_edges: Optional[List[float]] = None
     y_edges: Optional[List[float]] = None
-    corr: Optional[float] = None
+    pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
-    units_x: Optional[float] = None
-    units_y: Optional[float] = None
-    nodata_x: Optional[float] = None
-    nodata_y: Optional[float] = None
     window_mask_pixels: Optional[int] = None
     valid_pixels: Optional[int] = None
     coverage_ratio: Optional[float] = None
@@ -981,7 +977,9 @@ def geometry_scatter(q: GeometryScatterIn):
             y_plot = y_vals
 
         logging.debug("Computing correlation and linear fit")
-        corr = float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
+        pearson_r = (
+            float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
+        )
         if n_pairs > 1:
             A = np.vstack([x_vals, np.ones_like(x_vals)]).T
             slope, intercept = np.linalg.lstsq(A, y_vals, rcond=None)[0]
@@ -1009,19 +1007,9 @@ def geometry_scatter(q: GeometryScatterIn):
             hist2d=H.tolist(),
             x_edges=x_edges.astype("float64").tolist(),
             y_edges=y_edges.astype("float64").tolist(),
-            corr=corr,
+            pearson_r=pearson_r,
             slope=slope,
             intercept=intercept,
-            units_x=(
-                units_x
-                if units_x is not None and np.isfinite(units_x)
-                else None
-            ),
-            units_y=(
-                units_y
-                if units_y is not None and np.isfinite(units_y)
-                else None
-            ),
             nodata_x=(
                 nodata_x
                 if nodata_x is not None and np.isfinite(nodata_x)

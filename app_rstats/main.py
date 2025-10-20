@@ -53,7 +53,7 @@ load_dotenv()
 RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -136,8 +136,8 @@ class GeometryStatsIn(BaseModel):
     """
 
     raster_id: str
-    geometry: dict  # GeoJSON geometry
-    from_crs: str = Field(default="EPSG:4326")
+    geometry: dict
+    from_crs: str
     reducer: Literal[
         "mean", "sum", "min", "max", "std", "count", "median", "histogram"
     ] = "mean"
@@ -862,18 +862,69 @@ def geometry_scatter(q: GeometryScatterIn):
             arr_x = np.where(np.isclose(arr_x, nodata_x), np.nan, arr_x)
         arr_x = np.where(mask, arr_x, np.nan)
 
-        logging.debug("Reprojecting Y raster into X window grid")
+        logging.debug("Computing Y window on its own grid")
+
+        # geom is currently in X CRS (you reprojected it above); convert it to Y CRS
+        if dsx.crs.to_string() != dsy.crs.to_string():
+            _t_xy = Transformer.from_crs(dsx.crs, dsy.crs, always_xy=True)
+            geom_y = shp_transform(
+                lambda x, y, z=None: _t_xy.transform(x, y), geom
+            )
+        else:
+            geom_y = geom
+
+        # Build a tight window on Y raster
+        def _safe_window_for_geom_y(dataset, g):
+            b = g.bounds
+            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+            if int(w.width) > 0 and int(w.height) > 0:
+                return w
+            xres, yres = map(abs, dataset.res)
+            bpad = (
+                b[0] - 0.5 * xres,
+                b[1] - 0.5 * yres,
+                b[2] + 0.5 * xres,
+                b[3] + 0.5 * yres,
+            )
+            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
+            w = w.round_offsets().round_lengths()
+            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
+            if int(w.width) == 0 or int(w.height) == 0:
+                cx, cy = g.centroid.x, g.centroid.y
+                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
+                rr = min(max(rr, 0), dataset.height - 1)
+                cc = min(max(cc, 0), dataset.width - 1)
+                w = Window(cc, rr, 1, 1)
+            return w
+
+        win_y = _safe_window_for_geom_y(dsy, geom_y)
+        if win_y is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Empty read window (geometry outside raster_y).",
+            )
+
+        logging.debug("Reading Y window")
+        src_y = dsy.read(1, window=win_y, masked=False).astype(
+            "float64", copy=False
+        )
+        transform_y = dsy.window_transform(win_y)
+
+        logging.debug("Reprojecting Y window into X window grid")
         dest_y = np.full(arr_x.shape, np.nan, dtype="float64")
         reproject(
-            source=dsy.read(1, masked=False).astype("float64", copy=False),
+            source=src_y,
             destination=dest_y,
-            src_transform=dsy.transform,
+            src_transform=transform_y,
             src_crs=dsy.crs,
             src_nodata=nodata_y if nodata_y is not None else None,
-            dst_transform=transform_x,
+            dst_transform=transform_x,  # X window transform you computed above
             dst_crs=dsx.crs,
             dst_nodata=np.nan,
             resampling=Resampling.nearest,
+            num_threads=0,
         )
 
         logging.debug("Applying same polygon mask to Y array")

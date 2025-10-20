@@ -1018,7 +1018,10 @@ function renderScatterOverlay(opts) {
     r: s.r ?? s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
-    corr: s.corr ?? null,
+    window_mask_pixels: s.window_mask_pixels ?? null,
+    valid_pixels: s.valid_pixels ?? null,
+    coverage_ratio: s.coverage_ratio ?? null,
+
   }
 
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
@@ -1041,6 +1044,9 @@ function renderScatterOverlay(opts) {
            <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '—'}</div>
            <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '—'}</div>
            <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '—'}</div>
+           <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
+           <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
+           <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
          </div>
        </div>
 

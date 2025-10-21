@@ -76,6 +76,39 @@ function initMap() {
   wireOverlayClose()
 }
 
+
+function projectedSquareMeters(centerLatLng, sizeKm) {
+  const crs = state.map.options.crs
+  const half = (Number(sizeKm) * 1000) / 2
+  const c = crs.project(centerLatLng)
+
+  const pts = [
+    L.point(c.x - half, c.y - half),
+    L.point(c.x + half, c.y - half),
+    L.point(c.x + half, c.y + half),
+    L.point(c.x - half, c.y + half),
+  ]
+
+  const latlngs = pts.map(p => crs.unproject(p))
+  return L.polygon(latlngs, { color: '#1e90ff', weight: 2, fill: false, interactive: false })
+}
+
+function squarePolygonAt(centerLatLng, windowSizeKm) {
+  const crs = state.map.options.crs
+  const half = (Number(windowSizeKm) || 0) * 1000 / 2
+  const p = crs.project(centerLatLng)
+  const corners = [
+    L.point(p.x - half, p.y - half),
+    L.point(p.x + half, p.y - half),
+    L.point(p.x + half, p.y + half),
+    L.point(p.x - half, p.y + half),
+  ].map(pt => crs.unproject(pt))
+  return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
+}
+
+
+
+
 /**
  * Compute a square LatLngBounds of given size (km) centered at a point.
  * @param {L.LatLng} centerLatLng
@@ -83,7 +116,7 @@ function initMap() {
  * @returns {L.LatLngBounds}
  */
 function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
-  const crs = state.map.options.crs || L.CRS.EPSG3857
+  const crs = state.map.options.crs
   const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
   const p = crs.project(centerLatLng)
   const sw = crs.unproject(L.point(p.x - halfSizeM, p.y - halfSizeM))
@@ -171,14 +204,14 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
  * Side effects: sets state.hoverRect and mouse listeners that update it.
  */
 function initMouseFollowBox() {
-  state.hoverRect = L.rectangle(
-    latLngBoundsForSquareKilometers(state.map.getCenter(), state.boxSizeKm),
-    { color: '#ff6b00', weight: 2, fill: false, interactive: false }
-  ).addTo(state.map)
+  // initial
+  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
 
   state.map.on('mousemove', (e) => {
     state.lastMouseLatLng = e.latlng
-    state.hoverRect.setBounds(latLngBoundsForSquareKilometers(e.latlng, state.boxSizeKm))
+    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
+    // replace geometry in-place to avoid flicker/re-adding
+    state.hoverRect.setLatLngs(poly.getLatLngs())
   })
 
   state.map.on('mouseout', () => {
@@ -213,8 +246,9 @@ function wireSquareSamplerControls() {
     rNum.value = String(logValue)
     state.boxSizeKm = logValue
     if (state.hoverRect) {
-      const ll = state.lastMouseLatLng || state.map.getCenter()
-      state.hoverRect.setBounds(latLngBoundsForSquareKilometers(ll, state.boxSizeKm))
+     const ll = state.lastMouseLatLng || state.map.getCenter()
+     const poly = squarePolygonAt(ll, state.boxSizeKm)
+     state.hoverRect.setLatLngs(poly.getLatLngs())
     }
   }
 
@@ -261,7 +295,6 @@ function addWmsLayer(qualifiedName, slot) {
     transparent: true,
     tiled: true,
     version: '1.1.1',
-    crs: CRS3347,
     className: slot === 'A' ? 'blend-screen' : 'blend-base',
   }
   const l = L.tileLayer.wms(wmsUrl, params)

@@ -345,8 +345,8 @@ def create_layer(
             # EPSG:3857 (Web Mercator) without allowing just any projection
             # you want, I'm not sure these are necessary but if it breaks
             # it will be for a good reason we can figure out then.
-            "requestSRS": {"string": ["EPSG:4326", "EPSG:3857"]},
-            "responseSRS": {"string": ["EPSG:4326", "EPSG:3857"]},
+            "requestSRS": {"string": ["EPSG:3857"]},
+            "responseSRS": {"string": ["EPSG:3857"]},
         }
     }
 

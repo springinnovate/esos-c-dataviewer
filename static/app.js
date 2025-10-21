@@ -227,14 +227,11 @@ function populateLayerSelects() {
       selEl.appendChild(opt)
     })
   }
-
-  const selA = document.getElementById('layerSelectA')
-  const selB = document.getElementById('layerSelectB')
-  fill(selA)
-  fill(selB)
-
-  selA.addEventListener('change', (e) => onLayerChange(e, 'A'))
-  selB.addEventListener('change', (e) => onLayerChange(e, 'B'))
+  ;['A', 'B'].forEach(layerId => {
+    const sel = document.getElementById(`layerSelect${layerId}`)
+    fill(sel)
+    sel.addEventListener('change', e => onLayerChange(e, layerId))
+  })
 }
 
 /**
@@ -346,120 +343,6 @@ async function wireAreaSamplerClick() {
       scatterObj: scatter,
     })
   })
-}
-
-/**
- * Render multiple stats blocks one after another in the overlay.
- * @param {{centerLng:number,centerLat:number,boxKm:number,blocks:Array<{rasterId:string,statsObj?:object,units?:string,error?:string}>}} args
- */
-function renderAreaStatsOverlayMulti({ centerLng, centerLat, boxKm, blocks }) {
-  const overlay = document.getElementById('statsOverlay')
-  const body = document.getElementById('overlayBody')
-  overlay.classList.remove('hidden')
-  body.innerHTML = ''
-
-  // top row with center/zoom control
-  const centerRow = document.createElement('div')
-  centerRow.className = 'overlay-row'
-  const centerBtn = document.createElement('button')
-  centerBtn.className = 'link-btn'
-  centerBtn.type = 'button'
-  centerBtn.textContent = `Center: ${centerLng.toFixed(6)}, ${centerLat.toFixed(6)}`
-  centerBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    _zoomToOutline(centerLng, centerLat)
-  })
-  centerRow.appendChild(centerBtn)
-  body.appendChild(centerRow)
-
-  // blocks
-  blocks.forEach((blk, i) => {
-    if (i > 0) {
-      const hr = document.createElement('hr')
-      hr.style.border = '0'
-      hr.style.borderTop = '1px solid var(--border)'
-      hr.style.margin = '8px 0'
-      body.appendChild(hr)
-    }
-    body.appendChild(buildStatsBlock(blk.rasterId, boxKm, blk.statsObj, blk.units, blk.error))
-  })
-}
-
-/**
- * Build a single stats block element (title, summary lines, optional histogram or error).
- * @param {string} rasterId
- * @param {number} boxKm
- * @param {object|undefined} statsObj
- * @param {string|undefined} units
- * @param {string|undefined} error
- * @returns {HTMLElement}
- */
-function buildStatsBlock(rasterId, boxKm, statsObj, units, error) {
-  const wrap = document.createElement('div')
-
-  const title = document.createElement('div')
-  title.style.fontWeight = '600'
-  title.style.marginBottom = '4px'
-  title.textContent = rasterId
-  wrap.appendChild(title)
-
-  if (error) {
-    const pre = document.createElement('pre')
-    pre.textContent = `Box size: ${boxKm} km\nError: ${error}`
-    wrap.appendChild(pre)
-    return wrap
-  }
-
-  const s = statsObj || {}
-  const lines = [
-    `Box size: ${boxKm} km`,
-    '',
-    `Count: ${s.count ?? 0}`,
-    `Mean: ${numFmt(s.mean)}`,
-    `Median: ${numFmt(s.median)}`,
-    `Min: ${numFmt(s.min)}`,
-    `Max: ${numFmt(s.max)}`,
-    `Sum: ${numFmt(s.sum)}`,
-    `Std Dev: ${numFmt(s.std)}`,
-    '',
-    `Valid pixels: ${s.valid_pixels ?? 0}`,
-    `Nodata pixels: ${s.nodata_pixels ?? 0}`,
-    `Coverage: ${pctFmt(s.coverage_ratio)}`,
-    '',
-    `Valid area: ${areaFmt(s.valid_area_m2)}`,
-    `Total mask area: ${areaFmt(s.window_mask_area_m2)}`,
-    units ? `Units: ${units}` : null,
-  ].filter(Boolean)
-
-  const pre = document.createElement('pre')
-  pre.textContent = lines.join('\n')
-  wrap.appendChild(pre)
-
-  if (Array.isArray(s.hist) && Array.isArray(s.bin_edges) && s.hist.length > 0 && s.bin_edges.length === s.hist.length + 1) {
-    const histTitle = document.createElement('div')
-    histTitle.style.marginTop = '0.5rem'
-    histTitle.textContent = 'Histogram'
-    wrap.appendChild(histTitle)
-
-    const svg = buildHistogramSVG(s.hist, s.bin_edges, { width: 420, height: 140, pad: 30 })
-    wrap.appendChild(svg)
-
-    const label = document.createElement('div')
-    label.style.display = 'flex'
-    label.style.justifyContent = 'space-between'
-    label.style.fontSize = '12px'
-    label.style.color = '#aaa'
-    label.style.marginTop = '2px'
-    label.innerHTML = `<span>${numFmt(s.bin_edges[0])}</span><span>${numFmt(s.bin_edges[s.bin_edges.length - 1])}</span>`
-    wrap.appendChild(label)
-  }
-
-  return wrap
-
-  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '—' }
-  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '—' }
-  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
 }
 
 
@@ -998,8 +881,8 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
-      const val = hist2d[i][j]
-      if (val <= 0) continue
+      const binCount = hist2d[i][j]
+      if (binCount <= 0) continue
       const x0 = scaleX(xEdges[i])
       const x1 = scaleX(xEdges[i + 1])
       const y0 = scaleY(yEdges[j])
@@ -1009,11 +892,10 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       rect.setAttribute('y', String(y1))
       rect.setAttribute('width', String(x1 - x0))
       rect.setAttribute('height', String(y0 - y1))
-      const intensity = val / maxCount
-      const scaled = Math.sqrt(intensity) // this is like a gamma setting
-      const alpha = Math.min(1, 0.2 + 0.8 * scaled)
-      rect.setAttribute('fill', '#1e90ff')
-      rect.setAttribute('fill-opacity', String(alpha))
+      const t = Math.log1p(binCount) / Math.log1p(maxCount); // [0,1]
+      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
+      rect.setAttribute('fill', '#3b82f6');           // brighter blue
+      rect.setAttribute('fill-opacity', alpha.toFixed(3));
       svg.appendChild(rect)
     }
   }
@@ -1080,26 +962,21 @@ function disableLeafletScrollOnAlt() {
   initMap()
   wireSquareSamplerControls()
   wireAreaSamplerClick()
-  ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
-
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url
   state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
 
+  ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   populateLayerSelects()
-
-  if (state.availableLayers.length > 0) {
-    const selA = document.getElementById('layerSelectA')
-    selA.value = '0'
-    selA.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-  if (state.availableLayers.length > 1) {
-    const selB = document.getElementById('layerSelectB')
-    selB.value = '1'
-    selB.dispatchEvent(new Event('change', { bubbles: true }))
-  }
+  ;['A', 'B'].forEach((layerId, idx) => {
+    const sel = document.getElementById(`layerSelect${layerId}`)
+    if (state.availableLayers.length > idx) {
+      sel.value = String(idx)
+      sel.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  })
 })()

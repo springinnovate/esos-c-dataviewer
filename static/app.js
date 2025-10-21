@@ -132,16 +132,6 @@ function _updateOutline(poly) {
 }
 
 /**
- * Hide the outline layer if present.
- * @private
- */
-function _hideOutline() {
-  if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
-    state.map.removeLayer(state.outlineLayer)
-  }
-}
-
-/**
  * Build a square GeoJSON Polygon centered at a LatLng with edge length windowSizeKm.
  * @param {L.LatLng} centerLatLng
  * @param {number|string} windowSizeKm
@@ -292,8 +282,6 @@ async function onLayerChange(e, layerId) {
   const lyr = state.availableLayers[idx]
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
-  _hideOutline()
-
   try {
     const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
       method: 'POST',
@@ -536,7 +524,6 @@ function wireOverlayClose() {
     e.stopPropagation()
     document.getElementById('statsOverlay').classList.add('hidden')
     document.getElementById('overlayBody').innerHTML = ''
-    _hideOutline()
   })
 
   const overlay = document.getElementById('statsOverlay')

@@ -483,38 +483,15 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         logging.debug("Computing Y window on its own grid")
 
-        if scatter_request.from_crs != dsy.crs.to_string():
-            _t_xy = Transformer.from_crs(
-                scatter_request.from_crs, dsy.crs, always_xy=True
-            )
-            geom_y = shp_transform(
-                lambda x, y, z=None: _t_xy.transform(x, y), geom
-            )
-        else:
-            geom_y = geom
-
         # Build a tight window on Y raster
-        win_y = _safe_window_for_geom(dsy, geom_y)
-        if win_y is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Empty read window (geometry outside raster_y).",
-            )
-
-        logging.debug("Reading Y window")
-        src_y = dsy.read(1, window=win_y, masked=False).astype(
-            "float64", copy=False
-        )
-        transform_y = dsy.window_transform(win_y)
-
         logging.debug("Reprojecting Y window into X window grid")
-        dest_y = np.full(arr_x.shape, np.nan, dtype="float64")
-
-        # try to clip down y so it only covers the relevant area
+        # compute X-window bounds in X CRS
         x0, y0 = window_transform_x * (0, 0)
         x1, y1 = window_transform_x * (data_x.shape[1], data_x.shape[0])
         xmin_x, xmax_x = sorted([x0, x1])
         ymin_x, ymax_x = sorted([y0, y1])
+
+        # transform those bounds into Y CRS and build minimal Y read window
         xmin_yc, ymin_yc, xmax_yc, ymax_yc = transform_bounds(
             dsx.crs, dsy.crs, xmin_x, ymin_x, xmax_x, ymax_x, densify_pts=0
         )
@@ -523,11 +500,14 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         )
         y_candidate = y_candidate.round_offsets().round_lengths()
         y_window = y_candidate.intersection(Window(0, 0, dsy.width, dsy.height))
+
+        # read only the needed Y data and reproject onto the X window grid
         src_y = dsy.read(1, window=y_window, masked=False).astype(
             "float64", copy=False
         )
         transform_y = dsy.window_transform(y_window)
         dest_y = np.full(data_x.shape, np.nan, dtype="float64")
+
         reproject(
             source=src_y,
             destination=dest_y,
@@ -537,7 +517,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             dst_transform=window_transform_x,
             dst_crs=dsx.crs,
             dst_nodata=np.nan,
-            resampling=Resampling.nearest,  # consider bilinear/average for continuous data
+            resampling=Resampling.nearest,
             num_threads=0,
         )
 

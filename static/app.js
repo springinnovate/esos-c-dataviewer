@@ -321,8 +321,6 @@ async function wireAreaSamplerClick() {
 
     const poly = squarePolygonAt(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
-
-    // show placeholder overlay immediately
     renderScatterOverlay({
       rasterX: lyrA.name,
       rasterY: lyrB.name,
@@ -339,8 +337,6 @@ async function wireAreaSamplerClick() {
       showOverlayError(`Scatter error: ${e.message || String(e)}`)
       return
     }
-
-    // update overlay with real data
     renderScatterOverlay({
       rasterX: lyrA.name,
       rasterY: lyrB.name,
@@ -936,10 +932,10 @@ function renderScatterOverlay(opts) {
        <div>
          <div class='muted' style='margin-bottom:6px;'>Summary</div>
          <div class='stats-grid'>
-           <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '—'}</div>
-           <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '—'}</div>
-           <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '—'}</div>
-           <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '—'}</div>
+           <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
+           <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
+           <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
+           <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
            <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
@@ -952,7 +948,6 @@ function renderScatterOverlay(opts) {
            ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
          </div>
        </div>
-
      </div>
    `
 

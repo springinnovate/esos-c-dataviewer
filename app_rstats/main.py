@@ -374,19 +374,19 @@ def minmax_stats(r: RasterMinMaxIn):
 
 
 @app.post("/stats/scatter", response_model=ScatterOut)
-def geometry_scatter(q: GeometryScatterIn):
+def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
         logging.debug("Opening rasters")
-        dsx, nodata_x, units_x = _open_raster(q.raster_id_x)
-        dsy, nodata_y, units_y = _open_raster(q.raster_id_y)
+        dsx, nodata_x, units_x = _open_raster(scatter_request.raster_id_x)
+        dsy, nodata_y, units_y = _open_raster(scatter_request.raster_id_y)
 
         logging.debug("Shaping geometry")
-        geom = shape(q.geometry)
+        geom = shape(scatter_request.geometry)
 
-        if q.from_crs != dsx.crs.to_string():
+        if scatter_request.from_crs != dsx.crs.to_string():
             logging.debug("Reprojecting geometry to X raster CRS")
             transformer = Transformer.from_crs(
-                q.from_crs, dsx.crs, always_xy=True
+                scatter_request.from_crs, dsx.crs, always_xy=True
             )
             geom_x = shp_transform(
                 lambda x, y, z=None: transformer.transform(x, y), geom
@@ -471,7 +471,7 @@ def geometry_scatter(q: GeometryScatterIn):
             transform=transform_x,
             invert=True,
             out_shape=data_x.shape,
-            all_touched=bool(q.all_touched),
+            all_touched=bool(scatter_request.all_touched),
         )
 
         logging.debug("Applying nodata mask for X")
@@ -483,8 +483,10 @@ def geometry_scatter(q: GeometryScatterIn):
         logging.debug("Computing Y window on its own grid")
 
         # geom is currently in X CRS (you reprojected it above); convert it to Y CRS
-        if q.from_crs != dsy.crs.to_string():
-            _t_xy = Transformer.from_crs(q.from_crs, dsy.crs, always_xy=True)
+        if scatter_request.from_crs != dsy.crs.to_string():
+            _t_xy = Transformer.from_crs(
+                scatter_request.from_crs, dsy.crs, always_xy=True
+            )
             geom_y = shp_transform(
                 lambda x, y, z=None: _t_xy.transform(x, y), geom
             )
@@ -534,19 +536,21 @@ def geometry_scatter(q: GeometryScatterIn):
         if n_pairs == 0:
             logging.debug("No valid pairs found; returning empty ScatterOut")
             return ScatterOut(
-                raster_id_x=q.raster_id_x,
-                raster_id_y=q.raster_id_y,
+                raster_id_x=scatter_request.raster_id_x,
+                raster_id_y=scatter_request.raster_id_y,
                 n_pairs=0,
                 window_mask_pixels=int(np.count_nonzero(mask)),
                 valid_pixels=0,
                 coverage_ratio=0.0,
-                geometry=q.geometry,
+                geometry=scatter_request.geometry,
             )
 
         logging.debug("Downsampling data if needed")
-        if n_pairs > q.max_points:
+        if n_pairs > scatter_request.max_points:
             rng = np.random.default_rng(0)
-            idx = rng.choice(n_pairs, size=q.max_points, replace=False)
+            idx = rng.choice(
+                n_pairs, size=scatter_request.max_points, replace=False
+            )
             x_plot = x_vals[idx]
             y_plot = y_vals[idx]
         else:
@@ -568,7 +572,7 @@ def geometry_scatter(q: GeometryScatterIn):
 
         logging.debug("Computing 2D histogram")
         H, x_edges, y_edges = np.histogram2d(
-            x_vals, y_vals, bins=q.histogram_bins
+            x_vals, y_vals, bins=scatter_request.histogram_bins
         )
         H = H.astype("int64")
 
@@ -577,8 +581,8 @@ def geometry_scatter(q: GeometryScatterIn):
 
         logging.debug("Assembling ScatterOut response")
         return ScatterOut(
-            raster_id_x=q.raster_id_x,
-            raster_id_y=q.raster_id_y,
+            raster_id_x=scatter_request.raster_id_x,
+            raster_id_y=scatter_request.raster_id_y,
             n_pairs=n_pairs,
             x=x_plot.astype("float64").tolist(),
             y=y_plot.astype("float64").tolist(),
@@ -595,7 +599,7 @@ def geometry_scatter(q: GeometryScatterIn):
                 if total_mask_pixels
                 else 0.0
             ),
-            geometry=q.geometry,
+            geometry=scatter_request.geometry,
         )
     except HTTPException:
         raise

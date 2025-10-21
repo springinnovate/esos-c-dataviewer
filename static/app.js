@@ -12,11 +12,10 @@ const state = {
   map: null,
   geoserverBaseUrl: '',
   baseStatsUrl: '',
-  // two display layers
-  wmsLayerA: null, // primary
-  wmsLayerB: null, // secondary
-  layers: [],
-  activeLayerIdxA: 0,
+  wmsLayerA: null,
+  wmsLayerB: null,
+  availableLayers: [],
+  activeLayerIdxA: null,
   activeLayerIdxB: null,
   hoverRect: null,
   boxSizeKm: 10,
@@ -288,12 +287,12 @@ function wireSquareSamplerControls() {
 
 /**
  * Populate both layer <select> elements with available WMS layers and wire change handlers.
- * Reads state.layers and updates the DOM.
+ * Reads state.availableLayers and updates the DOM.
  */
 function populateLayerSelects() {
   const fill = (selEl) => {
     selEl.innerHTML = ''
-    state.layers.forEach((lyr, idx) => {
+    state.availableLayers.forEach((lyr, idx) => {
       const opt = document.createElement('option')
       opt.value = idx.toString()
       opt.textContent = lyr.name
@@ -353,7 +352,7 @@ function addWmsLayer(qualifiedName, slot) {
  */
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
-  const lyr = state.layers[idx]
+  const lyr = state.availableLayers[idx]
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
   _hideOutline()
@@ -391,8 +390,8 @@ async function onLayerChange(e, layerId) {
  */
 async function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
-    const lyrA = state.layers[state.activeLayerIdxA]
-    const lyrB = state.layers[state.activeLayerIdxB]
+    const lyrA = state.availableLayers[state.activeLayerIdxA]
+    const lyrB = state.availableLayers[state.activeLayerIdxB]
     if (!lyrA || !lyrB) return
 
     const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
@@ -1169,17 +1168,17 @@ function disableLeafletScrollOnAlt() {
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url
-  state.layers = cfg.layers
+  state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
 
   populateLayerSelects()
 
-  if (state.layers.length > 0) {
+  if (state.availableLayers.length > 0) {
     const selA = document.getElementById('layerSelectA')
     selA.value = '0'
     selA.dispatchEvent(new Event('change', { bubbles: true }))
   }
-  if (state.layers.length > 1) {
+  if (state.availableLayers.length > 1) {
     const selB = document.getElementById('layerSelectB')
     selB.value = '1'
     selB.dispatchEvent(new Event('change', { bubbles: true }))

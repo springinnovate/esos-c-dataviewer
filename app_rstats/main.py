@@ -463,12 +463,12 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             )
 
         logging.debug("Computing transform for X window")
-        transform_x = dsx.window_transform(win_x)
+        window_transform_x = dsx.window_transform(win_x)
 
         logging.debug("Building geometry mask")
         mask = geometry_mask(
             [mapping(geom_x)],
-            transform=transform_x,
+            transform=window_transform_x,
             invert=True,
             out_shape=data_x.shape,
             all_touched=bool(scatter_request.all_touched),

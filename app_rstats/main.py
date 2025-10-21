@@ -485,33 +485,50 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         # Build a tight window on Y raster
         logging.debug("Reprojecting Y window into X window grid")
-        # compute X-window bounds in X CRS
-        x0, y0 = window_transform_x * (0, 0)
-        x1, y1 = window_transform_x * (data_x.shape[1], data_x.shape[0])
-        xmin_x, xmax_x = sorted([x0, x1])
-        ymin_x, ymax_x = sorted([y0, y1])
+        upper_left_x, upper_left_y = window_transform_x * (0, 0)
+        lower_right_x, lower_right_y = window_transform_x * (
+            data_x.shape[1],
+            data_x.shape[0],
+        )
+        min_x_in_x_crs, max_x_in_x_crs = sorted([upper_left_x, lower_right_x])
+        min_y_in_x_crs, max_y_in_x_crs = sorted([upper_left_y, lower_right_y])
 
-        # transform those bounds into Y CRS and build minimal Y read window
-        xmin_yc, ymin_yc, xmax_yc, ymax_yc = transform_bounds(
-            dsx.crs, dsy.crs, xmin_x, ymin_x, xmax_x, ymax_x, densify_pts=0
+        # transform the X window extent into Y CRS and build a minimal Y read window
+        min_x_in_y_crs, min_y_in_y_crs, max_x_in_y_crs, max_y_in_y_crs = (
+            transform_bounds(
+                dsx.crs,
+                dsy.crs,
+                min_x_in_x_crs,
+                min_y_in_x_crs,
+                max_x_in_x_crs,
+                max_y_in_x_crs,
+                densify_pts=0,
+            )
         )
-        y_candidate = from_bounds(
-            xmin_yc, ymin_yc, xmax_yc, ymax_yc, transform=dsy.transform
+
+        y_window_candidate = from_bounds(
+            min_x_in_y_crs,
+            min_y_in_y_crs,
+            max_x_in_y_crs,
+            max_y_in_y_crs,
+            transform=dsy.transform,
         )
-        y_candidate = y_candidate.round_offsets().round_lengths()
-        y_window = y_candidate.intersection(Window(0, 0, dsy.width, dsy.height))
+        y_window_candidate = y_window_candidate.round_offsets().round_lengths()
+        y_window = y_window_candidate.intersection(
+            Window(0, 0, dsy.width, dsy.height)
+        )
 
         # read only the needed Y data and reproject onto the X window grid
-        src_y = dsy.read(1, window=y_window, masked=False).astype(
+        source_y_data = dsy.read(1, window=y_window, masked=False).astype(
             "float64", copy=False
         )
-        transform_y = dsy.window_transform(y_window)
-        dest_y = np.full(data_x.shape, np.nan, dtype="float64")
+        source_y_transform = dsy.window_transform(y_window)
+        reprojected_y_data = np.full(data_x.shape, np.nan, dtype="float64")
 
         reproject(
-            source=src_y,
-            destination=dest_y,
-            src_transform=transform_y,
+            source=source_y_data,
+            destination=reprojected_y_data,
+            src_transform=source_y_transform,
             src_crs=dsy.crs,
             src_nodata=nodata_y if nodata_y is not None else None,
             dst_transform=window_transform_x,

@@ -115,7 +115,6 @@ const CRS4326 = new L.Proj.CRS(
     ]
   }
 )
-
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -317,7 +316,7 @@ function populateLayerSelects() {
  * @param {string} qualifiedName
  * @param {'A'|'B'} slot
  */
-function addWmsLayer(qualifiedName, slot = 'A') {
+function addWmsLayer(qualifiedName, slot) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`
   const params = {
     layers: qualifiedName,
@@ -326,6 +325,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
     tiled: true,
     version: '1.1.1',
     crs: CRS3347,
+    className: slot === 'A' ? 'blend-screen' : 'blend-base',
   }
   const l = L.tileLayer.wms(wmsUrl, params)
 
@@ -333,7 +333,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
   if (slot === 'A') {
     if (state.wmsLayerA) state.map.removeLayer(state.wmsLayerA)
     state.wmsLayerA = l.addTo(state.map)
-    state.wmsLayerA.setOpacity(1.0)
+    //state.wmsLayerA.setOpacity(1.0)
     // keep A on top
     if (state.wmsLayerB) state.wmsLayerA.bringToFront()
   } else {
@@ -341,7 +341,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
     state.wmsLayerB = l.addTo(state.map)
     // keep A on top if present
     if (state.wmsLayerA) state.wmsLayerA.bringToFront()
-    state.wmsLayerB.setOpacity(1.0)
+    //state.wmsLayerB.setOpacity(1.0)
   }
 }
 
@@ -921,10 +921,6 @@ function wireDynamicStyleControls(layerId) {
     const el = document.getElementById(`layer${layerId}${suffix}`)
     if (el) el.addEventListener('input', update)
   })
-
-  const opacityEl = document.getElementById('opacityRange')
-  if (opacityEl) opacityEl.addEventListener('input', update)
-
   update()
 }
 
@@ -1155,13 +1151,22 @@ function disableLeafletScrollOnAlt() {
  * App entrypoint.
  */
 ;(async function main() {
+
+  // Orange vs turquoise axis
   document.getElementById('layerACminInput').value = '#000000'
+  document.getElementById('layerACmedInput').value = '#ff8000'
+  document.getElementById('layerACmaxInput').value = '#ffcc00'
+  document.getElementById('layerBCminInput').value = '#000000'
+  document.getElementById('layerBCmedInput').value = '#00b3b3'
+  document.getElementById('layerBCmaxInput').value = '#00ffff'
+
+  // Red vs Green axis
+  /*document.getElementById('layerACminInput').value = '#000000'
   document.getElementById('layerACmedInput').value = '#7f0000'
   document.getElementById('layerACmaxInput').value = '#ff0000'
-
   document.getElementById('layerBCminInput').value = '#000000'
   document.getElementById('layerBCmedInput').value = '#007f00'
-  document.getElementById('layerBCmaxInput').value = '#00ff00'
+  document.getElementById('layerBCmaxInput').value = '#00ff00'*/
   initMap()
   wireSquareSamplerControls()
   wireAreaSamplerClick()

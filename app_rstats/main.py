@@ -482,7 +482,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         logging.debug("Computing Y window on its own grid")
 
-        # geom is currently in X CRS (you reprojected it above); convert it to Y CRS
         if scatter_request.from_crs != dsy.crs.to_string():
             _t_xy = Transformer.from_crs(
                 scatter_request.from_crs, dsy.crs, always_xy=True

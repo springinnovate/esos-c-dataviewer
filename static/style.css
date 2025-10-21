@@ -239,6 +239,6 @@ select, input[type='range'], input[type='number'] {
 }
 
 .leaflet-pane.leaflet-tile-pane { isolation: isolate; }
-.leaflet-layer.blend-screen { mix-blend-mode: screen; }
+.leaflet-layer.blend-screen { mix-blend-mode: plus-lighter; }
 .leaflet-layer.blend-base   { mix-blend-mode: normal; }
 .leaflet-container { background: transparent; }

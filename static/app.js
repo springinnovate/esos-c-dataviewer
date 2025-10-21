@@ -110,9 +110,11 @@ function _latlngsFromPoly(polyGeoJSON) {
 function _ensureOutlineLayer() {
   if (state.outlineLayer) return state.outlineLayer
   state.outlineLayer = L.polygon([], {
-    color: '#1e90ff',
+    color: '#0c63b8',
+    fillColor: '#1e90ff',
+    fillOpacity: 0.15,
     weight: 2,
-    fill: false,
+    fill: true,
     interactive: false,
   })
   return state.outlineLayer

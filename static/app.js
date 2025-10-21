@@ -46,18 +46,6 @@ const CRS3347 = new L.Proj.CRS(
     ]
   }
 )
-const CRS4326 = new L.Proj.CRS(
-  'EPSG:4326',
-  '+proj=longlat +datum=WGS84 +no_defs',
-  {
-    origin: [-180, 90],
-    resolutions: [
-      1.40625, 0.703125, 0.3515625, 0.17578125,
-      0.087890625, 0.0439453125, 0.02197265625,
-      0.010986328125, 0.0054931640625, 0.00274658203125
-    ]
-  }
-)
 
 /**
  * Initialize the Leaflet map and overlay event swallowing.
@@ -76,23 +64,6 @@ function initMap() {
   wireOverlayClose()
 }
 
-
-function projectedSquareMeters(centerLatLng, sizeKm) {
-  const crs = state.map.options.crs
-  const half = (Number(sizeKm) * 1000) / 2
-  const c = crs.project(centerLatLng)
-
-  const pts = [
-    L.point(c.x - half, c.y - half),
-    L.point(c.x + half, c.y - half),
-    L.point(c.x + half, c.y + half),
-    L.point(c.x - half, c.y + half),
-  ]
-
-  const latlngs = pts.map(p => crs.unproject(p))
-  return L.polygon(latlngs, { color: '#1e90ff', weight: 2, fill: false, interactive: false })
-}
-
 function squarePolygonAt(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs
   const half = (Number(windowSizeKm) || 0) * 1000 / 2
@@ -105,9 +76,6 @@ function squarePolygonAt(centerLatLng, windowSizeKm) {
   ].map(pt => crs.unproject(pt))
   return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
-
-
-
 
 /**
  * Compute a square LatLngBounds of given size (km) centered at a point.
@@ -155,11 +123,10 @@ function _ensureOutlineLayer() {
  * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
  * @private
  */
-function _updateOutline(polyGeoJSON) {
-  const latlngs = _latlngsFromPoly(polyGeoJSON)
-  const layer = _ensureOutlineLayer()
-  layer.setLatLngs(latlngs)
-  if (!state.map.hasLayer(layer)) layer.addTo(state.map)
+function _updateOutline(poly) {
+ const layer = _ensureOutlineLayer()
+ layer.setLatLngs(poly.getLatLngs())
+ if (!state.map.hasLayer(layer)) layer.addTo(state.map)
 }
 
 /**
@@ -204,13 +171,10 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
  * Side effects: sets state.hoverRect and mouse listeners that update it.
  */
 function initMouseFollowBox() {
-  // initial
   state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
-
   state.map.on('mousemove', (e) => {
     state.lastMouseLatLng = e.latlng
     const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
-    // replace geometry in-place to avoid flicker/re-adding
     state.hoverRect.setLatLngs(poly.getLatLngs())
   })
 
@@ -365,7 +329,7 @@ async function wireAreaSamplerClick() {
     const lyrB = state.availableLayers[state.activeLayerIdxB]
     if (!lyrA || !lyrB) return
 
-    const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
+    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
 
     // show placeholder overlay immediately
@@ -380,7 +344,7 @@ async function wireAreaSamplerClick() {
 
     let scatter
     try {
-      scatter = await fetchScatterStats(lyrA.name, lyrB.name, poly)
+      scatter = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
     } catch (e) {
       showOverlayError(`Scatter error: ${e.message || String(e)}`)
       return

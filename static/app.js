@@ -332,7 +332,7 @@ async function wireAreaSamplerClick() {
     try {
       scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
     } catch (e) {
-      showOverlayError(`Scatter error: ${e.message || String(e)}`)
+      showOverlayError(`area sampler error: ${e.message || String(e)}`)
       return
     }
     renderScatterOverlay({
@@ -364,11 +364,12 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
       raster_id_y: rasterIdY,
       geometry: geojson.geometry ? geojson.geometry : geojson,
       from_crs: 'EPSG:4226', //the poly should be in lat/lng
-      bins: 50,
+      histogram_bins: 50,
       max_points: 20000,
       all_touched: true,
     }),
   })
+
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

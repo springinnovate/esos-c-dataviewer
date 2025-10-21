@@ -88,7 +88,7 @@ class GeometryScatterIn(BaseModel):
     raster_id_y: str
     geometry: dict
     from_crs: str
-    bins: int
+    histogram_bins: int
     max_points: int
     all_touched: bool
 
@@ -483,8 +483,8 @@ def geometry_scatter(q: GeometryScatterIn):
         logging.debug("Computing Y window on its own grid")
 
         # geom is currently in X CRS (you reprojected it above); convert it to Y CRS
-        if dsx.crs.to_string() != dsy.crs.to_string():
-            _t_xy = Transformer.from_crs(dsx.crs, dsy.crs, always_xy=True)
+        if q.from_crs != dsy.crs.to_string():
+            _t_xy = Transformer.from_crs(q.from_crs, dsy.crs, always_xy=True)
             geom_y = shp_transform(
                 lambda x, y, z=None: _t_xy.transform(x, y), geom
             )
@@ -492,32 +492,7 @@ def geometry_scatter(q: GeometryScatterIn):
             geom_y = geom
 
         # Build a tight window on Y raster
-        def _safe_window_for_geom_y(dataset, g):
-            b = g.bounds
-            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-            if int(w.width) > 0 and int(w.height) > 0:
-                return w
-            xres, yres = map(abs, dataset.res)
-            bpad = (
-                b[0] - 0.5 * xres,
-                b[1] - 0.5 * yres,
-                b[2] + 0.5 * xres,
-                b[3] + 0.5 * yres,
-            )
-            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-            if int(w.width) == 0 or int(w.height) == 0:
-                cx, cy = g.centroid.x, g.centroid.y
-                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
-                rr = min(max(rr, 0), dataset.height - 1)
-                cc = min(max(cc, 0), dataset.width - 1)
-                w = Window(cc, rr, 1, 1)
-            return w
-
-        win_y = _safe_window_for_geom_y(dsy, geom_y)
+        win_y = _safe_window_for_geom(dsy, geom_y)
         if win_y is None:
             raise HTTPException(
                 status_code=400,

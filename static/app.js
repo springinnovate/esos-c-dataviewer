@@ -333,6 +333,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
   if (slot === 'A') {
     if (state.wmsLayerA) state.map.removeLayer(state.wmsLayerA)
     state.wmsLayerA = l.addTo(state.map)
+    state.wmsLayerA.setOpacity(0.9)
     // keep A on top
     if (state.wmsLayerB) state.wmsLayerA.bringToFront()
   } else {
@@ -340,27 +341,19 @@ function addWmsLayer(qualifiedName, slot = 'A') {
     state.wmsLayerB = l.addTo(state.map)
     // keep A on top if present
     if (state.wmsLayerA) state.wmsLayerA.bringToFront()
+    state.wmsLayerB.setOpacity(0.9)
   }
 }
 
 /**
  * Handle layer change from a <select>.
- * Slot 'A' updates stats + dynamic styling; slot 'B' only swaps/loads the layer.
+ * Updates stats + dynamic styling for layer A or B.
  * @param {Event & {target: HTMLSelectElement}} e
- * @param {'A'|'B'} slot
+ * @param {'A'|'B'} layerId
  */
-async function onLayerChange(e, slot = 'A') {
+async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.layers[idx]
-  if (!lyr) return
-
-  if (slot === 'B') {
-    state.activeLayerIdxB = idx
-    addWmsLayer(lyr.name, 'B')
-    return
-  }
-
-  // slot A (primary)
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
   _hideOutline()
@@ -369,33 +362,26 @@ async function onLayerChange(e, slot = 'A') {
     const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ raster_id: lyr.name })
+      body: JSON.stringify({ raster_id: lyr.name }),
     })
     if (!res.ok) throw new Error(await res.text())
     const { min_, max_ } = await res.json()
-
     const med = (max_ + min_) / 2
-    document.getElementById('minInput').value = min_
-    document.getElementById('medInput').value = med
-    document.getElementById('maxInput').value = max_
-    state.activeLayerIdxA = idx
-    addWmsLayer(lyr.name, 'A')
-    _applyDynamicStyle()
-    //await _centerOnLayerACentroidOnce(lyr.name)
-  } catch (err) {
-    console.error('Failed to fetch min/max for layer', err)
-  }
-}
 
-/**
- * Wire the opacity range control to the primary WMS layer (A).
- * No-op if no WMS layer loaded.
- */
-function wireOpacity() {
-  const r = document.getElementById('opacityRange')
-  r.addEventListener('input', () => {
-    if (state.wmsLayerA) state.wmsLayerA.setOpacity(parseFloat(r.value))
-  })
+    // write values into the correct panel (A or B)
+    document.getElementById(`layer${layerId}MinInput`).value = min_
+    document.getElementById(`layer${layerId}MedInput`).value = med
+    document.getElementById(`layer${layerId}MaxInput`).value = max_
+
+    // update state and map layer
+    state[`activeLayerIdx${layerId}`] = idx
+    addWmsLayer(lyr.name, layerId)
+
+    // apply style for this layer
+    _applyDynamicStyle(layerId)
+  } catch (err) {
+    console.error(`Failed to fetch min/max for layer ${layerId}`, err)
+  }
 }
 
 /**
@@ -778,7 +764,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     rect.setAttribute('width', String(Math.max(0, barW - 2)))
     rect.setAttribute('height', String(Math.max(0, safeH)))
     rect.setAttribute('fill', '#1e90ff')
-    rect.setAttribute('opacity', '0.9')
     rect.setAttribute('stroke', '#0c63b8')
     rect.setAttribute('stroke-width', '0.5')
     svg.appendChild(rect)
@@ -889,64 +874,56 @@ function _buildEnvString(obj) {
 }
 
 /**
- * Read current style parameter values from the UI controls.
- * @returns {{min:number,med:number,max:number,cmin:string,cmed:string,cmax:string,opacity:number,ncolor:string}}
+ * Read current style parameter values from the UI controls for a given layer.
+ * @param {'A'|'B'} layerId
+ * @returns {{min:number,med:number,max:number,cmin:string,cmed:string,cmax:string,ncolor:string}}
  */
-function _readStyleInputsFromUI() {
-  const get = (id) => document.getElementById(id)
+function _readStyleInputsFromUI(layerId) {
+  const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`)
   const toNum = (el) => Number(el?.value)
   const toCol = (el) => _normColor(el?.value)
   return {
-    min: toNum(get('minInput')),
-    med: toNum(get('medInput')),
-    max: toNum(get('maxInput')),
-    cmin: toCol(get('cminInput')),
-    cmed: toCol(get('cmedInput')),
-    cmax: toCol(get('cmaxInput')),
-    opacity: Number(get('opacityRange').value),
-    ncolor: '#000000'
+    min: toNum(get('MinInput')),
+    med: toNum(get('MedInput')),
+    max: toNum(get('MaxInput')),
+    cmin: toCol(get('CminInput')),
+    cmed: toCol(get('CmedInput')),
+    cmax: toCol(get('CmaxInput')),
   }
 }
 
 /**
- * Apply a dynamic style to the primary WMS layer using stats for min/median/max.
+ * Apply a dynamic style to WMS layer A or B using the current UI values.
+ * @param {'A'|'B'} layerId
  */
-function _applyDynamicStyle() {
-  if (!state.wmsLayerA) return
-  delete state.wmsLayerA.wmsParams?.sld
-  delete state.wmsLayerA.wmsParams?.sld_body
-  const styleVars = _readStyleInputsFromUI()
+function _applyDynamicStyle(layerId) {
+  const layer = state[`wmsLayer${layerId}`]
+  if (!layer) return
+
+  delete layer.wmsParams?.sld
+  delete layer.wmsParams?.sld_body
+
+  const styleVars = _readStyleInputsFromUI(layerId)
   const env = _buildEnvString(styleVars)
-  state.wmsLayerA.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
+
+  layer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
 }
 
 /**
- * Wire UI controls that manage dynamic raster styling parameters.
- * @returns {void}
+ * Wire UI controls that manage dynamic raster styling parameters for layer A or B.
+ * @param {'A'|'B'} layerId
  */
-function wireDynamicStyleControls() {
-  const get = (id) => document.getElementById(id)
-  const update = () => {
-    _applyDynamicStyle()
-  }
+function wireDynamicStyleControls(layerId) {
+  const update = () => _applyDynamicStyle(layerId)
 
-  ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']
-    .forEach(id => get(id)?.addEventListener('input', update))
+  const suffixes = ['MinInput', 'MedInput', 'MaxInput', 'CminInput', 'CmedInput', 'CmaxInput']
+  suffixes.forEach(suffix => {
+    const el = document.getElementById(`layer${layerId}${suffix}`)
+    if (el) el.addEventListener('input', update)
+  })
 
-  const btn = get('styleFromStatsBtn')
-  if (btn) {
-    btn.addEventListener('click', () => {
-      const s = state.lastStats || {}
-      const minVal = Number.isFinite(s.min) ? s.min : 0
-      const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
-      const medVal = Number.isFinite(s.median) ? s.median : minVal + (maxVal - minVal) / 2
-
-      if (get('minInput')) get('minInput').value = String(minVal)
-      if (get('medInput')) get('medInput').value = String(medVal)
-      if (get('maxInput')) get('maxInput').value = String(maxVal)
-      update()
-    })
-  }
+  const opacityEl = document.getElementById('opacityRange')
+  if (opacityEl) opacityEl.addEventListener('input', update)
 
   update()
 }
@@ -1178,13 +1155,21 @@ function disableLeafletScrollOnAlt() {
  * App entrypoint.
  */
 ;(async function main() {
+  document.getElementById('layerACminInput').value = '#000000'
+  document.getElementById('layerACmedInput').value = '#ff6600'
+  document.getElementById('layerACmaxInput').value = '#ff0000'
+
+  // Layer B
+  document.getElementById('layerBCminInput').value = '#000000'
+  document.getElementById('layerBCmedInput').value = '#66ff00'
+  document.getElementById('layerBCmaxInput').value = '#00ff00'
   initMap()
-  wireOpacity()
   wireSquareSamplerControls()
   wireAreaSamplerClick()
-  wireDynamicStyleControls()
+  ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
+
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

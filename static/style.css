@@ -141,13 +141,22 @@ select, input[type='range'], input[type='number'] {
 .num { width: 7ch; }
 
 /* ===== Dynamic style controls ===== */
-.style-panel { margin-left: .75rem; }
+.style-panel {
+  margin-left: .75rem;
+  padding: .25rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg, #f8f8f8);
+}
+
+/* grid inside each panel (unchanged from your original) */
 .style-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: .5rem .75rem;
   align-items: center;
 }
+
 .style-grid label {
   display: inline-flex;
   align-items: center;
@@ -155,8 +164,18 @@ select, input[type='range'], input[type='number'] {
   font-size: .9rem;
   color: var(--muted);
 }
-.style-grid input[type='number'] { width: 10ch; }
-.style-grid input[type='color'] { width: 2rem; height: 1.5rem; padding: 0; border: none; }
+
+.style-grid input[type='number'] {
+  width: 10ch;
+}
+
+.style-grid input[type='color'] {
+  width: 2rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+}
+
 .style-grid button {
   grid-column: span 2;
   padding: .35rem .6rem;
@@ -165,8 +184,19 @@ select, input[type='range'], input[type='number'] {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.style-grid button:hover { border-color: var(--brand); color: var(--brand-hover); }
 
+.style-grid button:hover {
+  border-color: var(--brand);
+  color: var(--brand-hover);
+}
+
+/* summary label for each panel */
+.style-panel summary {
+  font-weight: 600;
+  font-size: .95rem;
+  margin-bottom: .35rem;
+  color: var(--fg);
+}
 @media (max-width: 900px) {
   .style-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 }
@@ -207,3 +237,5 @@ select, input[type='range'], input[type='number'] {
   display: block;
   overflow: visible;
 }
+
+.leaflet-tile-container .blend-screen { mix-blend-mode: screen; opacity: 0.9; }

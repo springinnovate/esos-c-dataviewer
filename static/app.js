@@ -950,9 +950,7 @@ function renderScatterOverlay(opts) {
        </div>
      </div>
    `
-
   overlay.classList.remove('hidden')
-
   if (hasData && scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
       const svg = buildScatterSVG(
         scatterObj.x_edges,
@@ -1012,8 +1010,10 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       rect.setAttribute('width', String(x1 - x0))
       rect.setAttribute('height', String(y0 - y1))
       const intensity = val / maxCount
-      const color = `rgba(30,144,255,${Math.min(1, 0.2 + 0.8 * intensity)})`
-      rect.setAttribute('fill', color)
+      const scaled = Math.sqrt(intensity) // this is like a gamma setting
+      const alpha = Math.min(1, 0.2 + 0.8 * scaled)
+      rect.setAttribute('fill', '#1e90ff')
+      rect.setAttribute('fill-opacity', String(alpha))
       svg.appendChild(rect)
     }
   }

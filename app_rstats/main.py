@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pyproj import Transformer
 from rasterio.features import geometry_mask
+from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds, Window
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
@@ -508,16 +509,35 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         logging.debug("Reprojecting Y window into X window grid")
         dest_y = np.full(arr_x.shape, np.nan, dtype="float64")
+
+        # try to clip down y so it only covers the relevant area
+        x0, y0 = window_transform_x * (0, 0)
+        x1, y1 = window_transform_x * (data_x.shape[1], data_x.shape[0])
+        xmin_x, xmax_x = sorted([x0, x1])
+        ymin_x, ymax_x = sorted([y0, y1])
+        xmin_yc, ymin_yc, xmax_yc, ymax_yc = transform_bounds(
+            dsx.crs, dsy.crs, xmin_x, ymin_x, xmax_x, ymax_x, densify_pts=0
+        )
+        y_candidate = from_bounds(
+            xmin_yc, ymin_yc, xmax_yc, ymax_yc, transform=dsy.transform
+        )
+        y_candidate = y_candidate.round_offsets().round_lengths()
+        y_window = y_candidate.intersection(Window(0, 0, dsy.width, dsy.height))
+        src_y = dsy.read(1, window=y_window, masked=False).astype(
+            "float64", copy=False
+        )
+        transform_y = dsy.window_transform(y_window)
+        dest_y = np.full(data_x.shape, np.nan, dtype="float64")
         reproject(
             source=src_y,
             destination=dest_y,
             src_transform=transform_y,
             src_crs=dsy.crs,
             src_nodata=nodata_y if nodata_y is not None else None,
-            dst_transform=transform_x,  # X window transform you computed above
+            dst_transform=window_transform_x,
             dst_crs=dsx.crs,
             dst_nodata=np.nan,
-            resampling=Resampling.nearest,
+            resampling=Resampling.nearest,  # consider bilinear/average for continuous data
             num_threads=0,
         )
 

@@ -388,7 +388,7 @@ def geometry_scatter(q: GeometryScatterIn):
             transformer = Transformer.from_crs(
                 q.from_crs, dsx.crs, always_xy=True
             )
-            geom = shp_transform(
+            geom_x = shp_transform(
                 lambda x, y, z=None: transformer.transform(x, y), geom
             )
 
@@ -418,7 +418,7 @@ def geometry_scatter(q: GeometryScatterIn):
             return w
 
         logging.debug("Building window on X grid")
-        win_x = _safe_window_for_geom(dsx, geom)
+        win_x = _safe_window_for_geom(dsx, geom_x)
         logging.debug("Reading data_x from raster")
         data_x = dsx.read(1, window=win_x, boundless=True, masked=False)
         if data_x.size == 0:
@@ -432,7 +432,7 @@ def geometry_scatter(q: GeometryScatterIn):
 
         logging.debug("Building geometry mask")
         mask = geometry_mask(
-            [mapping(geom)],
+            [mapping(geom_x)],
             transform=transform_x,
             invert=True,
             out_shape=data_x.shape,

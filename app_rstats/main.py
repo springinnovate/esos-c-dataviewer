@@ -27,19 +27,18 @@ Intended usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional, Dict, Tuple, Any, List
+from typing import Optional, Tuple, List
 import logging
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pyproj import Transformer
 from rasterio.features import geometry_mask
-from rasterio.transform import rowcol
 from rasterio.windows import from_bounds, Window
-from shapely.geometry import shape, mapping, box
+from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
 import numpy as np
 import rasterio
@@ -60,7 +59,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class MinMaxIn(BaseModel):
+class RasterMinMaxIn(BaseModel):
     """Input model for min max value query.
 
     Attributes:
@@ -68,127 +67,6 @@ class MinMaxIn(BaseModel):
     """
 
     raster_id: str
-
-
-class PixelStatsIn(BaseModel):
-    """Input model for single-pixel raster queries.
-
-    Attributes:
-        raster_id (str): Identifier of the target raster in the registry.
-        lon (float): Longitude of the target point (in the input CRS).
-        lat (float): Latitude of the target point (in the input CRS).
-        crs (str): Coordinate reference system of the input point, default is 'EPSG:4326'.
-    """
-
-    raster_id: str
-    lon: float
-    lat: float
-    crs: str = Field(default="EPSG:4326")  # incoming coordinates
-
-
-class PixelWindowStatsIn(BaseModel):
-    """Input model for window-based raster statistics.
-
-    Attributes:
-        raster_id (str): Identifier of the target raster in the registry.
-        lon (float): Longitude of the window center point (in the input CRS).
-        lat (float): Latitude of the window center point (in the input CRS).
-        crs (str): Coordinate reference system of the input point, default is 'EPSG:4326'.
-        radius_pixels (Optional[int]): Radius in pixels around the center for sampling.
-        bbox (Optional[Tuple[float, float, float, float]]): Bounding box in the input CRS
-            defined as (minx, miny, maxx, maxy).
-        histogram_bins (int): Number of bins for histogram calculation, default is 16.
-        histogram_range (Optional[Tuple[float, float]]): Range (min, max) for histogram,
-            or None to compute automatically.
-    """
-
-    raster_id: str
-    lon: float
-    lat: float
-    crs: str = Field(default="EPSG:4326")
-
-    # one of: radius in pixels around the center, or a bbox in input CRS units
-    radius_pixels: Optional[int] = Field(default=None, ge=0)
-    bbox: Optional[Tuple[float, float, float, float]] = Field(
-        default=None,
-        description='minx, miny, maxx, maxy in the same CRS as "crs"',
-    )
-
-    # histogram controls
-    histogram_bins: int = Field(default=16, ge=1)
-    histogram_range: Optional[Tuple[float, float]] = (
-        None  # min,max or None to auto
-    )
-
-
-class GeometryStatsIn(BaseModel):
-    """Input model for geometry-based zonal statistics.
-
-    Attributes:
-        raster_id (str): Identifier of the target raster in the registry.
-        geometry (dict): GeoJSON geometry defining the analysis area.
-        from_crs (str): CRS of the input geometry, default is 'EPSG:4326'.
-        reducer (Literal): Statistical operation to apply over the geometry,
-            one of 'mean', 'sum', 'min', 'max', 'std', 'count', 'median', 'histogram'.
-        histogram_bins (Optional[int]): Number of bins for histogram statistics.
-        histogram_range (Optional[Tuple[float, float]]): Range (min, max) for histogram,
-            or None to determine automatically.
-    """
-
-    raster_id: str
-    geometry: dict
-    from_crs: str
-    reducer: Literal[
-        "mean", "sum", "min", "max", "std", "count", "median", "histogram"
-    ] = "mean"
-    histogram_bins: Optional[int] = 16
-    histogram_range: Optional[tuple[float, float]] = None
-
-
-class StatsOut(BaseModel):
-    """Output model for pixel or geometry-based statistics.
-
-    Attributes:
-        raster_id (str): Identifier of the raster used for analysis.
-        band (int): Band number used, default is 1.
-        reducer (Optional[str]): Statistical reducer applied, if any.
-        value (Optional[float]): Single pixel value when applicable.
-        stats (Optional[dict]): Dictionary of computed statistics.
-        units (Optional[str]): Units of measurement for the raster data.
-        nodata (Optional[float]): Nodata value for the raster.
-        pixel (Optional[dict]): Pixel metadata including row/col indices and coordinates.
-        geometry (Optional[dict]): GeoJSON geometry associated with the result, if any.
-    """
-
-    raster_id: str
-    band: int = 1
-    reducer: Optional[str] = None
-    value: Optional[float] = None
-    stats: Optional[dict] = None
-    units: Optional[str] = None
-    nodata: Optional[float] = None
-    pixel: Optional[dict] = None
-    geometry: Optional[dict] = None
-
-
-class WindowStatsOut(BaseModel):
-    """Output model for window-based raster statistics.
-
-    Attributes:
-        raster_id (str): Identifier of the raster used for analysis.
-        window (Dict[str, Any]): Window metadata (offsets, dimensions, center pixel).
-        nodata (Optional[float]): Nodata value for the raster.
-        units (Optional[str]): Units of measurement for the raster data.
-        stats (Dict[str, Any]): Summary statistics for the sampled window.
-        histogram (Dict[str, Any]): Histogram data for the sampled window.
-    """
-
-    raster_id: str
-    window: Dict[str, Any]
-    nodata: Optional[float] = None
-    units: Optional[str] = None
-    stats: Dict[str, Any]
-    histogram: Dict[str, Any]
 
 
 class RasterMinMaxOut(BaseModel):
@@ -209,13 +87,38 @@ class GeometryScatterIn(BaseModel):
     raster_id_x: str
     raster_id_y: str
     geometry: dict
-    from_crs: str = "EPSG:4326"
-    bins: int = 50
-    max_points: int = 50000
-    all_touched: bool = False
+    from_crs: str
+    bins: int
+    max_points: int
+    all_touched: bool
 
 
 class ScatterOut(BaseModel):
+    """Output model for scatterplot and histogram statistics between two raster layers.
+
+    This model represents the result of a bivariate comparison between two raster datasets
+    (raster_id_x and raster_id_y) within a specified window or geometry. Many of the
+    statistical fields are optional and may be `None` if the window did not cover any
+    valid part of the raster.
+
+    Attributes:
+        raster_id_x (str): Identifier for the X-axis raster layer.
+        raster_id_y (str): Identifier for the Y-axis raster layer.
+        n_pairs (int): Total number of paired pixel values sampled.
+        x (Optional[List[float]]): List of X-axis pixel values, or None if unavailable.
+        y (Optional[List[float]]): List of Y-axis pixel values, or None if unavailable.
+        hist2d (Optional[List[List[int]]]): 2D histogram counts, or None if unavailable.
+        x_edges (Optional[List[float]]): Bin edges for the X-axis histogram, or None if unavailable.
+        y_edges (Optional[List[float]]): Bin edges for the Y-axis histogram, or None if unavailable.
+        pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
+        slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
+        intercept (Optional[float]): Linear regression intercept, or None if not computed.
+        window_mask_pixels (Optional[int]): Number of pixels included in the window mask, or None if not applicable.
+        valid_pixels (Optional[int]): Number of valid (non-null) paired pixels, or None if not available.
+        coverage_ratio (Optional[float]): Ratio of valid pixels to total mask pixels, or None if not available.
+        geometry (dict): GeoJSON-like geometry defining the analysis window.
+    """
+
     raster_id_x: str
     raster_id_y: str
     n_pairs: int
@@ -396,130 +299,6 @@ def rasters():
     return {"rasters": list(REGISTRY.keys())}
 
 
-@app.post("/stats/pixel", response_model=WindowStatsOut)
-def pixel_stats(q: PixelWindowStatsIn):
-    """Compute summary statistics for a pixel-centered raster window.
-
-    Given a geographic coordinate or bounding box, this endpoint samples the
-    corresponding window from a registered raster and computes basic
-    statistics (min, max, mean, median, std) and a histogram of pixel values.
-    The input coordinate or bounding box is automatically reprojected to the
-    raster’s CRS if necessary. Nodata and non-finite values are excluded from
-    calculations.
-
-    Args:
-        q (PixelWindowStatsIn): Request model specifying the raster ID, input
-            coordinate (lon/lat), optional pixel radius or bounding box, and
-            histogram parameters.
-
-    Returns:
-        WindowStatsOut: Object containing raster window metadata, computed
-        statistics, histogram data, and nodata/unit information.
-
-    Raises:
-        HTTPException: If the raster ID is not found, the file is missing, or
-            the target point/window lies outside the raster extent.
-    """
-    ds, nodata, units = _open_raster(q.raster_id)
-
-    # reproject center point to raster CRS if needed
-    if q.crs != ds.crs.to_string():
-        transformer = Transformer.from_crs(q.crs, ds.crs, always_xy=True)
-        x, y = transformer.transform(q.lon, q.lat)
-    else:
-        x, y = q.lon, q.lat
-
-    r, c = rowcol(ds.transform, x, y, op=round)
-    if not (0 <= r < ds.height and 0 <= c < ds.width):
-        raise HTTPException(
-            status_code=400, detail="point outside raster extent"
-        )
-
-    # optional bbox: reproject bbox corners to raster CRS
-    bbox_raster = None
-    if q.bbox is not None:
-        minx, miny, maxx, maxy = q.bbox
-        if q.crs != ds.crs.to_string():
-            transformer = Transformer.from_crs(q.crs, ds.crs, always_xy=True)
-            bx = box(minx, miny, maxx, maxy)
-            minx, miny = transformer.transform(bx.bounds[0], bx.bounds[1])
-            maxx, maxy = transformer.transform(bx.bounds[2], bx.bounds[3])
-        bbox_raster = (minx, miny, maxx, maxy)
-
-    win = _compute_window(ds, x, y, r, c, q.radius_pixels, bbox_raster)
-    win = (
-        win.intersection(Window(0, 0, ds.width, ds.height))
-        .round_offsets()
-        .round_lengths()
-    )
-    if win.width <= 0 or win.height <= 0:
-        raise HTTPException(status_code=400, detail="empty window")
-
-    arr = ds.read(1, window=win, masked=False).astype("float64")
-    mask = np.zeros_like(arr, dtype=bool)
-    if nodata is not None:
-        mask |= np.isclose(arr, nodata)
-    mask |= ~np.isfinite(arr)
-
-    vals = arr[~mask]
-    count_valid = int(vals.size)
-    count_all = int(arr.size)
-
-    if count_valid == 0:
-        stats = {
-            "count": 0,
-            "min": None,
-            "max": None,
-            "mean": None,
-            "median": None,
-            "std": None,
-            "full_area_m2": None,
-            "non_nodata_area_m2": None,
-        }
-        histogram = {"hist": [], "bin_edges": [], "count": 0}
-    else:
-        stats = {
-            "count": count_valid,
-            "min": float(np.min(vals)),
-            "max": float(np.max(vals)),
-            "mean": float(np.mean(vals)),
-            "median": float(np.median(vals)),
-            "std": float(np.std(vals, ddof=1) if count_valid > 1 else 0.0),
-        }
-        bins = q.histogram_bins or 16
-        rng = q.histogram_range
-        hist, bin_edges = np.histogram(vals, bins=bins, range=rng)
-        histogram = {
-            "hist": hist.tolist(),
-            "bin_edges": bin_edges.tolist(),
-            "count": count_valid,
-        }
-
-        px_area = _area_per_pixel_m2(ds)
-        if px_area is not None:
-            stats["full_area_m2"] = float(px_area * count_all)
-            stats["non_nodata_area_m2"] = float(px_area * count_valid)
-        else:
-            stats["full_area_m2"] = None
-            stats["non_nodata_area_m2"] = None
-
-    out = WindowStatsOut(
-        raster_id=q.raster_id,
-        window={
-            "col_off": int(win.col_off),
-            "row_off": int(win.row_off),
-            "width": int(win.width),
-            "height": int(win.height),
-            "center_pixel": {"row": int(r), "col": int(c)},
-        },
-        nodata=nodata if nodata is not None else None,
-        units=units,
-        stats=stats,
-        histogram=histogram,
-    )
-    return out
-
-
 def _sample_percentiles(src, samples, frac):
     """Estimate approximate 5th and 95th percentiles from random raster windows.
 
@@ -561,7 +340,7 @@ def _sample_percentiles(src, samples, frac):
 
 
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)
-def minmax_stats(r: MinMaxIn):
+def minmax_stats(r: RasterMinMaxIn):
     """Compute approximate 5th and 95th percentile values for a raster.
 
     This endpoint estimates the low and high value range for a given raster by
@@ -570,7 +349,7 @@ def minmax_stats(r: MinMaxIn):
     for visualization or dynamic styling.
 
     Args:
-        r (MinMaxIn): Input model containing the raster identifier (`raster_id`)
+        r (RasterMinMaxIn): Input model containing the raster identifier (`raster_id`)
             to locate and open the raster file.
 
     Returns:
@@ -592,198 +371,6 @@ def minmax_stats(r: MinMaxIn):
     except Exception:
         logger.exception("minmax_stats failed")
         raise HTTPException(status_code=500, detail="Failed to compute min/max")
-
-
-@app.post("/stats/geometry", response_model=StatsOut)
-def geometry_stats(q: GeometryStatsIn):
-    """Compute zonal statistics for a polygon geometry over a raster.
-
-    Given a GeoJSON geometry and a registered raster ID, this endpoint computes
-    statistics (min, max, mean, median, sum, std, histogram) over the pixels
-    within the polygon footprint. The geometry is automatically reprojected
-    to the raster’s CRS if necessary. Nodata values and non-finite pixels are
-    excluded from all calculations. The function also computes per-pixel and
-    total area metrics.
-
-    Args:
-        q (GeometryStatsIn): Request model containing the raster ID, input
-            geometry, input CRS, and optional histogram settings.
-
-    Returns:
-        StatsOut: Object containing computed statistics, histogram data,
-        nodata and unit information, and derived area metrics.
-
-    Raises:
-        HTTPException: If the geometry lies outside the raster extent or
-            produces an empty read window.
-
-    Notes:
-        - For projected rasters, area metrics are expressed in square meters.
-        - For geographic rasters, area metrics are in square degrees.
-        - Uses a safe windowing strategy to handle small or edge geometries.
-    """
-    try:
-        ds, nodata, units = _open_raster(q.raster_id)
-
-        geom = shape(q.geometry)
-
-        # Reproject geometry to raster CRS if needed
-        if q.from_crs != ds.crs.to_string():
-            transformer = Transformer.from_crs(
-                q.from_crs, ds.crs, always_xy=True
-            )
-            geom = shp_transform(
-                lambda x, y, z=None: transformer.transform(x, y), geom
-            )
-
-        def _safe_window_for_geom(dataset, g):
-            b = g.bounds
-            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-
-            if int(w.width) > 0 and int(w.height) > 0:
-                return w
-
-            # pad by half a pixel and retry
-            xres, yres = map(abs, dataset.res)
-            bpad = (
-                b[0] - 0.5 * xres,
-                b[1] - 0.5 * yres,
-                b[2] + 0.5 * xres,
-                b[3] + 0.5 * yres,
-            )
-            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-
-            # fallback: centroid pixel
-            if int(w.width) == 0 or int(w.height) == 0:
-                cx, cy = g.centroid.x, g.centroid.y
-                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
-                rr = min(max(rr, 0), dataset.height - 1)
-                cc = min(max(cc, 0), dataset.width - 1)
-                w = Window(cc, rr, 1, 1)
-
-            return w
-
-        window = _safe_window_for_geom(ds, geom)
-        logger.debug(f"this is the safe window: {window}")
-        data = ds.read(1, window=window, boundless=True, masked=False)
-        logger.debug(f"here's the data: {data}")
-        if data.size == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Empty read window (geometry outside raster).",
-            )
-
-        # Build geometry mask in the window’s transform
-        window_transform = ds.window_transform(window)
-        mask = geometry_mask(
-            [mapping(geom)],
-            transform=window_transform,
-            invert=True,
-            out_shape=data.shape,
-            all_touched=False,
-        )
-
-        # Apply mask + nodata
-        arr = data.astype("float64", copy=False)
-        if nodata is not None:
-            arr = np.where(np.isclose(arr, nodata), np.nan, arr)
-        # keep only pixels inside polygon
-        arr = np.where(mask, arr, np.nan)
-        logger.debug(f"here's the masked data: {arr}")
-
-        # Stats over valid (finite) values
-        vals = arr[np.isfinite(arr)]
-        logger.debug(f"here is the finite data: {vals}")
-
-        stats = {
-            "count": int(vals.size),
-            "min": None,
-            "max": None,
-            "mean": None,
-            "median": None,
-            "sum": None,
-            "std": None,
-            "hist": None,
-            "bin_edges": None,
-        }
-        if vals.size > 0:
-            stats.update(
-                {
-                    "min": float(np.min(vals)),
-                    "max": float(np.max(vals)),
-                    "mean": float(np.mean(vals)),
-                    "median": float(np.median(vals)),
-                    "sum": float(np.sum(vals)),
-                    "std": float(
-                        np.std(vals, ddof=1) if vals.size > 1 else 0.0
-                    ),
-                }
-            )
-            qs = np.linspace(0, 1, 17)
-            bin_edges = np.quantile(vals, qs)
-            q25, q75 = np.percentile(vals, [25, 75])
-            iqr = q75 - q25
-            bin_width = 2 * iqr * len(vals) ** (-1 / 3)
-            if bin_width == 0:
-                bin_width = np.ptp(vals) / 10 or 1  # fallback
-
-            num_bins_fd = int(np.ceil(np.ptp(vals) / bin_width))
-            # at least 1 to 64 bins
-            num_bins = max(1, min(num_bins_fd, 64))
-            logger.debug(
-                f"number of bins {num_bins}; bin width {bin_width}; bin_edges {bin_edges}; qs: {qs}"
-            )
-
-            hist, bin_edges = np.histogram(vals, bins=num_bins)
-            # hist, bin_edges = np.histogram(vals, bins="doane")
-            stats["hist"] = hist.tolist()
-            stats["bin_edges"] = bin_edges.tolist()
-
-        # Area metrics (assumes projected CRS in meters; for geographic CRS these are in "degree^2")
-        # pixel area from affine determinant (handles rotations too)
-        det = ds.transform.a * ds.transform.e - ds.transform.b * ds.transform.d
-        pixel_area = abs(det)
-        total_mask_pixels = int(np.count_nonzero(mask))
-        valid_pixels = int(np.count_nonzero(np.isfinite(arr)))
-        nodata_pixels = total_mask_pixels - valid_pixels
-
-        area_stats = {
-            "pixel_area": pixel_area,  # m^2 per pixel if CRS in meters
-            "window_mask_pixels": total_mask_pixels,
-            "valid_pixels": valid_pixels,
-            "nodata_pixels": nodata_pixels,
-            "window_mask_area_m2": float(total_mask_pixels * pixel_area),
-            "valid_area_m2": float(valid_pixels * pixel_area),
-            "nodata_area_m2": float(nodata_pixels * pixel_area),
-            "coverage_ratio": (
-                float(valid_pixels / total_mask_pixels)
-                if total_mask_pixels
-                else 0.0
-            ),
-        }
-        stats.update(area_stats)
-
-        # json does not handle nans so we need to convert to nones
-        clean_units = (
-            units if units is not None and np.isfinite(units) else None
-        )
-        clean_nodata = (
-            nodata if nodata is not None and np.isfinite(nodata) else None
-        )
-        result = StatsOut(
-            raster_id=q.raster_id,
-            stats=stats,
-            nodata=clean_nodata,
-            units=clean_units,
-            geometry=q.geometry,
-        )
-        return result
-    except Exception:
-        logger.exception("something bad happened")
 
 
 @app.post("/stats/scatter", response_model=ScatterOut)
@@ -940,26 +527,6 @@ def geometry_scatter(q: GeometryScatterIn):
                 raster_id_x=q.raster_id_x,
                 raster_id_y=q.raster_id_y,
                 n_pairs=0,
-                units_x=(
-                    units_x
-                    if units_x is not None and np.isfinite(units_x)
-                    else None
-                ),
-                units_y=(
-                    units_y
-                    if units_y is not None and np.isfinite(units_y)
-                    else None
-                ),
-                nodata_x=(
-                    nodata_x
-                    if nodata_x is not None and np.isfinite(nodata_x)
-                    else None
-                ),
-                nodata_y=(
-                    nodata_y
-                    if nodata_y is not None and np.isfinite(nodata_y)
-                    else None
-                ),
                 window_mask_pixels=int(np.count_nonzero(mask)),
                 valid_pixels=0,
                 coverage_ratio=0.0,
@@ -990,8 +557,9 @@ def geometry_scatter(q: GeometryScatterIn):
             intercept = None
 
         logging.debug("Computing 2D histogram")
-        bins = int(max(1, min(256, q.bins)))
-        H, x_edges, y_edges = np.histogram2d(x_vals, y_vals, bins=bins)
+        H, x_edges, y_edges = np.histogram2d(
+            x_vals, y_vals, bins=q.histogram_bins
+        )
         H = H.astype("int64")
 
         total_mask_pixels = int(np.count_nonzero(mask))
@@ -1010,16 +578,6 @@ def geometry_scatter(q: GeometryScatterIn):
             pearson_r=pearson_r,
             slope=slope,
             intercept=intercept,
-            nodata_x=(
-                nodata_x
-                if nodata_x is not None and np.isfinite(nodata_x)
-                else None
-            ),
-            nodata_y=(
-                nodata_y
-                if nodata_y is not None and np.isfinite(nodata_y)
-                else None
-            ),
             window_mask_pixels=total_mask_pixels,
             valid_pixels=valid_pixels,
             coverage_ratio=(

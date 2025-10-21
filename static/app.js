@@ -36,6 +36,7 @@ async function loadConfig() {
   return res.json()
 }
 
+const GLOBAL_CRS = 'EPSG:3347'
 const CRS3347 = new L.Proj.CRS(
   'EPSG:3347',
   '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
@@ -327,9 +328,9 @@ async function wireAreaSamplerClick() {
       scatterObj: null,
     })
 
-    let scatter
+    let scatterStats
     try {
-      scatter = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
+      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
     } catch (e) {
       showOverlayError(`Scatter error: ${e.message || String(e)}`)
       return
@@ -340,32 +341,11 @@ async function wireAreaSamplerClick() {
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,
-      scatterObj: scatter,
+      scatterObj: scatterStats,
     })
   })
 }
 
-
-/**
- * POST a geometry to the rstats service and return statistics.
- * @param {string} rasterId
- * @param {{type:'Feature'|'Polygon',geometry?:object}} geojson Feature or bare geometry in EPSG:4326
- * @returns {Promise<{stats:object, units?:string}>}
- * @throws {Error} if the request fails
- */
-async function fetchGeometryStats(rasterId, geojson) {
-  const res = await fetch(`${state.baseStatsUrl}/stats/geometry`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      raster_id: rasterId,
-      geometry: (geojson.geometry ? geojson.geometry : geojson),
-      from_crs: 'EPSG:4326',
-    }),
-  })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
-}
 
 /**
  * POST a geometry to the rstats service and return scatter data for two rasters.
@@ -383,9 +363,10 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
       raster_id_x: rasterIdX,
       raster_id_y: rasterIdY,
       geometry: geojson.geometry ? geojson.geometry : geojson,
-      from_crs: 'EPSG:4326',
+      from_crs: 'EPSG:4226', //the poly should be in lat/lng
       bins: 50,
       max_points: 20000,
+      all_touched: true,
     }),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -777,7 +758,7 @@ function renderScatterOverlay(opts) {
     rasterX, rasterY,
     centerLng, centerLat,
     boxKm,
-    scatterObj // optional
+    scatterObj // could be null if not generated yet
   } = opts
 
   const overlay = document.getElementById('statsOverlay')
@@ -789,8 +770,8 @@ function renderScatterOverlay(opts) {
   // derive stats (optional keys guarded)
   const s = scatterObj || {}
   const stats = {
-    n: s.n ?? s.n_pairs ?? null,
-    r: s.r ?? s.pearson_r ?? null,
+    n: s.n_pairs ?? null,
+    r: s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
     window_mask_pixels: s.window_mask_pixels ?? null,
@@ -800,38 +781,35 @@ function renderScatterOverlay(opts) {
   }
 
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
+  body.innerHTML = `
+    <div class='overlay-header'>
+      <div>
+        <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
+        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} • box: ${boxKm} km</div>
+      </div>
+    </div>
 
-  // replace the inline grid div with class="overlay-content"
-   body.innerHTML = `
-     <div class='overlay-header'>
-       <div>
-         <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-         <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} • box: ${boxKm} km</div>
-       </div>
-     </div>
+    <div class='overlay-content'>
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Summary</div>
+          <div class='stats-grid'>
+            <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
+            <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
+            <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
+            <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
+            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
+            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
+            <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
+        </div>
+      </div>
 
-     <div class='overlay-content'>
-
-       <div>
-         <div class='muted' style='margin-bottom:6px;'>Summary</div>
-         <div class='stats-grid'>
-           <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
-           <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
-           <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
-           <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-           <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
-           <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
-           <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-         </div>
-       </div>
-
-       <div>
-         <div class='muted' style='margin-bottom:6px;'>Scatter</div>
-         <div id='scatterPlot' class='plot-holder'>
-           ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
-         </div>
-       </div>
-     </div>
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Scatter</div>
+        <div id='scatterPlot' class='plot-holder'>
+          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+        </div>
+      </div>
+    </div>
    `
   overlay.classList.remove('hidden')
   if (hasData && scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {

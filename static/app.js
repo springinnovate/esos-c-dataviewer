@@ -1159,14 +1159,6 @@ function disableLeafletScrollOnAlt() {
   document.getElementById('layerBCminInput').value = '#000000'
   document.getElementById('layerBCmedInput').value = '#00b3b3'
   document.getElementById('layerBCmaxInput').value = '#00ffff'
-
-  // Red vs Green axis
-  /*document.getElementById('layerACminInput').value = '#000000'
-  document.getElementById('layerACmedInput').value = '#7f0000'
-  document.getElementById('layerACmaxInput').value = '#ff0000'
-  document.getElementById('layerBCminInput').value = '#000000'
-  document.getElementById('layerBCmedInput').value = '#007f00'
-  document.getElementById('layerBCmaxInput').value = '#00ff00'*/
   initMap()
   wireSquareSamplerControls()
   wireAreaSamplerClick()

@@ -392,30 +392,65 @@ def geometry_scatter(q: GeometryScatterIn):
                 lambda x, y, z=None: transformer.transform(x, y), geom
             )
 
-        def _safe_window_for_geom(dataset, g):
-            b = g.bounds
-            w = rasterio.windows.from_bounds(*b, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-            if int(w.width) > 0 and int(w.height) > 0:
-                return w
-            xres, yres = map(abs, dataset.res)
-            bpad = (
-                b[0] - 0.5 * xres,
-                b[1] - 0.5 * yres,
-                b[2] + 0.5 * xres,
-                b[3] + 0.5 * yres,
+        def _safe_window_for_geom(dataset, geometry):
+            """Compute a rasterio window safely enclosing a given geometry.
+
+            Ensures that the resulting window:
+            - Falls within the raster bounds
+            - Has nonzero dimensions (expands slightly if needed)
+            - Falls back to a single pixel window if geometry is too small
+
+            Args:
+                dataset (rasterio.io.DatasetReader): Open raster dataset.
+                geometry (shapely.geometry.base.BaseGeometry): Geometry to bound.
+
+            Returns:
+                rasterio.windows.Window: Window enclosing the geometry or a fallback pixel window.
+            """
+            geometry_bounds = geometry.bounds
+            candidate_window = rasterio.windows.from_bounds(
+                *geometry_bounds, transform=dataset.transform
             )
-            w = rasterio.windows.from_bounds(*bpad, transform=dataset.transform)
-            w = w.round_offsets().round_lengths()
-            w = w.intersection(Window(0, 0, dataset.width, dataset.height))
-            if int(w.width) == 0 or int(w.height) == 0:
-                cx, cy = g.centroid.x, g.centroid.y
-                rr, cc = rasterio.transform.rowcol(dataset.transform, cx, cy)
-                rr = min(max(rr, 0), dataset.height - 1)
-                cc = min(max(cc, 0), dataset.width - 1)
-                w = Window(cc, rr, 1, 1)
-            return w
+            candidate_window = candidate_window.round_offsets().round_lengths()
+            candidate_window = candidate_window.intersection(
+                Window(0, 0, dataset.width, dataset.height)
+            )
+
+            if (
+                int(candidate_window.width) > 0
+                and int(candidate_window.height) > 0
+            ):
+                return candidate_window
+
+            x_res, y_res = map(abs, dataset.res)
+            padded_bounds = (
+                geometry_bounds[0] - 0.5 * x_res,
+                geometry_bounds[1] - 0.5 * y_res,
+                geometry_bounds[2] + 0.5 * x_res,
+                geometry_bounds[3] + 0.5 * y_res,
+            )
+            padded_window = rasterio.windows.from_bounds(
+                *padded_bounds, transform=dataset.transform
+            )
+            padded_window = padded_window.round_offsets().round_lengths()
+            padded_window = padded_window.intersection(
+                Window(0, 0, dataset.width, dataset.height)
+            )
+
+            if int(padded_window.width) == 0 or int(padded_window.height) == 0:
+                centroid_x, centroid_y = (
+                    geometry.centroid.x,
+                    geometry.centroid.y,
+                )
+                row_idx, col_idx = rasterio.transform.rowcol(
+                    dataset.transform, centroid_x, centroid_y
+                )
+                row_idx = min(max(row_idx, 0), dataset.height - 1)
+                col_idx = min(max(col_idx, 0), dataset.width - 1)
+                fallback_window = Window(col_idx, row_idx, 1, 1)
+                return fallback_window
+
+            return padded_window
 
         logging.debug("Building window on X grid")
         win_x = _safe_window_for_geom(dsx, geom_x)

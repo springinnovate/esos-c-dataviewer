@@ -25,61 +25,6 @@ const state = {
   didInitialCenter: false
 }
 
-// helper: center on centroid of Layer A only once
-async function _centerOnLayerACentroidOnce(qualifiedName) {
-  if (state.didInitialCenter || !state.map || !state.geoserverBaseUrl) return
-  try {
-    const url = `${state.geoserverBaseUrl}/wms?service=WMS&request=GetCapabilities&version=1.1.1`
-    const res = await fetch(url, { method: 'GET' })
-    if (!res.ok) throw new Error('capabilities fetch failed')
-    const text = await res.text()
-    const doc = new DOMParser().parseFromString(text, 'application/xml')
-
-    // find the matching <Layer><Name>qualifiedName</Name></Layer>
-    const names = Array.from(doc.getElementsByTagName('Name'))
-    const nameNode = names.find(n => ((n.textContent || '').split(':').pop().trim()) === qualifiedName)
-    if (!nameNode) throw new Error('layer name not found in capabilities')
-
-    let layerEl = nameNode.parentElement
-    // climb to the nearest Layer element if needed
-    while (layerEl && layerEl.tagName !== 'Layer') layerEl = layerEl.parentElement
-    if (!layerEl) throw new Error('layer element not found')
-
-    // WMS 1.1.1 LatLonBoundingBox or WMS 1.3.0 EX_GeographicBoundingBox fallback
-    const llbb = layerEl.getElementsByTagName('LatLonBoundingBox')[0]
-    let minx, miny, maxx, maxy
-    if (llbb) {
-      minx = parseFloat(llbb.getAttribute('minx'))
-      miny = parseFloat(llbb.getAttribute('miny'))
-      maxx = parseFloat(llbb.getAttribute('maxx'))
-      maxy = parseFloat(llbb.getAttribute('maxy'))
-    } else {
-      const exg = layerEl.getElementsByTagName('EX_GeographicBoundingBox')[0]
-      if (!exg) throw new Error('no geographic bbox')
-      const west = exg.getElementsByTagName('westBoundLongitude')[0]
-      const east = exg.getElementsByTagName('eastBoundLongitude')[0]
-      const south = exg.getElementsByTagName('southBoundLatitude')[0]
-      const north = exg.getElementsByTagName('northBoundLatitude')[0]
-      minx = parseFloat(west.textContent)
-      maxx = parseFloat(east.textContent)
-      miny = parseFloat(south.textContent)
-      maxy = parseFloat(north.textContent)
-    }
-
-    if (
-      [minx, miny, maxx, maxy].some(v => !Number.isFinite(v)) ||
-      minx >= maxx || miny >= maxy
-    ) throw new Error('invalid bbox')
-
-    const lon = (minx + maxx) / 2
-    const lat = (miny + maxy) / 2
-    state.map.setView([lat, lon], Math.max(state.map.getZoom(), 6))
-    state.didInitialCenter = true
-  } catch (_e) {
-    // no-op on failure; leave map as-is
-  }
-}
-
 /**
  * Load app configuration from the server.
  * @returns {Promise<{geoserver_base_url:string, rstats_base_url:string, layers:Array}>}
@@ -101,7 +46,6 @@ const CRS3347 = new L.Proj.CRS(
     ]
   }
 )
-
 const CRS4326 = new L.Proj.CRS(
   'EPSG:4326',
   '+proj=longlat +datum=WGS84 +no_defs',
@@ -114,6 +58,7 @@ const CRS4326 = new L.Proj.CRS(
     ]
   }
 )
+
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -126,16 +71,9 @@ function initMap() {
     zoom: 0,
     zoomControl: false,
   })
-  /*L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    crs: CRS3347,
-    attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 19,
-  }).addTo(map)*/
   state.map = map
   initMouseFollowBox()
   wireOverlayClose()
-
-  const overlay = document.getElementById('statsOverlay')
 }
 
 /**

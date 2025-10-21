@@ -333,7 +333,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
   if (slot === 'A') {
     if (state.wmsLayerA) state.map.removeLayer(state.wmsLayerA)
     state.wmsLayerA = l.addTo(state.map)
-    state.wmsLayerA.setOpacity(0.9)
+    state.wmsLayerA.setOpacity(1.0)
     // keep A on top
     if (state.wmsLayerB) state.wmsLayerA.bringToFront()
   } else {
@@ -341,7 +341,7 @@ function addWmsLayer(qualifiedName, slot = 'A') {
     state.wmsLayerB = l.addTo(state.map)
     // keep A on top if present
     if (state.wmsLayerA) state.wmsLayerA.bringToFront()
-    state.wmsLayerB.setOpacity(0.9)
+    state.wmsLayerB.setOpacity(1.0)
   }
 }
 
@@ -1156,12 +1156,11 @@ function disableLeafletScrollOnAlt() {
  */
 ;(async function main() {
   document.getElementById('layerACminInput').value = '#000000'
-  document.getElementById('layerACmedInput').value = '#ff6600'
+  document.getElementById('layerACmedInput').value = '#7f0000'
   document.getElementById('layerACmaxInput').value = '#ff0000'
 
-  // Layer B
   document.getElementById('layerBCminInput').value = '#000000'
-  document.getElementById('layerBCmedInput').value = '#66ff00'
+  document.getElementById('layerBCmedInput').value = '#007f00'
   document.getElementById('layerBCmaxInput').value = '#00ff00'
   initMap()
   wireSquareSamplerControls()

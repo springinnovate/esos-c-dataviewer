@@ -238,4 +238,4 @@ select, input[type='range'], input[type='number'] {
   overflow: visible;
 }
 
-.leaflet-tile-container .blend-screen { mix-blend-mode: screen; opacity: 0.9; }
+.leaflet-tile-container .blend-screen { mix-blend-mode: lighter;}

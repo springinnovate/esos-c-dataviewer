@@ -587,10 +587,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             intercept = None
 
         logging.debug("Computing 2D histogram")
-        H, x_edges, y_edges = np.histogram2d(
+        hist2d_counts, x_edges, y_edges = np.histogram2d(
             x_vals, y_vals, bins=scatter_request.histogram_bins
         )
-        H = H.astype("int64")
+        hist2d_counts = hist2d_counts.astype("int64")
 
         total_mask_pixels = int(np.count_nonzero(mask))
         valid_pixels = int(n_pairs)
@@ -602,7 +602,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             n_pairs=n_pairs,
             x=x_plot.astype("float64").tolist(),
             y=y_plot.astype("float64").tolist(),
-            hist2d=H.tolist(),
+            hist2d=hist2d_counts.tolist(),
             x_edges=x_edges.astype("float64").tolist(),
             y_edges=y_edges.astype("float64").tolist(),
             pearson_r=pearson_r,

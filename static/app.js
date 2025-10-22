@@ -36,6 +36,8 @@ async function loadConfig() {
   return res.json()
 }
 
+const MAX_HISTOGRAM_BINS = 50
+const MAX_HISTOGRAM_POINTS = 20000
 const CANADA_CENTER = [55, -96.9]
 const INITIAL_ZOOM = 0
 const GLOBAL_CRS = 'EPSG:3347'
@@ -378,8 +380,8 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
       raster_id_y: rasterIdY,
       geometry: geojson.geometry ? geojson.geometry : geojson,
       from_crs: 'EPSG:4226', //the poly should be in lat/lng
-      histogram_bins: 50,
-      max_points: 20000,
+      histogram_bins: MAX_HISTOGRAM_BINS,
+      max_points: MAX_HISTOGRAM_POINTS,
       all_touched: true,
     }),
   })

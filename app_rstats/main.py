@@ -556,12 +556,15 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         logger.debug("Computing correlation and linear fit")
         if n_pairs > 1:
-            sx, sy = np.std(x_vals), np.std(y_vals)
-            if sx == 0 or sy == 0:
+            x_std, y_std = np.std(x_vals), np.std(y_vals)
+            if x_std == 0 or y_std == 0:
                 pearson_r = None
             else:
-                r = np.corrcoef(x_vals, y_vals)[0, 1]
-                pearson_r = float(r) if np.isfinite(r) else None
+                corr_value = np.corrcoef(x_vals, y_vals)[0, 1]
+                pearson_r = (
+                    float(corr_value) if np.isfinite(corr_value) else None
+                )
+
         else:
             pearson_r = None
         if n_pairs > 1:

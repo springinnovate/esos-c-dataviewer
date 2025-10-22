@@ -10,16 +10,19 @@
 
 const state = {
   map: null,
-  geoserverBaseUrl: '',
-  baseStatsUrl: '',
-  wmsLayer: null,
-  layers: [],
-  activeLayerIdx: 0,
+  geoserverBaseUrl: null,
+  baseStatsUrl: null,
+  wmsLayerA: null,
+  wmsLayerB: null,
+  availableLayers: null,
+  activeLayerIdxA: null,
+  activeLayerIdxB: null,
   hoverRect: null,
-  boxSizeKm: 10,
+  boxSizeKm: null,
   lastMouseLatLng: null,
   outlineLayer: null,
   lastStats: null,
+  didInitialCenter: false
 }
 
 /**
@@ -33,6 +36,22 @@ async function loadConfig() {
   return res.json()
 }
 
+const MAX_HISTOGRAM_BINS = 50
+const MAX_HISTOGRAM_POINTS = 20000
+const CANADA_CENTER = [55, -96.9]
+const INITIAL_ZOOM = 0
+const GLOBAL_CRS = 'EPSG:3347'
+const CRS3347 = new L.Proj.CRS(
+  'EPSG:3347',
+  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
+  {
+    origin: [0, 0],
+    resolutions: [
+      4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
+    ]
+  }
+)
+
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -40,19 +59,40 @@ async function loadConfig() {
 function initMap() {
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
-    center: [37.8, -96.9],
-    zoom: 4,
+    crs: CRS3347,
+    center: CANADA_CENTER,
+    zoom: INITIAL_ZOOM,
     zoomControl: false,
   })
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 19,
-  }).addTo(map)
   state.map = map
   initMouseFollowBox()
   wireOverlayClose()
+}
 
-  const overlay = document.getElementById('statsOverlay')
+/**
+ * Creates a non-interactive square polygon centered at a given geographic coordinate.
+ *
+ * The function projects the given latitude/longitude into `state.map`'s CRS, constructs
+ * a square of the specified size in meters around that projected center, and converts
+ * the corners back to latitude/longitude coordinates.
+ *
+ * @param {L.LatLng} centerLatLng - The geographic center of the square.
+ * @param {number} windowSizeKm - The desired side length of the square in kilometers.
+ * @returns {L.Polygon} A Leaflet polygon representing the square, styled with an orange outline
+ *   and no fill, non-interactive.
+ */
+function squarePolygonAt(centerLatLng, windowSizeKm) {
+  const crs = state.map.options.crs
+  const half = windowSizeKm * 1000 / 2
+  const p = crs.project(centerLatLng)
+  const corners = [
+    L.point(p.x - half, p.y - half),
+    L.point(p.x + half, p.y - half),
+    L.point(p.x + half, p.y + half),
+    L.point(p.x - half, p.y + half),
+  ].map(pt => crs.unproject(pt))
+  // strong orange color to follow the cursor
+  return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
 
 /**
@@ -62,7 +102,7 @@ function initMap() {
  * @returns {L.LatLngBounds}
  */
 function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
-  const crs = state.map.options.crs || L.CRS.EPSG3857
+  const crs = state.map.options.crs
   const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
   const p = crs.project(centerLatLng)
   const sw = crs.unproject(L.point(p.x - halfSizeM, p.y - halfSizeM))
@@ -88,9 +128,12 @@ function _latlngsFromPoly(polyGeoJSON) {
 function _ensureOutlineLayer() {
   if (state.outlineLayer) return state.outlineLayer
   state.outlineLayer = L.polygon([], {
-    color: '#1e90ff',
+    //colors are shades of blues
+    color: '#0c63b8',
+    fillColor: '#1e90ff',
+    fillOpacity: 0.15,
     weight: 2,
-    fill: false,
+    fill: true,
     interactive: false,
   })
   return state.outlineLayer
@@ -101,21 +144,10 @@ function _ensureOutlineLayer() {
  * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
  * @private
  */
-function _updateOutline(polyGeoJSON) {
-  const latlngs = _latlngsFromPoly(polyGeoJSON)
-  const layer = _ensureOutlineLayer()
-  layer.setLatLngs(latlngs)
-  if (!state.map.hasLayer(layer)) layer.addTo(state.map)
-}
-
-/**
- * Hide the outline layer if present.
- * @private
- */
-function _hideOutline() {
-  if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
-    state.map.removeLayer(state.outlineLayer)
-  }
+function _updateOutline(poly) {
+ const layer = _ensureOutlineLayer()
+ layer.setLatLngs(poly.getLatLngs())
+ if (!state.map.hasLayer(layer)) layer.addTo(state.map)
 }
 
 /**
@@ -150,14 +182,11 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
  * Side effects: sets state.hoverRect and mouse listeners that update it.
  */
 function initMouseFollowBox() {
-  state.hoverRect = L.rectangle(
-    latLngBoundsForSquareKilometers(state.map.getCenter(), state.boxSizeKm),
-    { color: '#ff6b00', weight: 2, fill: false, interactive: false }
-  ).addTo(state.map)
-
+  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
   state.map.on('mousemove', (e) => {
     state.lastMouseLatLng = e.latlng
-    state.hoverRect.setBounds(latLngBoundsForSquareKilometers(e.latlng, state.boxSizeKm))
+    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
+    state.hoverRect.setLatLngs(poly.getLatLngs())
   })
 
   state.map.on('mouseout', () => {
@@ -192,8 +221,9 @@ function wireSquareSamplerControls() {
     rNum.value = String(logValue)
     state.boxSizeKm = logValue
     if (state.hoverRect) {
-      const ll = state.lastMouseLatLng || state.map.getCenter()
-      state.hoverRect.setBounds(latLngBoundsForSquareKilometers(ll, state.boxSizeKm))
+     const ll = state.lastMouseLatLng || state.map.getCenter()
+     const poly = squarePolygonAt(ll, state.boxSizeKm)
+     state.hoverRect.setLatLngs(poly.getLatLngs())
     }
   }
 
@@ -203,31 +233,35 @@ function wireSquareSamplerControls() {
 }
 
 /**
- * Populate the layer <select> with available WMS layers and wire change handler.
- * Reads state.layers and updates the DOM.
+ * Populate both layer <select> elements with available WMS layers and wire change handlers.
+ * Reads state.availableLayers and updates the DOM.
  */
-function populateLayerSelect() {
-  const sel = document.getElementById('layerSelect')
-  sel.innerHTML = ''
-  state.layers.forEach((lyr, idx) => {
-    const opt = document.createElement('option')
-    opt.value = idx.toString()
-    opt.textContent = lyr.name
-    sel.appendChild(opt)
+function populateLayerSelects() {
+  const fill = (selEl) => {
+    selEl.innerHTML = ''
+    state.availableLayers.forEach((lyr, idx) => {
+      const opt = document.createElement('option')
+      opt.value = idx.toString()
+      opt.textContent = lyr.name
+      selEl.appendChild(opt)
+    })
+  }
+  ;['A', 'B'].forEach(layerId => {
+    const sel = document.getElementById(`layerSelect${layerId}`)
+    fill(sel)
+    sel.addEventListener('change', e => onLayerChange(e, layerId))
   })
-  sel.addEventListener('change', onLayerChange)
 }
 
 /**
- * Add a WMS layer to the map for the given qualified layer name.
- * Replaces any existing state.wmsLayer.
+ * Add a WMS layer to the map for the given qualified layer name and slot.
+ * Replaces any existing layer in that slot. Slot 'A' is above 'B', className
+ * adds any additional class to the layer probalby for styling.
  * @param {string} qualifiedName
+ * @param {'A'|'B'} slot
+ * @param {string} className
  */
-function addWmsLayer(qualifiedName) {
-  if (state.wmsLayer) {
-    state.map.removeLayer(state.wmsLayer)
-    state.wmsLayer = null
-  }
+function addWmsLayer(qualifiedName, slot, className) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`
   const params = {
     layers: qualifiedName,
@@ -235,111 +269,123 @@ function addWmsLayer(qualifiedName) {
     transparent: true,
     tiled: true,
     version: '1.1.1',
+    className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
   }
   const l = L.tileLayer.wms(wmsUrl, params)
-  l.addTo(state.map)
-  state.wmsLayer = l
+  ;['A', 'B'].forEach(layerSlot => {
+    const key = `wmsLayer${layerSlot}`
+    if (slot === layerSlot) {
+      if (state[key]) state.map.removeLayer(state[key])
+      state[key] = l.addTo(state.map)
+    }
+  })
+
+  // keep A on top if present
+  if (state.wmsLayerA) state.wmsLayerA.bringToFront()
+
 }
 
-
 /**
- * Handle layer change from the <select>.
- * Sets active layer, updates WMS, hides overlay, and clears outline.
- * Also fetches the layer-wide min/max and applies dynamic styling.
+ * Handle layer change from a <select>.
+ * Updates stats + dynamic styling for layer A or B.
  * @param {Event & {target: HTMLSelectElement}} e
+ * @param {'A'|'B'} layerId
  */
-async function onLayerChange(e) {
+async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
-  const lyr = state.layers[idx]
-  if (!lyr) return
-
-
-  // close overlay and clear outline
+  const lyr = state.availableLayers[idx]
   document.getElementById('statsOverlay').classList.add('hidden')
   document.getElementById('overlayBody').innerHTML = ''
-  _hideOutline()
-
   try {
     const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ raster_id: lyr.name })
+      body: JSON.stringify({ raster_id: lyr.name }),
     })
     if (!res.ok) throw new Error(await res.text())
     const { min_, max_ } = await res.json()
-
     const med = (max_ + min_) / 2
-    document.getElementById('minInput').value = min_
-    document.getElementById('medInput').value = med
-    document.getElementById('maxInput').value = max_
-    state.activeLayerIdx = idx
-    addWmsLayer(lyr.name)
-    _applyDynamicStyle()
-  } catch (err) {
-    console.error('Failed to fetch min/max for layer', err)
-  }
-}
 
-/**
- * Wire the opacity range control to the current WMS layer.
- * No-op if no WMS layer loaded.
- */
-function wireOpacity() {
-  const r = document.getElementById('opacityRange')
-  r.addEventListener('input', () => {
-    if (state.wmsLayer) state.wmsLayer.setOpacity(parseFloat(r.value))
-  })
+    // write values into the correct panel (A or B)
+    document.getElementById(`layer${layerId}MinInput`).value = min_
+    document.getElementById(`layer${layerId}MedInput`).value = med
+    document.getElementById(`layer${layerId}MaxInput`).value = max_
+
+    // update state and map layer
+    state[`activeLayerIdx${layerId}`] = idx
+    const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
+    addWmsLayer(lyr.name, layerId, className)
+
+    // apply style for this layer
+    _applyDynamicStyle(layerId)
+  } catch (err) {
+    console.error(`Failed to fetch min/max for layer ${layerId}`, err)
+  }
 }
 
 /**
  * Wire map click to request raster statistics for the window around the click.
  * On success, renders the overlay; on failure, shows an error message.
  */
-function wireAreaSamplerClick() {
+async function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {
-    const lyr = state.layers[state.activeLayerIdx]
-    if (!lyr) return
-    const rasterId = lyr.name
+    const lyrA = state.availableLayers[state.activeLayerIdxA]
+    const lyrB = state.availableLayers[state.activeLayerIdxB]
+    if (!lyrA || !lyrB) return
 
-    const poly = squarePolygonGeoJSON(evt.latlng, state.boxSizeKm)
+    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm)
     _updateOutline(poly)
-
-    let stats
-    try {
-      stats = await fetchGeometryStats(rasterId, poly)
-    } catch (e) {
-      showOverlayError(`Error: ${e.message || String(e)}`)
-      return
-    }
-
-    renderAreaStatsOverlay({
-      rasterId,
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,
-      statsObj: stats.stats,
-      units: stats.units
+      scatterObj: null,
     })
-})}
+
+    let scatterStats
+    try {
+      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
+    } catch (e) {
+      showOverlayError(`area sampler error: ${e.message || String(e)}`)
+      return
+    }
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: scatterStats,
+    })
+  })
+}
 
 
 /**
- * POST a geometry to the rstats service and return statistics.
- * @param {string} rasterId
+ * POST a geometry to the rstats service and return scatter data for two rasters.
+ * @param {string} rasterIdX
+ * @param {string} rasterIdY
  * @param {{type:'Feature'|'Polygon',geometry?:object}} geojson Feature or bare geometry in EPSG:4326
- * @returns {Promise<{stats:object, units?:string}>}
+ * @returns {Promise<{x:number[],y:number[],hist2d:number[][],x_edges:number[],y_edges:number[],corr:number,slope:number,intercept:number}>}
  * @throws {Error} if the request fails
  */
-async function fetchGeometryStats(rasterId, geojson) {
-  const res = await fetch(`${state.baseStatsUrl}/stats/geometry`, {
+async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
+  const res = await fetch(`${state.baseStatsUrl}/stats/scatter`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      raster_id: rasterId,
-      geometry: (geojson.geometry ? geojson.geometry : geojson),
-      from_crs: 'EPSG:4326',
+      raster_id_x: rasterIdX,
+      raster_id_y: rasterIdY,
+      geometry: geojson.geometry ? geojson.geometry : geojson,
+      from_crs: 'EPSG:4226', //the poly should be in lat/lng
+      histogram_bins: MAX_HISTOGRAM_BINS,
+      max_points: MAX_HISTOGRAM_POINTS,
+      all_touched: true,
     }),
   })
+
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -355,10 +401,8 @@ function wireOverlayClose() {
     e.stopPropagation()
     document.getElementById('statsOverlay').classList.add('hidden')
     document.getElementById('overlayBody').innerHTML = ''
-    _hideOutline()
   })
 
-  // Prevent overlay interactions from bubbling to the map
   const overlay = document.getElementById('statsOverlay')
   ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
     .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
@@ -490,9 +534,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   const barW = innerW / Math.max(1, bins)
 
   const svgNS = 'http://www.w3.org/2000/svg'
-  // we need the ..NS one to create its own namespace because svg is xml not
-  // html and this guards it. so any element that needs its own namespace
-  // needs this
   const svg = document.createElementNS(svgNS, 'svg')
   svg.setAttribute('width', String(w))
   svg.setAttribute('height', String(h))
@@ -523,7 +564,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
     rect.setAttribute('width', String(Math.max(0, barW - 2)))
     rect.setAttribute('height', String(Math.max(0, safeH)))
     rect.setAttribute('fill', '#1e90ff')
-    rect.setAttribute('opacity', '0.9')
     rect.setAttribute('stroke', '#0c63b8')
     rect.setAttribute('stroke-width', '0.5')
     svg.appendChild(rect)
@@ -607,26 +647,9 @@ function _hideHistTooltip() {
   if (tip) tip.style.display = 'none'
 }
 
-/**
- * Normalize a color string to ensure it begins with a '#' prefix.
- *
- * Trims whitespace from the input and converts it to a string.
- * If the value is null or empty, returns an empty string.
- * If the string already starts with '#', it is returned unchanged;
- * otherwise, '#' is prepended.
- *
- * @param {string|number|null|undefined} v - The color value to normalize.
- * @returns {string} A normalized color string beginning with '#' or an empty string.
- */
-function _normColor(v) {
-  if (v == null) return ''
-  const s = String(v).trim()
-  return s ? (s.startsWith('#') ? s : '#' + s) : ''
-}
 
 /**
  * Build a GeoServer env string from a dict, skipping undefined values.
- * Colors may be passed with or without '#'.
  * @param {Record<string, string|number|boolean>} obj
  * @returns {string}
  * @private
@@ -634,118 +657,63 @@ function _normColor(v) {
 function _buildEnvString(obj) {
   const entries = Object.entries(obj || {}).map(([k, v]) => {
     if (v == null) return null
-    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = _normColor(v)
     return `${k}:${v}`
   }).filter(Boolean)
   return entries.join(';')
 }
 
 /**
- * Read current style parameter values from the UI controls.
- *
- * Extracts numeric and color values from input elements controlling
- * raster styling (min, median, max, and corresponding colors). Normalizes
- * color values to ensure they are prefixed with '#'. Returns an object
- * suitable for constructing GeoServer `env` parameters.
- *
- * @returns {Object} Style parameters for dynamic raster rendering.
- * @returns {number} return.min - Minimum data value.
- * @returns {number} return.med - Median or midpoint data value.
- * @returns {number} return.max - Maximum data value.
- * @returns {string} return.cmin - Color for minimum value (normalized '#RRGGBB').
- * @returns {string} return.cmed - Color for median value (normalized '#RRGGBB').
- * @returns {string} return.cmax - Color for maximum value (normalized '#RRGGBB').
- * @returns {number} return.opacity - Overall layer opacity (0–1).
- * @returns {string} return.ncolor - Color for NoData pixels (default '#000000').
+ * Read current style parameter values from the UI controls for a given layer.
+ * @param {'A'|'B'} layerId
+ * @returns {{min:number,med:number,max:number,cmin:string,cmed:string,cmax:string,ncolor:string}}
  */
-function _readStyleInputsFromUI() {
-  const get = (id) => document.getElementById(id)
-  const toNum = (el) => Number(el?.value)
-  const toCol = (el) => _normColor(el?.value)
+function _readStyleInputsFromUI(layerId) {
+  const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`)
   return {
-    min: toNum(get('minInput')),
-    med: toNum(get('medInput')),
-    max: toNum(get('maxInput')),
-    cmin: toCol(get('cminInput')),
-    cmed: toCol(get('cmedInput')),
-    cmax: toCol(get('cmaxInput')),
-    opacity: Number(get('opacityRange').value),
-    ncolor: '#000000'
+    min: get('MinInput')?.value,
+    med: get('MedInput')?.value,
+    max: get('MaxInput')?.value,
+    cmin: get('CminInput')?.value,
+    cmed: get('CmedInput')?.value,
+    cmax: get('CmaxInput')?.value,
   }
 }
 
 /**
- * Apply a dynamic style to the active WMS layer using stats for min/median/max.
+ * Apply a dynamic style to WMS layer A or B using the current UI values.
+ * @param {'A'|'B'} layerId
  */
-function _applyDynamicStyle() {
-  if (!state.wmsLayer) return
-  // clear conflicting params
-  delete state.wmsLayer.wmsParams?.sld
-  delete state.wmsLayer.wmsParams?.sld_body
-  const styleVars = _readStyleInputsFromUI()
+function _applyDynamicStyle(layerId) {
+  const layer = state[`wmsLayer${layerId}`]
+  if (!layer) return
+
+  //adding a new style does not clear the old ones, so we do it manually
+  delete layer.wmsParams?.sld
+  delete layer.wmsParams?.sld_body
+
+  const styleVars = _readStyleInputsFromUI(layerId)
   const env = _buildEnvString(styleVars)
-  state.wmsLayer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
+
+  layer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
 }
 
 /**
- * Wire UI controls that manage dynamic raster styling parameters.
- *
- * Attaches event listeners to style-related input elements controlling
- * minimum, median, and maximum values as well as color and opacity settings.
- * Whenever any of these inputs change, the active WMS layer’s style is updated
- * through `_applyDynamicStyle()`.
- *
- * Also wires the "Use stats" button (`#styleFromStatsBtn`), which populates
- * the style inputs using the most recent raster statistics stored in
- * `state.lastStats`, then triggers an immediate style update.
- *
- * Finally, performs an initial call to `_applyDynamicStyle()` to ensure the
- * current UI state is reflected in the layer style at startup.
- *
- * @returns {void}
+ * Wire UI controls that manage dynamic raster styling parameters for layer A or B.
+ * @param {'A'|'B'} layerId
  */
-function wireDynamicStyleControls() {
-  const get = (id) => document.getElementById(id)
-  const update = () => {
-    _applyDynamicStyle()
-  }
+function wireDynamicStyleControls(layerId) {
+  const update = () => _applyDynamicStyle(layerId)
 
-  ;['minInput','medInput','maxInput','cminInput','cmedInput','cmaxInput','opacityRange']
-    .forEach(id => get(id)?.addEventListener('input', update))
-
-  // "Use stats" button wires stats -> inputs -> update
-  const btn = get('styleFromStatsBtn')
-  if (btn) {
-    btn.addEventListener('click', () => {
-      const s = state.lastStats || {}
-      const minVal = Number.isFinite(s.min) ? s.min : 0
-      const maxVal = Number.isFinite(s.max) ? s.max : minVal + 1
-      const medVal = Number.isFinite(s.median) ? s.median : minVal + (maxVal - minVal) / 2
-
-      if (get('minInput')) get('minInput').value = String(minVal)
-      if (get('medInput')) get('medInput').value = String(medVal)
-      if (get('maxInput')) get('maxInput').value = String(maxVal)
-      update()
-    })
-  }
-
-  // initialize once
+  const suffixes = ['MinInput', 'MedInput', 'MaxInput', 'CminInput', 'CmedInput', 'CmaxInput']
+  suffixes.forEach(suffix => {
+    const el = document.getElementById(`layer${layerId}${suffix}`)
+    if (el) el.addEventListener('input', update)
+  })
   update()
 }
 
 /**
  * Enable Alt+mouse-wheel adjustment for the sampling window size slider.
- *
- * When the user holds the Alt key and scrolls the mouse wheel, this function
- * adjusts the sampling window size slider (`#windowSize`) up or down according
- * to its defined step value. The associated numeric input (`#windowSizeNumber`)
- * is kept synchronized. While Alt is held, Leaflet's default scroll-to-zoom
- * behavior is temporarily disabled to prevent map zoom interference.
- *
- * Listeners are attached globally to the window for:
- * - `keydown` / `keyup`: toggling Leaflet scroll zoom enable/disable.
- * - `wheel`: intercepting Alt+scroll to modify the slider value.
- *
  * @returns {void}
  */
 function enableAltWheelSlider() {
@@ -761,12 +729,10 @@ function enableAltWheelSlider() {
   const apply = (v) => {
     const vv = clamp(v)
     slider.value = String(vv)
-    // keep existing listeners (from wireSquareSamplerControls) in sync
     slider.dispatchEvent(new Event('input', { bubbles: true }))
     if (number) number.value = String(vv)
   }
 
-  // temporarily disable Leaflet wheel zoom when Alt is held
   const onKeyDown = (e) => {
     if (e.altKey && window.state?.map) window.state.map.scrollWheelZoom.disable()
   }
@@ -777,7 +743,6 @@ function enableAltWheelSlider() {
   const onWheel = (e) => {
     if (!e.altKey) return
     e.preventDefault()
-    // capture before Leaflet stops propagation
     const delta = e.deltaY > 0 ? 1 : -1
     const step = parseFloat(slider.step) || 1
     const cur = parseFloat(slider.value)
@@ -790,52 +755,210 @@ function enableAltWheelSlider() {
 }
 
 /**
+ * Render a scatterplot of two rasters' values within a polygon.
+ * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
+ */
+function renderScatterOverlay(opts) {
+  const {
+    rasterX, rasterY,
+    centerLng, centerLat,
+    boxKm,
+    scatterObj // could be null if not generated yet
+  } = opts
+
+  const overlay = document.getElementById('statsOverlay')
+  const body = document.getElementById('overlayBody')
+  if (!overlay || !body) return
+
+  const hasData = !!scatterObj
+
+  // derive stats (optional keys guarded)
+  const s = scatterObj || {}
+  const stats = {
+    n: s.n_pairs ?? null,
+    r: s.pearson_r ?? null,
+    slope: s.slope ?? null,
+    intercept: s.intercept ?? null,
+    window_mask_pixels: s.window_mask_pixels ?? null,
+    valid_pixels: s.valid_pixels ?? null,
+    coverage_ratio: s.coverage_ratio ?? null,
+  }
+
+  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
+  body.innerHTML = `
+    <div class='overlay-header'>
+      <div>
+        <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
+        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} • box: ${boxKm} km</div>
+      </div>
+    </div>
+
+    <div class='overlay-content'>
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Summary</div>
+          <div class='stats-grid'>
+            <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
+            <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
+            <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
+            <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
+            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
+            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
+            <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
+        </div>
+      </div>
+
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Scatter</div>
+        <div id='scatterPlot' class='plot-holder'>
+          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+        </div>
+      </div>
+    </div>
+   `
+  overlay.classList.remove('hidden')
+  if (hasData && scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
+      const svg = buildScatterSVG(
+        scatterObj.x_edges,
+        scatterObj.y_edges,
+        scatterObj.hist2d,
+        { width: 420, height: 320, pad: 40 }
+      )
+      const plotEl = document.getElementById('scatterPlot')
+      plotEl.innerHTML = ''
+      plotEl.appendChild(svg)
+    }
+}
+
+/**
+ * Build a simple 2D scatter/heatmap SVG from histogram2d data.
+ * @param {number[]} xEdges
+ * @param {number[]} yEdges
+ * @param {number[][]} hist2d
+ * @param {{width?:number,height?:number,pad?:number}} opts
+ * @returns {SVGSVGElement}
+ */
+function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
+  const w = opts.width ?? 400
+  const h = opts.height ?? 300
+  const pad = opts.pad ?? 40
+  const innerW = w - pad * 2
+  const innerH = h - pad * 2
+
+  const xMin = Math.min(...xEdges)
+  const xMax = Math.max(...xEdges)
+  const yMin = Math.min(...yEdges)
+  const yMax = Math.max(...yEdges)
+  const nx = hist2d.length
+  const ny = hist2d[0].length
+  const maxCount = Math.max(1, ...hist2d.flat())
+
+  const svgNS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(svgNS, 'svg')
+  svg.setAttribute('width', String(w))
+  svg.setAttribute('height', String(h))
+  svg.style.background = '#11151c'
+
+  const scaleX = (v) => pad + ((v - xMin) / (xMax - xMin)) * innerW
+  const scaleY = (v) => h - pad - ((v - yMin) / (yMax - yMin)) * innerH
+
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < ny; j++) {
+      const binCount = hist2d[i][j]
+      if (binCount <= 0) continue
+      const x0 = scaleX(xEdges[i])
+      const x1 = scaleX(xEdges[i + 1])
+      const y0 = scaleY(yEdges[j])
+      const y1 = scaleY(yEdges[j + 1])
+      const rect = document.createElementNS(svgNS, 'rect')
+      rect.setAttribute('x', String(x0))
+      rect.setAttribute('y', String(y1))
+      rect.setAttribute('width', String(x1 - x0))
+      rect.setAttribute('height', String(y0 - y1))
+      const t = Math.log1p(binCount) / Math.log1p(maxCount); // [0,1]
+      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
+      rect.setAttribute('fill', '#3b82f6');           // brighter blue
+      rect.setAttribute('fill-opacity', alpha.toFixed(3));
+      svg.appendChild(rect)
+    }
+  }
+
+  // axes
+  const axisColor = '#666'
+  const mkLine = (x1, y1, x2, y2) => {
+    const l = document.createElementNS(svgNS, 'line')
+    l.setAttribute('x1', x1)
+    l.setAttribute('y1', y1)
+    l.setAttribute('x2', x2)
+    l.setAttribute('y2', y2)
+    l.setAttribute('stroke', axisColor)
+    l.setAttribute('stroke-width', '1')
+    return l
+  }
+  svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad))
+  svg.appendChild(mkLine(pad, pad, pad, h - pad))
+
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text')
+    t.textContent = txt
+    t.setAttribute('x', x)
+    t.setAttribute('y', y)
+    t.setAttribute('fill', '#aaa')
+    t.setAttribute('font-size', '10')
+    t.setAttribute('text-anchor', anchor)
+    return t
+  }
+  svg.appendChild(mkText(xMin.toFixed(2), pad, h - pad + 12, 'start'))
+  svg.appendChild(mkText(xMax.toFixed(2), w - pad, h - pad + 12, 'end'))
+  svg.appendChild(mkText(yMin.toFixed(2), pad - 6, h - pad, 'end'))
+  svg.appendChild(mkText(yMax.toFixed(2), pad - 6, pad + 4, 'end'))
+
+  return svg
+}
+
+/**
  * Prevent Leaflet map zooming when the Alt key is held during scroll.
- *
- * Adds a capturing `wheel` event listener on the map container that intercepts
- * Alt+scroll actions and stops them from propagating to Leaflet’s default
- * zoom handler. This ensures Alt+scroll can be safely repurposed for other
- * UI interactions (e.g., resizing the sampling window) without triggering
- * map zoom.
- *
  * @returns {void}
  */
 function disableLeafletScrollOnAlt() {
-  //disable leaflet scroll zoom when alt is held
   const mapEl = state.map.getContainer()
   mapEl.addEventListener('wheel', e => {
-  if (e.altKey) {
-    e.preventDefault()
-    e.stopImmediatePropagation()
-  }
+    if (e.altKey) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    }
   }, { passive: false, capture: true })
 }
 
 /**
  * App entrypoint.
- * Initializes UI, loads config, and selects the first layer if available.
- * Self-invoking to avoid leaking names.
  */
 ;(async function main() {
+
+  // Orange vs turquoise axis
+  document.getElementById('layerACminInput').value = '#000000'
+  document.getElementById('layerACmedInput').value = '#ff8000'
+  document.getElementById('layerACmaxInput').value = '#ffcc00'
+  document.getElementById('layerBCminInput').value = '#000000'
+  document.getElementById('layerBCmedInput').value = '#00b3b3'
+  document.getElementById('layerBCmaxInput').value = '#00ffff'
   initMap()
-  wireOpacity()
   wireSquareSamplerControls()
   wireAreaSamplerClick()
-  wireDynamicStyleControls()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url
-  state.layers = cfg.layers
+  state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
 
-  populateLayerSelect()
-  if (state.layers.length > 0) {
-    const sel = document.getElementById('layerSelect')
-    sel.value = '0'
-    // this triggers the stats and color change event for a new raster
-    sel.dispatchEvent(new Event('change', { bubbles: true }))
-  }
+  ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
+  populateLayerSelects()
+  ;['A', 'B'].forEach((layerId, idx) => {
+    const sel = document.getElementById(`layerSelect${layerId}`)
+    if (state.availableLayers.length > idx) {
+      sel.value = String(idx)
+      sel.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  })
 })()
-

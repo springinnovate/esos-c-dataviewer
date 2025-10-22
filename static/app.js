@@ -253,11 +253,13 @@ function populateLayerSelects() {
 
 /**
  * Add a WMS layer to the map for the given qualified layer name and slot.
- * Replaces any existing layer in that slot. Slot 'A' is above 'B'.
+ * Replaces any existing layer in that slot. Slot 'A' is above 'B', className
+ * adds any additional class to the layer probalby for styling.
  * @param {string} qualifiedName
  * @param {'A'|'B'} slot
+ * @param {string} className
  */
-function addWmsLayer(qualifiedName, slot) {
+function addWmsLayer(qualifiedName, slot, className) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`
   const params = {
     layers: qualifiedName,
@@ -265,11 +267,9 @@ function addWmsLayer(qualifiedName, slot) {
     transparent: true,
     tiled: true,
     version: '1.1.1',
-    className: slot === 'A' ? 'blend-screen' : 'blend-base',
+    className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
   }
   const l = L.tileLayer.wms(wmsUrl, params)
-
-  // remove old
   if (slot === 'A') {
     if (state.wmsLayerA) state.map.removeLayer(state.wmsLayerA)
     state.wmsLayerA = l.addTo(state.map)
@@ -313,7 +313,8 @@ async function onLayerChange(e, layerId) {
 
     // update state and map layer
     state[`activeLayerIdx${layerId}`] = idx
-    addWmsLayer(lyr.name, layerId)
+    const className: layerId === 'A' ? 'blend-screen' : 'blend-base'
+    addWmsLayer(lyr.name, layerId, className)
 
     // apply style for this layer
     _applyDynamicStyle(layerId)

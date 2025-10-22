@@ -89,6 +89,7 @@ function squarePolygonAt(centerLatLng, windowSizeKm) {
     L.point(p.x + half, p.y + half),
     L.point(p.x - half, p.y + half),
   ].map(pt => crs.unproject(pt))
+  // strong orange color to follow the cursor
   return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
 
@@ -125,6 +126,7 @@ function _latlngsFromPoly(polyGeoJSON) {
 function _ensureOutlineLayer() {
   if (state.outlineLayer) return state.outlineLayer
   state.outlineLayer = L.polygon([], {
+    //colors are shades of blues
     color: '#0c63b8',
     fillColor: '#1e90ff',
     fillOpacity: 0.15,

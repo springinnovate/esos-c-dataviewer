@@ -67,9 +67,21 @@ function initMap() {
   wireOverlayClose()
 }
 
+/**
+ * Creates a non-interactive square polygon centered at a given geographic coordinate.
+ *
+ * The function projects the given latitude/longitude into `state.map`'s CRS, constructs
+ * a square of the specified size in meters around that projected center, and converts
+ * the corners back to latitude/longitude coordinates.
+ *
+ * @param {L.LatLng} centerLatLng - The geographic center of the square.
+ * @param {number} windowSizeKm - The desired side length of the square in kilometers.
+ * @returns {L.Polygon} A Leaflet polygon representing the square, styled with an orange outline
+ *   and no fill, non-interactive.
+ */
 function squarePolygonAt(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs
-  const half = (Number(windowSizeKm) || 0) * 1000 / 2
+  const half = windowSizeKm * 1000 / 2
   const p = crs.project(centerLatLng)
   const corners = [
     L.point(p.x - half, p.y - half),

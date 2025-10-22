@@ -127,7 +127,34 @@ select, input[type='range'], input[type='number'] {
 }
 
 #map { cursor: crosshair; }
-.inline { display: inline-flex; align-items: center; gap: .5rem; }
+.inline { display: inline-flex; align-items: center; gap: .4rem; }
+.inline label {
+  margin-right: 0.5rem;
+}
+
+.inline input.num {
+  width: 5.5ch;
+  padding: 0 0.3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  box-sizing: content-box;
+}
+
+/* shut off the up down numbers in the number box */
+.inline input.num::-webkit-inner-spin-button,
+.inline input.num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.inline input.num {
+  -moz-appearance: textfield;
+}
+
+.inline input[type='range'] {
+  width: 120px;
+}
+
 .num { width: 7ch; }
 
 .style-panel {

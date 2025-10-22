@@ -313,7 +313,7 @@ async function onLayerChange(e, layerId) {
 
     // update state and map layer
     state[`activeLayerIdx${layerId}`] = idx
-    const className: layerId === 'A' ? 'blend-screen' : 'blend-base'
+    const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
     addWmsLayer(lyr.name, layerId, className)
 
     // apply style for this layer

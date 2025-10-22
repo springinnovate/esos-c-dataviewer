@@ -126,6 +126,8 @@ class ScatterOut(BaseModel):
     x: Optional[List[float]] = None
     y: Optional[List[float]] = None
     hist2d: Optional[List[List[int]]] = None
+    hist1d_x: Optional[List[int]] = None
+    hist1d_y: Optional[List[int]] = None
     x_edges: Optional[List[float]] = None
     y_edges: Optional[List[float]] = None
     pearson_r: Optional[float] = None
@@ -606,15 +608,27 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             intercept_val = None
 
         logger.debug("Computing 2D histogram")
+        # existing 2D histogram
         hist2d_counts_nparray, x_edges_nparray, y_edges_nparray = (
-            np.histogram2d(  # renamed: hist2d_counts/x_edges/y_edges -> *_nparray
+            np.histogram2d(
                 x_vals_nparray,
                 y_vals_nparray,
                 bins=scatter_request.histogram_bins,
             )
         )
-        hist2d_counts_nparray = hist2d_counts_nparray.astype("int64")
 
+        # add matching 1D histograms for X and Y using same edges
+        hist1d_x_counts_nparray, _ = np.histogram(
+            x_vals_nparray, bins=x_edges_nparray
+        )
+        hist1d_y_counts_nparray, _ = np.histogram(
+            y_vals_nparray, bins=y_edges_nparray
+        )
+
+        # ensure consistent dtype
+        hist2d_counts_nparray = hist2d_counts_nparray.astype("int64")
+        hist1d_x_counts_nparray = hist1d_x_counts_nparray.astype("int64")
+        hist1d_y_counts_nparray = hist1d_y_counts_nparray.astype("int64")
         total_mask_pixels_int = int(np.count_nonzero(x_mask_nparray))
         valid_pixels_int = int(n_pairs_int)
 
@@ -631,6 +645,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             pearson_r=pearson_r_val,
             slope=slope_val,
             intercept=intercept_val,
+            hist1d_x=hist1d_x_counts_nparray,
+            hist1d_y=hist1d_y_counts_nparray,
             window_mask_pixels=total_mask_pixels_int,
             valid_pixels=valid_pixels_int,
             coverage_ratio=(

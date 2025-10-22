@@ -26,7 +26,6 @@ const state = {
   visibility: { A: true, B: true }
 }
 
-
 function setLayerVisibility(layerId, visible) {
   const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
   if (layer) layer.setOpacity(visible ? 1 : 0)

@@ -5,19 +5,22 @@
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1' />
     <title>ESSOSC Viewer</title>
-
     <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />
     <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
     <script src='https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js'></script>
     <script src='https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js'></script>
     <link rel='stylesheet' href='static/style.css' />
   </head>
-
   <body>
     <header>
       <div class='brand'>ESSOSC Viewer</div>
       <div class='controls'>
-        <div>
+        <div class='win-size'>
+          <label for='windowSize'>Window Size (km)</label>
+          <input id='windowSize' type='range' min='0' max='100' step='1' />
+          <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
+        </div>
+        <div class='selectors'>
           <label>
             Layer A
             <select id='layerSelectA'></select>
@@ -26,13 +29,7 @@
             Layer B
             <select id='layerSelectB'></select>
           </label>
-          <span class='inline'>
-            <label for='windowSize'>Window Size (km)</label>
-            <input id='windowSize' type='range' min='0' max='100' step='1' />
-            <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
-          </span>
         </div>
-
         <div class='style-panels'>
           {% for layer_id in ['A', 'B'] %}
           <div class='style-panel'>
@@ -50,7 +47,6 @@
         </div>
       </div>
     </header>
-
     <main>
       <section id='map'>
         <div id='statsOverlay' class='overlay hidden'>
@@ -62,7 +58,6 @@
         </div>
       </section>
     </main>
-
     <script src='static/app.js'></script>
   </body>
 </html>

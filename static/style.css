@@ -1,5 +1,4 @@
 :root {
-  /* Colors */
   --bg: #0f1115;
   --fg: #e8eaf0;
   --muted: #aab0bc;
@@ -7,25 +6,18 @@
   --panel: #181b22;
   --border: #2a2f3a;
   --accent: #8be38b;
-
-  /* RGB forms for alpha usage */
   --bg-rgb: 15, 17, 21;
   --panel-rgb: 24, 27, 34;
-
-  /* Effects / radii / z */
   --radius: 8px;
   --shadow-lg: 0 6px 20px rgba(0,0,0,0.4);
   --shadow-md: 0 6px 18px rgba(0,0,0,0.35);
   --z-overlay: 1000;
   --z-tooltip: 1001;
-
-  /* Spacing / sizing */
   --space-1: 6px;
   --space-2: 8px;
   --space-3: 10px;
-
-  --input-bg: #0d1016;       /* before: literal #0d1016 in inputs; now tokenized for theming */
-  --brand-hover: #b5ecff;    /* before: literal in :hover; now tokenized for consistency */
+  --input-bg: #0d1016;
+  --brand-hover: #b5ecff;
 }
 
 * { box-sizing: border-box; }
@@ -48,7 +40,36 @@ header {
   background: var(--panel);
 }
 .brand { font-weight: 700; color: var(--brand); }
-.controls { display: flex; gap: 10px; align-items: center; }
+.controls {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  column-gap: 12px;
+  row-gap: 8px;
+  align-items: start;
+}
+
+.win-size { grid-column: 1; grid-row: 1 / span 2; }
+.selectors, .style-panels { display: contents; }
+.selectors label:nth-child(1) { grid-column: 2; grid-row: 1; }
+.style-panels .style-panel:nth-child(1) { grid-column: 3; grid-row: 1; }
+.selectors label:nth-child(2) { grid-column: 2; grid-row: 2; }
+.style-panels .style-panel:nth-child(2) { grid-column: 3; grid-row: 2; }
+.style-panel { margin-left: 0; }
+.controls { grid-template-columns: auto minmax(260px, 1fr) minmax(420px, 1fr); }
+
+.win-size label { margin-right: .5rem; }
+.win-size input[type='range'] { width: 120px; }
+.win-size input.num {
+  width: 5.5ch;
+  padding: 0 0.3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  box-sizing: content-box;
+}
+.win-size input.num::-webkit-inner-spin-button,
+.win-size input.num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.win-size input.num { -moz-appearance: textfield; }
+
 label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
 select, input[type='range'], input[type='number'] {
   background: var(--input-bg);
@@ -69,7 +90,7 @@ select, input[type='range'], input[type='number'] {
   z-index: var(--z-overlay);
   width: min(480px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  background: rgba(var(--bg-rgb), 0.96); /* or: rgba(var(--panel-rgb), 0.96) */
+  background: rgba(var(--bg-rgb), 0.96);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
@@ -77,7 +98,6 @@ select, input[type='range'], input[type='number'] {
   overflow: hidden; pointer-events: auto;
 }
 .overlay.hidden { display: none; pointer-events: none; }
-/* .hidden keeps display: none for the app that adds hidden dynamically to elements. */
 .hidden { display: none; }
 
 .overlay-header {
@@ -127,33 +147,6 @@ select, input[type='range'], input[type='number'] {
 }
 
 #map { cursor: crosshair; }
-.inline { display: inline-flex; align-items: center; gap: .4rem; }
-.inline label {
-  margin-right: 0.5rem;
-}
-
-.inline input.num {
-  width: 5.5ch;
-  padding: 0 0.3ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  box-sizing: content-box;
-}
-
-/* shut off the up down numbers in the number box */
-.inline input.num::-webkit-inner-spin-button,
-.inline input.num::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.inline input.num {
-  -moz-appearance: textfield;
-}
-
-.inline input[type='range'] {
-  width: 120px;
-}
 
 .num { width: 7ch; }
 
@@ -165,7 +158,6 @@ select, input[type='range'], input[type='number'] {
   background: var(--input-bg, #f8f8f8);
 }
 
-/* grid inside each panel (unchanged from your original) */
 .style-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(110px, 1fr));
@@ -260,7 +252,7 @@ select, input[type='range'], input[type='number'] {
   border-top-color: #1e90ff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-  margin: 40px auto; /* centers it in the container */
+  margin: 40px auto;
 }
 
 @keyframes spin {

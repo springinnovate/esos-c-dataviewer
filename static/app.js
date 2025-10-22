@@ -784,7 +784,6 @@ function renderScatterOverlay(opts) {
     window_mask_pixels: s.window_mask_pixels ?? null,
     valid_pixels: s.valid_pixels ?? null,
     coverage_ratio: s.coverage_ratio ?? null,
-
   }
 
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))

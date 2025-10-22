@@ -564,7 +564,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 pearson_r = (
                     float(corr_value) if np.isfinite(corr_value) else None
                 )
-
         else:
             pearson_r = None
         if n_pairs > 1:

@@ -21,14 +21,18 @@
           <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
         </div>
         <div class='selectors'>
-          <label>
-            Layer A
-            <select id='layerSelectA'></select>
-          </label>
-          <label>
-            Layer B
-            <select id='layerSelectB'></select>
-          </label>
+          {% for layer_id in ['A', 'B'] %}
+          <div class='layer-control'>
+            <label for='layerSelect{{ layer_id }}'>Layer {{ layer_id }}</label>
+            <div class='layer-inputs'>
+              <select id='layerSelect{{ layer_id }}'></select>
+              <label class='vis-label'>
+                <input id='layerVisible{{ layer_id }}' type='checkbox' checked />
+                <span>Show</span>
+              </label>
+            </div>
+          </div>
+          {% endfor %}
         </div>
         <div class='style-panels'>
           {% for layer_id in ['A', 'B'] %}

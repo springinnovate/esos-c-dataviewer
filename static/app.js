@@ -689,6 +689,7 @@ function _applyDynamicStyle(layerId) {
   const layer = state[`wmsLayer${layerId}`]
   if (!layer) return
 
+  //adding a new style does not clear the old ones, so we do it manually
   delete layer.wmsParams?.sld
   delete layer.wmsParams?.sld_body
 

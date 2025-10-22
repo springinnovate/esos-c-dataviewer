@@ -115,6 +115,7 @@ def api_config():
     config_path = os.getenv("LAYERS_YAML_PATH")
     geoserver_base_url = os.getenv("GEOSERVER_BASE_URL").rstrip("/")
     rstats_base_url = os.getenv("RSTATS_BASE_URL").rstrip()
+    logger.debug(f"{config_path}  {geoserver_base_url}  {rstats_base_url}")
     try:
         config = _load_layers_config(config_path)
     except FileNotFoundError:

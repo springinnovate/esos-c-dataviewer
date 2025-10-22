@@ -41,8 +41,10 @@ from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds, Window
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
+from osgeo import gdal
 import numpy as np
 import rasterio
+import traceback
 import yaml
 
 
@@ -53,7 +55,7 @@ load_dotenv()
 RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -159,8 +161,16 @@ def _load_registry() -> dict:
     expanded_yaml = os.path.expandvars(raw_yaml)
     y = yaml.safe_load(expanded_yaml)
     # geoserver expects all the raster ids to be lowercase
-    layer_dict = {k.lower(): v for k, v in y.get("layers", {}).items()}
-    return layer_dict
+    layers_dict = {k.lower(): v for k, v in y.get("layers", {}).items()}
+    logger.warning(
+        "this is a hack to use the processed layers, fix in issue #57"
+    )
+    for layer_dict in layers_dict.values():
+        layer_dict["file_path"] = layer_dict["file_path"].replace(
+            "rasters", "processed_rasters"
+        )
+
+    return layers_dict
 
 
 REGISTRY = _load_registry()
@@ -300,46 +310,6 @@ def rasters():
     return {"rasters": list(REGISTRY.keys())}
 
 
-def _sample_percentiles(src, samples, frac):
-    """Estimate approximate 5th and 95th percentiles from random raster windows.
-
-    This function samples multiple random windows from the input raster, extracts
-    valid (non-masked) pixel values, and computes approximate percentile bounds.
-    The sampling is fractional, meaning each window covers a fraction of the total
-    raster area defined by `frac`.
-
-    Args:
-        src (rasterio.io.DatasetReader): An open rasterio dataset to sample from.
-        samples (int): Number of random windows to sample.
-        frac (float): Fraction (0-1) of the raster dimensions to use for each window
-            in both height and width.
-
-    Returns:
-        numpy.ndarray: A 1D array of two elements `[p5, p95]` representing the
-        approximate 5th and 95th percentile values of the sampled pixels.
-
-    Raises:
-        ValueError: If `frac` is not within the range (0, 1].
-    """
-    sample_values = []
-    raster_height, raster_width = src.height, src.width
-    window_height, window_width = int(raster_height * frac), int(
-        raster_width * frac
-    )
-
-    for _ in range(samples):
-        row_offset = np.random.randint(0, raster_height - window_height)
-        col_offset = np.random.randint(0, raster_width - window_width)
-        window = rasterio.windows.Window(
-            col_offset, row_offset, window_width, window_height
-        )
-        band_data = src.read(1, window=window, masked=True)
-        sample_values.append(band_data.compressed())
-
-    sample_values = np.concatenate(sample_values)
-    return np.nanpercentile(sample_values, [5, 95])
-
-
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)
 def minmax_stats(r: RasterMinMaxIn):
     """Compute approximate 5th and 95th percentile values for a raster.
@@ -362,30 +332,42 @@ def minmax_stats(r: RasterMinMaxIn):
         percentiles. Returns HTTP 500 with detail "Failed to compute min/max".
     """
     try:
-        ds, _, _ = _open_raster(r.raster_id)
-        # 10 samples  0.05 proportion
-        p5, p95 = _sample_percentiles(ds, 10, 0.05)
-        return RasterMinMaxOut(
-            raster_id=r.raster_id, min_=float(p5), max_=float(p95)
-        )
-
-    except Exception:
+        file_path = REGISTRY[r.raster_id]["file_path"]
+        logger.debug(f"stats on this file: {file_path}")
+        raster = gdal.Open(file_path, gdal.GA_ReadOnly)
+        band = raster.GetRasterBand(1)
+        n_ovr = band.GetOverviewCount()
+        overview = band.GetOverview(n_ovr - 1)
+        array = overview.ReadAsArray()
+        nodata = band.GetNoDataValue()
+        if nodata is not None:
+            array = array[(array != nodata) & (np.isfinite(array))]
+        p5, p95 = np.percentile(array, [5, 95])
+        return RasterMinMaxOut(raster_id=r.raster_id, min_=p5, max_=p95)
+    except Exception as e:
         logger.exception("minmax_stats failed")
-        raise HTTPException(status_code=500, detail="Failed to compute min/max")
+        tb = traceback.format_exc()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "traceback": tb,
+            },
+        )
 
 
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
-        logging.debug("Opening rasters")
+        logger.debug("Opening rasters")
         dsx, nodata_x, units_x = _open_raster(scatter_request.raster_id_x)
         dsy, nodata_y, units_y = _open_raster(scatter_request.raster_id_y)
 
-        logging.debug("Shaping geometry")
+        logger.debug("Shaping geometry")
         geom = shape(scatter_request.geometry)
 
         if scatter_request.from_crs != dsx.crs.to_string():
-            logging.debug("Reprojecting geometry to X raster CRS")
+            logger.debug("Reprojecting geometry to X raster CRS")
             transformer = Transformer.from_crs(
                 scatter_request.from_crs, dsx.crs, always_xy=True
             )
@@ -453,9 +435,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
             return padded_window
 
-        logging.debug("Building window on X grid")
+        logger.debug("Building window on X grid")
         win_x = _safe_window_for_geom(dsx, geom_x)
-        logging.debug("Reading data_x from raster")
+        logger.debug("Reading data_x from raster")
         data_x = dsx.read(1, window=win_x, boundless=True, masked=False)
         if data_x.size == 0:
             raise HTTPException(
@@ -463,10 +445,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 detail="Empty read window (geometry outside raster_x).",
             )
 
-        logging.debug("Computing transform for X window")
+        logger.debug("Computing transform for X window")
         window_transform_x = dsx.window_transform(win_x)
 
-        logging.debug("Building geometry mask")
+        logger.debug("Building geometry mask")
         mask = geometry_mask(
             [mapping(geom_x)],
             transform=window_transform_x,
@@ -475,16 +457,16 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             all_touched=bool(scatter_request.all_touched),
         )
 
-        logging.debug("Applying nodata mask for X")
+        logger.debug("Applying nodata mask for X")
         arr_x = data_x.astype("float64", copy=False)
         if nodata_x is not None:
             arr_x = np.where(np.isclose(arr_x, nodata_x), np.nan, arr_x)
         arr_x = np.where(mask, arr_x, np.nan)
 
-        logging.debug("Computing Y window on its own grid")
+        logger.debug("Computing Y window on its own grid")
 
         # Build a tight window on Y raster
-        logging.debug("Reprojecting Y window into X window grid")
+        logger.debug("Reprojecting Y window into X window grid")
         upper_left_x, upper_left_y = window_transform_x * (0, 0)
         lower_right_x, lower_right_y = window_transform_x * (
             data_x.shape[1],
@@ -540,18 +522,18 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             num_threads=0,
         )
 
-        logging.debug("Applying same polygon mask to Y array")
+        logger.debug("Applying same polygon mask to Y array")
         arr_y = np.where(mask, y_on_x_grid, np.nan)
 
-        logging.debug("Extracting finite paired values")
+        logger.debug("Extracting finite paired values")
         finite_mask = np.isfinite(arr_x) & np.isfinite(arr_y)
         x_vals = arr_x[finite_mask]
         y_vals = arr_y[finite_mask]
         n_pairs = int(x_vals.size)
-        logging.debug(f"Found {n_pairs} finite pairs")
+        logger.debug(f"Found {n_pairs} finite pairs")
 
         if n_pairs == 0:
-            logging.debug("No valid pairs found; returning empty ScatterOut")
+            logger.debug("No valid pairs found; returning empty ScatterOut")
             return ScatterOut(
                 raster_id_x=scatter_request.raster_id_x,
                 raster_id_y=scatter_request.raster_id_y,
@@ -562,7 +544,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 geometry=scatter_request.geometry,
             )
 
-        logging.debug("Downsampling data if needed")
+        logger.debug("Downsampling data if needed")
         if n_pairs > scatter_request.max_points:
             rng = np.random.default_rng(0)
             idx = rng.choice(
@@ -574,7 +556,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot = x_vals
             y_plot = y_vals
 
-        logging.debug("Computing correlation and linear fit")
+        logger.debug("Computing correlation and linear fit")
         pearson_r = (
             float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
         )
@@ -587,7 +569,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             slope = None
             intercept = None
 
-        logging.debug("Computing 2D histogram")
+        logger.debug("Computing 2D histogram")
         hist2d_counts, x_edges, y_edges = np.histogram2d(
             x_vals, y_vals, bins=scatter_request.histogram_bins
         )
@@ -596,7 +578,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         total_mask_pixels = int(np.count_nonzero(mask))
         valid_pixels = int(n_pairs)
 
-        logging.debug("Assembling ScatterOut response")
+        logger.debug("Assembling ScatterOut response")
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,

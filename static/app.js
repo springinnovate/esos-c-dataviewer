@@ -36,6 +36,8 @@ async function loadConfig() {
   return res.json()
 }
 
+const CANADA_CENTER = [55, -96.9]
+const INITIAL_ZOOM = 0
 const GLOBAL_CRS = 'EPSG:3347'
 const CRS3347 = new L.Proj.CRS(
   'EPSG:3347',
@@ -56,8 +58,8 @@ function initMap() {
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
     crs: CRS3347,
-    center: [55, -96.9], //[37.8, -96.9],
-    zoom: 0,
+    center: CANADA_CENTER,
+    zoom: INITIAL_ZOOM,
     zoomControl: false,
   })
   state.map = map

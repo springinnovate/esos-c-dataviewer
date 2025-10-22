@@ -22,7 +22,35 @@ const state = {
   lastMouseLatLng: null,
   outlineLayer: null,
   lastStats: null,
-  didInitialCenter: false
+  didInitialCenter: false,
+  visibility: { A: true, B: true }
+}
+
+
+function setLayerVisibility(layerId, visible) {
+  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
+  if (layer) layer.setOpacity(visible ? 1 : 0)
+  state.visibility[layerId] = visible
+  const cb = document.getElementById(`layerVisible${layerId}`)
+  if (cb) cb.checked = !!visible
+}
+
+// apply stored visibility when (re)creating layers
+function attachInitialOpacity(layerId) {
+  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
+  if (!layer) return
+  const visible = state.visibility[layerId] ?? true
+  layer.setOpacity(visible ? 1 : 0)
+}
+
+// wire up checkboxes
+function wireVisibilityCheckboxes() {
+  ;['A', 'B'].forEach(id => {
+    const cb = document.getElementById(`layerVisible${id}`)
+    if (!cb) return
+    cb.checked = state.visibility[id]
+    cb.addEventListener('change', () => setLayerVisibility(id, cb.checked))
+  })
 }
 
 /**
@@ -968,6 +996,7 @@ function disableLeafletScrollOnAlt() {
   wireAreaSamplerClick()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
+  wireVisibilityCheckboxes()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

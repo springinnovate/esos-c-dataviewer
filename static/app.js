@@ -669,15 +669,13 @@ function _buildEnvString(obj) {
  */
 function _readStyleInputsFromUI(layerId) {
   const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`)
-  const toNum = (el) => Number(el?.value)
-  const toCol = (el) => _normColor(el?.value)
   return {
-    min: toNum(get('MinInput')),
-    med: toNum(get('MedInput')),
-    max: toNum(get('MaxInput')),
-    cmin: toCol(get('CminInput')),
-    cmed: toCol(get('CmedInput')),
-    cmax: toCol(get('CmaxInput')),
+    min: get('MinInput')?.value,
+    med: get('MedInput')?.value,
+    max: get('MaxInput')?.value,
+    cmin: get('CminInput')?.value,
+    cmed: get('CmedInput')?.value,
+    cmax: get('CmaxInput')?.value,
   }
 }
 

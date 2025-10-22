@@ -34,29 +34,19 @@
         </div>
 
         <div class='style-panels'>
+          {% for layer_id in ['A', 'B'] %}
           <div class='style-panel'>
-            <summary>Style A</summary>
+            <summary>Style {{ layer_id }}</summary>
             <div class='style-grid'>
-              <label>Min <input id='layerAMinInput' type='number' step='any' /></label>
-              <label>Med <input id='layerAMedInput' type='number' step='any' /></label>
-              <label>Max <input id='layerAMaxInput' type='number' step='any' /></label>
-              <label>Color min <input id='layerACminInput' type='color'/></label>
-              <label>Color med <input id='layerACmedInput' type='color'/></label>
-              <label>Color max <input id='layerACmaxInput' type='color'/></label>
+              <label>Min <input id='layer{{ layer_id }}MinInput' type='number' step='any' /></label>
+              <label>Med <input id='layer{{ layer_id }}MedInput' type='number' step='any' /></label>
+              <label>Max <input id='layer{{ layer_id }}MaxInput' type='number' step='any' /></label>
+              <label>Color min <input id='layer{{ layer_id }}CminInput' type='color'/></label>
+              <label>Color med <input id='layer{{ layer_id }}CmedInput' type='color'/></label>
+              <label>Color max <input id='layer{{ layer_id }}CmaxInput' type='color'/></label>
             </div>
           </div>
-
-          <div class='style-panel'>
-            <summary>Style B</summary>
-            <div class='style-grid'>
-              <label>Min <input id='layerBMinInput' type='number' step='any' /></label>
-              <label>Med <input id='layerBMedInput' type='number' step='any' /></label>
-              <label>Max <input id='layerBMaxInput' type='number' step='any' /></label>
-              <label>Color min <input id='layerBCminInput' type='color'/></label>
-              <label>Color med <input id='layerBCmedInput' type='color'/></label>
-              <label>Color max <input id='layerBCmaxInput' type='color'/></label>
-            </div>
-          </div>
+          {% endfor %}
         </div>
       </div>
     </header>

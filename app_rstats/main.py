@@ -34,21 +34,19 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from osgeo import gdal
 from pydantic import BaseModel
 from pyproj import Transformer
 from rasterio.features import geometry_mask
+from rasterio.warp import reproject, Resampling
 from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds, Window
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
-from osgeo import gdal
 import numpy as np
 import rasterio
 import traceback
 import yaml
-
-
-from rasterio.warp import reproject, Resampling
 
 load_dotenv()
 
@@ -557,9 +555,18 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             y_plot = y_vals
 
         logger.debug("Computing correlation and linear fit")
-        pearson_r = (
-            float(np.corrcoef(x_vals, y_vals)[0, 1]) if n_pairs > 1 else None
-        )
+        if n_pairs > 1:
+            x_std, y_std = np.std(x_vals), np.std(y_vals)
+            if x_std == 0 or y_std == 0:
+                pearson_r = None
+            else:
+                corr_value = np.corrcoef(x_vals, y_vals)[0, 1]
+                pearson_r = (
+                    float(corr_value) if np.isfinite(corr_value) else None
+                )
+
+        else:
+            pearson_r = None
         if n_pairs > 1:
             A = np.vstack([x_vals, np.ones_like(x_vals)]).T
             slope, intercept = np.linalg.lstsq(A, y_vals, rcond=None)[0]

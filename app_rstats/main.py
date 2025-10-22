@@ -619,8 +619,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception("scatter stats failed")
         raise HTTPException(
-            status_code=500, detail="Scatter computation failed."
+            status_code=500,
+            detail=f"Scatter computation failed: {type(e).__name__}: {e}",
         )

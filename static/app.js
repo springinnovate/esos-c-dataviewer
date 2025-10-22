@@ -270,19 +270,17 @@ function addWmsLayer(qualifiedName, slot, className) {
     className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
   }
   const l = L.tileLayer.wms(wmsUrl, params)
-  if (slot === 'A') {
-    if (state.wmsLayerA) state.map.removeLayer(state.wmsLayerA)
-    state.wmsLayerA = l.addTo(state.map)
-    //state.wmsLayerA.setOpacity(1.0)
-    // keep A on top
-    if (state.wmsLayerB) state.wmsLayerA.bringToFront()
-  } else {
-    if (state.wmsLayerB) state.map.removeLayer(state.wmsLayerB)
-    state.wmsLayerB = l.addTo(state.map)
-    // keep A on top if present
-    if (state.wmsLayerA) state.wmsLayerA.bringToFront()
-    //state.wmsLayerB.setOpacity(1.0)
-  }
+  ;['A', 'B'].forEach(layerSlot => {
+    const key = `wmsLayer${layerSlot}`
+    if (slot === layerSlot) {
+      if (state[key]) state.map.removeLayer(state[key])
+      state[key] = l.addTo(state.map)
+    }
+  })
+
+  // keep A on top if present
+  if (state.wmsLayerA) state.wmsLayerA.bringToFront()
+
 }
 
 /**

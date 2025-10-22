@@ -647,16 +647,6 @@ function _hideHistTooltip() {
   if (tip) tip.style.display = 'none'
 }
 
-/**
- * Normalize a color string to ensure it begins with a '#' prefix.
- * @param {string|number|null|undefined} v
- * @returns {string}
- */
-function _normColor(v) {
-  if (v == null) return ''
-  const s = String(v).trim()
-  return s ? (s.startsWith('#') ? s : '#' + s) : ''
-}
 
 /**
  * Build a GeoServer env string from a dict, skipping undefined values.
@@ -667,7 +657,6 @@ function _normColor(v) {
 function _buildEnvString(obj) {
   const entries = Object.entries(obj || {}).map(([k, v]) => {
     if (v == null) return null
-    if (['cmin','cmed','cmax','ncolor'].includes(k)) v = _normColor(v)
     return `${k}:${v}`
   }).filter(Boolean)
   return entries.join(';')

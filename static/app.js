@@ -757,7 +757,7 @@ function enableAltWheelSlider() {
 }
 
 /**
- * Render a scatterplot of two rasters’ values within a polygon.
+ * Render a scatterplot of two rasters' values within a polygon.
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
 function renderScatterOverlay(opts) {

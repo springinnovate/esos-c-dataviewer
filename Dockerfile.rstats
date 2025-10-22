@@ -8,7 +8,44 @@
 # Environment variables:
 #   PORT        - port for Uvicorn to listen on (default: 8000)
 #   WORKERS     - number of Uvicorn worker processes (default: 1)
-FROM python:3.11-slim
+FROM mambaorg/micromamba:1.4.2-bullseye
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+COPY environment.yml /tmp/environment.yml
+
+RUN micromamba create -n geopy311 -f /tmp/environment.yml --yes && \
+    micromamba clean --all --yes
+RUN micromamba shell init -s bash -p /opt/conda
+
+RUN touch /home/mambauser/.bashrc
+RUN echo 'micromamba activate geopy311' >> /home/mambauser/.bashrc
+
+USER root
+RUN apt-get update -y
+RUN apt install git -y
+RUN apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    build-essential \
+    zlib1g-dev \
+    libpython3-dev \
+    libssl-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    libgdal-dev
+
+ARG CACHEBUST=1
+
+RUN git clone https://github.com/springinnovate/ecoshard.git /usr/local/ecoshard && \
+    cd /usr/local/ecoshard && \
+    micromamba run -n geopy311 pip install . --no-build-isolation && \
+    git log -1 --format="%h on %ci" > /usr/local/ecoshard.gitversion
+
+# This shows the timedate of the ecoshard and inspring repos
+RUN echo 'if [ -f "/usr/local/ecoshard.gitversion" ]; then' >> /home/mambauser/.bashrc && \
+    echo '  echo "ecoshard: commit on $(cat /usr/local/ecoshard.gitversion)"' >> /home/mambauser/.bashrc && \
+    echo 'fi' >> /home/mambauser/.bashrc
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -18,14 +55,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Minimal wheels; rasterio needs GDAL headers
+SHELL ["micromamba", "run", "-n", "geopy311", "/bin/bash", "-c"]
 RUN pip install --no-cache-dir --upgrade pip
 
 WORKDIR /app
 COPY rstats_requirements.txt /app/
-RUN pip install --no-cache-dir -r rstats_requirements.txt
+RUN micromamba run -n geopy311 pip install --no-cache-dir -r rstats_requirements.txt
 
 COPY app_rstats /app/app_rstats
 
 # healthcheck endpoint on :8000
 ENV PORT=8000
+USER mambauser
 CMD uvicorn app_rstats.main:app --host 0.0.0.0 --port ${PORT} --workers ${WORKERS:-1}

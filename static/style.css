@@ -40,29 +40,21 @@ header {
   background: var(--panel);
 }
 .brand { font-weight: 700; color: var(--brand); }
-/* grid: win-size | Layer A/B | Style A/B */
 .controls {
   display: grid;
   grid-template-columns: auto 1fr 1fr;
   column-gap: 12px;
-  row-gap: 8px;            /* NEW */
+  row-gap: 8px;
   align-items: start;
 }
 
-/* win-size spans both rows */
 .win-size { grid-column: 1; grid-row: 1 / span 2; }
-
-/* pair A with Style A, B with Style B */
 .selectors, .style-panels { display: contents; }
 .selectors label:nth-child(1) { grid-column: 2; grid-row: 1; }
 .style-panels .style-panel:nth-child(1) { grid-column: 3; grid-row: 1; }
 .selectors label:nth-child(2) { grid-column: 2; grid-row: 2; }
 .style-panels .style-panel:nth-child(2) { grid-column: 3; grid-row: 2; }
-
-/* remove inherited left margin; grid gap handles spacing */
-.style-panel { margin-left: 0; }   /* CHANGED */
-
-/* optional: lock sensible column widths so selectors ≈ styles */
+.style-panel { margin-left: 0; }
 .controls { grid-template-columns: auto minmax(260px, 1fr) minmax(420px, 1fr); }
 
 .win-size label { margin-right: .5rem; }
@@ -74,7 +66,6 @@ header {
   font-variant-numeric: tabular-nums;
   box-sizing: content-box;
 }
-/* hide spin buttons (keep behavior from previous .inline rules) */
 .win-size input.num::-webkit-inner-spin-button,
 .win-size input.num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .win-size input.num { -moz-appearance: textfield; }
@@ -99,7 +90,7 @@ select, input[type='range'], input[type='number'] {
   z-index: var(--z-overlay);
   width: min(480px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  background: rgba(var(--bg-rgb), 0.96); /* or: rgba(var(--panel-rgb), 0.96) */
+  background: rgba(var(--bg-rgb), 0.96);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
@@ -107,7 +98,6 @@ select, input[type='range'], input[type='number'] {
   overflow: hidden; pointer-events: auto;
 }
 .overlay.hidden { display: none; pointer-events: none; }
-/* .hidden keeps display: none for the app that adds hidden dynamically to elements. */
 .hidden { display: none; }
 
 .overlay-header {
@@ -168,7 +158,6 @@ select, input[type='range'], input[type='number'] {
   background: var(--input-bg, #f8f8f8);
 }
 
-/* grid inside each panel (unchanged from your original) */
 .style-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(110px, 1fr));
@@ -263,7 +252,7 @@ select, input[type='range'], input[type='number'] {
   border-top-color: #1e90ff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-  margin: 40px auto; /* centers it in the container */
+  margin: 40px auto;
 }
 
 @keyframes spin {

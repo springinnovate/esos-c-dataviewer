@@ -205,31 +205,54 @@ function wireSquareSamplerControls() {
   const rRange = document.getElementById('windowSize')
   const rNum = document.getElementById('windowSizeNumber')
 
-  // Configure the log mapping range
-  const min = 1
-  const max = 1000
+  const minKm = 1
+  const maxKm = 1000
 
-  function sliderToLog(val) {
-    const exp = Math.pow(val / 100, 0.5)
-    return min * Math.pow(max / min, exp)
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+  // pos in [0..100]  ->  km in [minKm..maxKm]
+  function sliderToKm(pos) {
+    const p = clamp(Number(pos) || 0, 0, 100)
+    const exp = Math.sqrt(p / 100)
+    return minKm * Math.pow(maxKm / minKm, exp)
   }
 
-  const setVal = (v) => {
-    const vAsInt = Number.parseInt(v, 10)
-    const logValue = sliderToLog(vAsInt)
-    rRange.value = String(vAsInt)
-    rNum.value = String(logValue)
-    state.boxSizeKm = logValue
-    if (state.hoverRect) {
-     const ll = state.lastMouseLatLng || state.map.getCenter()
-     const poly = squarePolygonAt(ll, state.boxSizeKm)
-     state.hoverRect.setLatLngs(poly.getLatLngs())
-    }
+  // km in [minKm..maxKm] -> pos in [0..100]
+  function kmToSlider(km) {
+    const k = clamp(Number(km) || minKm, minKm, maxKm)
+    const exp = Math.log(k / minKm) / Math.log(maxKm / minKm) // [0..1]
+    return clamp(Math.pow(exp, 2) * 100, 0, 100)
   }
 
-  rRange.addEventListener('input', () => setVal(rRange.value))
-  rNum.addEventListener('input', () => setVal(rNum.value))
-  setVal(rRange.value)
+  function updateHoverRect() {
+    if (!state.map || !state.hoverRect) return
+    const ll = state.lastMouseLatLng || state.map.getCenter()
+    const poly = squarePolygonAt(ll, state.boxSizeKm)
+    state.hoverRect.setLatLngs(poly.getLatLngs())
+  }
+
+  function setFromSlider(pos) {
+    const km = sliderToKm(pos)
+    rRange.value = String(Math.round(clamp(pos, 0, 100)))
+    rNum.value = km.toFixed(1)
+    state.boxSizeKm = km
+    updateHoverRect()
+  }
+
+  function setFromKm(km) {
+    const pos = kmToSlider(km)
+    setFromSlider(pos)
+  }
+
+  rRange.addEventListener('input', () => setFromSlider(Number(rRange.value)))
+  rNum.addEventListener('input', () => setFromKm(Number(rNum.value)))
+
+  const kmFromNum = parseFloat(rNum.value)
+  if (Number.isFinite(kmFromNum)) {
+    setFromKm(kmFromNum)        // honors the number input's value (e.g., 150)
+  } else {
+    setFromSlider(Number(rRange.value)) // fallback to slider's value (e.g., 50)
+  }
 }
 
 /**
@@ -379,7 +402,7 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
       raster_id_x: rasterIdX,
       raster_id_y: rasterIdY,
       geometry: geojson.geometry ? geojson.geometry : geojson,
-      from_crs: 'EPSG:4226', //the poly should be in lat/lng
+      from_crs: 'EPSG:4326', //the poly should be in lat/lng
       histogram_bins: MAX_HISTOGRAM_BINS,
       max_points: MAX_HISTOGRAM_POINTS,
       all_touched: true,
@@ -718,26 +741,25 @@ function wireDynamicStyleControls(layerId) {
  */
 function enableAltWheelSlider() {
   const slider = document.getElementById('windowSize')
-  const number = document.getElementById('windowSizeNumber')
 
   const clamp = (v) => {
     const min = parseFloat(slider.min) || 0
-    const max = parseFloat(slider.max) || 1000
+    const max = parseFloat(slider.max) || 100
     return Math.max(min, Math.min(max, v))
   }
 
   const apply = (v) => {
     const vv = clamp(v)
     slider.value = String(vv)
+    // let wireSquareSamplerControls' 'input' handler drive boxSize + number display
     slider.dispatchEvent(new Event('input', { bubbles: true }))
-    if (number) number.value = String(vv)
   }
 
   const onKeyDown = (e) => {
-    if (e.altKey && window.state?.map) window.state.map.scrollWheelZoom.disable()
+    if (e.altKey && state?.map) state.map.scrollWheelZoom.disable()
   }
   const onKeyUp = () => {
-    if (window.state?.map) window.state.map.scrollWheelZoom.enable()
+    if (state?.map) state.map.scrollWheelZoom.enable()
   }
 
   const onWheel = (e) => {
@@ -961,4 +983,10 @@ function disableLeafletScrollOnAlt() {
       sel.dispatchEvent(new Event('change', { bubbles: true }))
     }
   })
+
+  // rounding the displayed number down so it fits
+  const numInput = document.getElementById('windowSizeNumber');
+  numInput.addEventListener('change', () => {
+    numInput.value = parseFloat(numInput.value).toFixed(1);
+  });
 })()

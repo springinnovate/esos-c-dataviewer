@@ -324,7 +324,6 @@ async function onLayerChange(e, layerId) {
 /**
  * Wire map click to request raster statistics for the window around the click.
  * On success, renders the overlay; on failure, shows an error message.
- * Uses the primary active layer (A).
  */
 async function wireAreaSamplerClick() {
   state.map.on('click', async (evt) => {

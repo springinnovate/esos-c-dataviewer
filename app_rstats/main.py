@@ -513,22 +513,24 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             max_y_in_y_crs,
             transform=dsy.transform,
         )
-        y_window_candidate = y_window_candidate.round_offsets().round_lengths()
-        y_window = y_window_candidate.intersection(
-            Window(0, 0, dsy.width, dsy.height)
+        y_read_window = (
+            y_window_candidate.round_offsets()
+            .round_lengths()
+            .intersection(Window(0, 0, dsy.width, dsy.height))
         )
 
         # read only the needed Y data and reproject onto the X window grid
-        source_y_data = dsy.read(1, window=y_window, masked=False).astype(
+        y_source_band = dsy.read(1, window=y_read_window, masked=False).astype(
             "float64", copy=False
         )
-        source_y_transform = dsy.window_transform(y_window)
-        reprojected_y_data = np.full(data_x.shape, np.nan, dtype="float64")
+        y_source_transform = dsy.window_transform(y_read_window)
+
+        y_on_x_grid = np.full(data_x.shape, np.nan, dtype="float64")
 
         reproject(
-            source=source_y_data,
-            destination=reprojected_y_data,
-            src_transform=source_y_transform,
+            source=y_source_band,
+            destination=y_on_x_grid,
+            src_transform=y_source_transform,
             src_crs=dsy.crs,
             src_nodata=nodata_y if nodata_y is not None else None,
             dst_transform=window_transform_x,
@@ -539,13 +541,12 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         )
 
         logging.debug("Applying same polygon mask to Y array")
-        arr_y = np.where(mask, dest_y, np.nan)
+        arr_y = np.where(mask, y_on_x_grid, np.nan)
 
         logging.debug("Extracting finite paired values")
         finite_mask = np.isfinite(arr_x) & np.isfinite(arr_y)
         x_vals = arr_x[finite_mask]
         y_vals = arr_y[finite_mask]
-
         n_pairs = int(x_vals.size)
         logging.debug(f"Found {n_pairs} finite pairs")
 

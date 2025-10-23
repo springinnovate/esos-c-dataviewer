@@ -1179,7 +1179,6 @@ function wireLayerFlipper() {
     const aOn = !!cbA.checked;
     const bOn = !!cbB.checked;
 
-    // next state toggles strictly between [A on, B off] and [A off, B on]
     const nextAOn = !(aOn && !bOn);
     cbA.checked = nextAOn;
     cbB.checked = !nextAOn;

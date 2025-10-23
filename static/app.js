@@ -22,7 +22,46 @@ const state = {
   lastMouseLatLng: null,
   outlineLayer: null,
   lastStats: null,
-  didInitialCenter: false
+  didInitialCenter: false,
+  visibility: { A: true, B: true },
+  lastScatterOpts: null,
+}
+
+/**
+ * Set the visibility of a specified WMS layer and synchronize its checkbox state.
+ * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
+ * @param {boolean} visible - Whether the layer should be visible (true) or hidden (false).
+ */
+function setLayerVisibility(layerId, visible) {
+  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
+  if (layer) layer.setOpacity(visible ? 1 : 0)
+  state.visibility[layerId] = visible
+  const cb = document.getElementById(`layerVisible${layerId}`)
+  if (cb) cb.checked = !!visible
+}
+
+/**
+ * Apply the stored visibility state to a layer when it is created or reinitialized.
+ * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
+ */
+function attachInitialOpacity(layerId) {
+  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
+  if (!layer) return
+  const visible = state.visibility[layerId] ?? true
+  layer.setOpacity(visible ? 1 : 0)
+}
+
+/**
+ * Initialize visibility checkboxes for layers A and B and wire their change events.
+ * When a checkbox is toggled, it updates the corresponding layer's visibility.
+ */
+function wireVisibilityCheckboxes() {
+  ;['A', 'B'].forEach(id => {
+    const cb = document.getElementById(`layerVisible${id}`)
+    if (!cb) return
+    cb.checked = state.visibility[id]
+    cb.addEventListener('change', () => setLayerVisibility(id, cb.checked))
+  })
 }
 
 /**
@@ -781,11 +820,17 @@ function enableAltWheelSlider() {
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
 function renderScatterOverlay(opts) {
+  if (!opts) {
+    return
+  }
+  state.lastScatterOpts = opts
+  const visA = document.getElementById('layerVisibleA')?.checked ?? true;
+  const visB = document.getElementById('layerVisibleB')?.checked ?? true;
   const {
     rasterX, rasterY,
     centerLng, centerLat,
     boxKm,
-    scatterObj // could be null if not generated yet
+    scatterObj // normal behavior to be null if not generated yet
   } = opts
 
   const overlay = document.getElementById('statsOverlay')
@@ -794,15 +839,14 @@ function renderScatterOverlay(opts) {
 
   const hasData = !!scatterObj
 
-  // derive stats (optional keys guarded)
   const s = scatterObj || {}
   const stats = {
-    n: s.n_pairs ?? null,
+    n: parseInt(s.n_pairs) ?? null,
     r: s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
-    window_mask_pixels: s.window_mask_pixels ?? null,
-    valid_pixels: s.valid_pixels ?? null,
+    window_mask_pixels: parseInt(s.window_mask_pixels) ?? null,
+    valid_pixels: parseInt(s.valid_pixels) ?? null,
     coverage_ratio: s.coverage_ratio ?? null,
   }
 
@@ -830,25 +874,185 @@ function renderScatterOverlay(opts) {
       </div>
 
       <div>
-        <div class='muted' style='margin-bottom:6px;'>Scatter</div>
         <div id='scatterPlot' class='plot-holder'>
           ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
         </div>
       </div>
     </div>
    `
-  overlay.classList.remove('hidden')
-  if (hasData && scatterObj.hist2d && scatterObj.x_edges && scatterObj.y_edges) {
-      const svg = buildScatterSVG(
-        scatterObj.x_edges,
-        scatterObj.y_edges,
-        scatterObj.hist2d,
-        { width: 420, height: 320, pad: 40 }
-      )
-      const plotEl = document.getElementById('scatterPlot')
-      plotEl.innerHTML = ''
-      plotEl.appendChild(svg)
+  const plotEl = document.getElementById('scatterPlot');
+  overlay.classList.remove('hidden');
+  if (!visA && !visB) {
+      plotEl.innerHTML = `<div class="no-layers-msg">
+        <span> No layers selected</span>
+      </div>`;
+      return
+  }
+  if (!scatterObj) {
+    return;
+  }
+  plotEl.innerHTML = '';
+  const has2D =
+    !!scatterObj &&
+    Array.isArray(scatterObj.hist2d) &&
+    Array.isArray(scatterObj.x_edges) &&
+    Array.isArray(scatterObj.y_edges);
+
+  const has1DX =
+    Array.isArray(scatterObj.hist1d_x) && Array.isArray(scatterObj.x_edges);
+  const has1DY =
+    Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
+
+  // if either A or B is turned off, show a 1D histogram
+  if (!visA && visB && has1DY) {
+    // A off -> show histogram along Y axis
+    const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
+      width: 420,
+      height: 320,
+      pad: 40
+    });
+    plotEl.appendChild(svg);
+    return;
+  }
+  if (!visB && visA && has1DX) {
+    // B off -> show histogram along X axis
+    const svg = buildHistogram1D(scatterObj.x_edges, scatterObj.hist1d_x, 'x', {
+      width: 420,
+      height: 320,
+      pad: 40
+    });
+    plotEl.appendChild(svg);
+    return;
+  }
+
+  // otherwise show 2D heatmap
+  if (has2D) {
+    const svg = buildScatterSVG(
+      scatterObj.x_edges,
+      scatterObj.y_edges,
+      scatterObj.hist2d,
+      { width: 420, height: 320, pad: 40 }
+    );
+    plotEl.appendChild(svg);
+  }
+}
+
+// do i actually want this?
+['layerVisibleA', 'layerVisibleB'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
+});
+
+
+/**
+ * Build a simple 1D histogram SVG using provided bin edges and counts.
+ * axis: 'x' -> bars grow upward from bottom (x-axis bins)
+ *       'y' -> bars grow rightward from left (y-axis bins)
+ * @param {number[]} edges
+ * @param {number[]} counts
+ * @param {'x'|'y'} axis
+ * @param {{width?:number,height?:number,pad?:number}} opts
+ * @returns {SVGSVGElement}
+ */
+function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
+  const w = opts.width ?? 400;
+  const h = opts.height ?? 300;
+  const pad = opts.pad ?? 40;
+  const innerW = w - pad * 2;
+  const innerH = h - pad * 2;
+
+  const n = Math.max(0, edges.length - 1);
+  const maxCount = Math.max(1, ...counts);
+
+  const minVal = Math.min(...edges);
+  const maxVal = Math.max(...edges);
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+  svg.style.background = '#11151c';
+
+  const axisColor = '#666';
+
+  const mkLine = (x1, y1, x2, y2) => {
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x1);
+    l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2);
+    l.setAttribute('y2', y2);
+    l.setAttribute('stroke', axisColor);
+    l.setAttribute('stroke-width', '1');
+    return l;
+  };
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text');
+    t.textContent = txt;
+    t.setAttribute('x', x);
+    t.setAttribute('y', y);
+    t.setAttribute('fill', '#aaa');
+    t.setAttribute('font-size', '10');
+    t.setAttribute('text-anchor', anchor);
+    return t;
+  };
+
+  if (axis === 'x') {
+    // axes
+    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis
+    svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis
+
+    const scaleX = v => pad + ((v - minVal) / (maxVal - minVal)) * innerW;
+    const scaleH = c => (c / maxCount) * innerH;
+
+    for (let i = 0; i < n; i++) {
+      const x0 = scaleX(edges[i]);
+      const x1 = scaleX(edges[i + 1]);
+      const barW = Math.max(1, x1 - x0);
+      const hPix = scaleH(counts[i] ?? 0);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', String(x0));
+      rect.setAttribute('y', String(h - pad - hPix));
+      rect.setAttribute('width', String(barW));
+      rect.setAttribute('height', String(hPix));
+      rect.setAttribute('fill', '#22c55e');
+      rect.setAttribute('fill-opacity', '0.85');
+      svg.appendChild(rect);
     }
+
+    svg.appendChild(mkText(minVal.toFixed(2), pad, h - pad + 12, 'start'));
+    svg.appendChild(mkText(maxVal.toFixed(2), w - pad, h - pad + 12, 'end'));
+    svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
+    svg.appendChild(mkText(String(maxCount), pad - 6, pad + 4, 'end'));
+  } else {
+    // axis === 'y' (horizontal bars)
+    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis (counts)
+    svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis (values)
+
+    const scaleY = v => h - pad - ((v - minVal) / (maxVal - minVal)) * innerH;
+    const scaleW = c => (c / maxCount) * innerW;
+
+    for (let i = 0; i < n; i++) {
+      const y0 = scaleY(edges[i]);
+      const y1 = scaleY(edges[i + 1]);
+      const barH = Math.max(1, y0 - y1);
+      const wPix = scaleW(counts[i] ?? 0);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', String(pad));
+      rect.setAttribute('y', String(y1));
+      rect.setAttribute('width', String(wPix));
+      rect.setAttribute('height', String(barH));
+      rect.setAttribute('fill', '#eab308');
+      rect.setAttribute('fill-opacity', '0.85');
+      svg.appendChild(rect);
+    }
+
+    svg.appendChild(mkText('0', pad, h - pad + 12, 'middle'));
+    svg.appendChild(mkText(String(maxCount), w - pad, h - pad + 12, 'end'));
+    svg.appendChild(mkText(minVal.toFixed(2), pad - 6, h - pad, 'end'));
+    svg.appendChild(mkText(maxVal.toFixed(2), pad - 6, pad + 4, 'end'));
+  }
+
+  return svg;
 }
 
 /**
@@ -968,6 +1172,7 @@ function disableLeafletScrollOnAlt() {
   wireAreaSamplerClick()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
+  wireVisibilityCheckboxes()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

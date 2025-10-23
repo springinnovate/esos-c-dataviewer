@@ -126,6 +126,8 @@ class ScatterOut(BaseModel):
     x: Optional[List[float]] = None
     y: Optional[List[float]] = None
     hist2d: Optional[List[List[int]]] = None
+    hist1d_x: Optional[List[int]] = None
+    hist1d_y: Optional[List[int]] = None
     x_edges: Optional[List[float]] = None
     y_edges: Optional[List[float]] = None
     pearson_r: Optional[float] = None
@@ -182,20 +184,17 @@ def _open_raster(raster_id: str):
     Returns the dataset handle along with its nodata value and units.
 
     Args:
-        raster_id (str): Identifier of the raster to open, matching an entry in `REGISTRY`.
+        raster_id (str): Identifier of the raster to open, matching an entry
+            in `REGISTRY`.
 
     Returns:
         tuple:
             ds (rasterio.io.DatasetReader): Opened Rasterio dataset.
             nodata (float | None): Nodata value from metadata or dataset.
-            units (str | None): Units of measurement from metadata, if available.
 
     Raises:
         HTTPException: If the raster ID is not found in the registry (404) or
             if the raster file does not exist on disk (500).
-
-    Side Effects:
-        Prints diagnostic information about the raster being opened.
     """
     meta = REGISTRY.get(raster_id)
     if not meta:
@@ -209,8 +208,7 @@ def _open_raster(raster_id: str):
         )
     ds = rasterio.open(path)
     nodata = meta.get("nodata", ds.nodata)
-    units = meta.get("units")
-    return ds, nodata, units
+    return ds, nodata
 
 
 app = FastAPI(title="ESSOSC Raster Stats API", version="0.1.0")
@@ -354,255 +352,306 @@ def minmax_stats(r: RasterMinMaxIn):
         )
 
 
+def _safe_window_for_geom(dataset, geometry):
+    """Compute a rasterio window on a dataset safely enclosing a given geometry.
+
+    Ensures that the resulting window:
+    - Falls within the raster bounds
+    - Has nonzero dimensions (expands slightly if needed)
+    - Falls back to a single pixel window if geometry is too small
+
+    Args:
+        dataset (rasterio.io.DatasetReader): Open raster dataset.
+        geometry (shapely.geometry.base.BaseGeometry): Geometry to bound,
+            must be in the same CRS as dataset.
+
+    Returns:
+        rasterio.windows.Window: Window enclosing the geometry or a
+        fallback pixel window.
+    """
+    geometry_bounds = geometry.bounds
+    candidate_window = rasterio.windows.from_bounds(
+        *geometry_bounds, transform=dataset.transform
+    )
+    candidate_window = candidate_window.round_offsets().round_lengths()
+    candidate_window = candidate_window.intersection(
+        Window(0, 0, dataset.width, dataset.height)
+    )
+
+    if int(candidate_window.width) > 0 and int(candidate_window.height) > 0:
+        return candidate_window
+    # if we get here it's because our geometry is a point or a line
+    # or a very thin polygon, so we just try to pad one pixel
+    # around it.
+    x_res, y_res = map(abs, dataset.res)
+    padded_bounds = (
+        geometry_bounds[0] - 0.5 * x_res,
+        geometry_bounds[1] - 0.5 * y_res,
+        geometry_bounds[2] + 0.5 * x_res,
+        geometry_bounds[3] + 0.5 * y_res,
+    )
+    padded_window = rasterio.windows.from_bounds(
+        *padded_bounds, transform=dataset.transform
+    )
+    padded_window = padded_window.round_offsets().round_lengths()
+    padded_window = padded_window.intersection(
+        Window(0, 0, dataset.width, dataset.height)
+    )
+
+    if int(padded_window.width) == 0 or int(padded_window.height) == 0:
+        # if we get here it means for some reason our intersection
+        # was still 0, so we'll just try to grab a pixel
+        centroid_x, centroid_y = (
+            geometry.centroid.x,
+            geometry.centroid.y,
+        )
+        row_idx, col_idx = rasterio.transform.rowcol(
+            dataset.transform, centroid_x, centroid_y
+        )
+        row_idx = min(max(row_idx, 0), dataset.height - 1)
+        col_idx = min(max(col_idx, 0), dataset.width - 1)
+        fallback_window = Window(col_idx, row_idx, 1, 1)
+        return fallback_window
+    return padded_window
+
+
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
         logger.debug("Opening rasters")
-        dsx, nodata_x, units_x = _open_raster(scatter_request.raster_id_x)
-        dsy, nodata_y, units_y = _open_raster(scatter_request.raster_id_y)
+        x_ds, x_nodata_val = _open_raster(scatter_request.raster_id_x)
+        y_ds, y_nodata_val = _open_raster(scatter_request.raster_id_y)
 
         logger.debug("Shaping geometry")
-        geom = shape(scatter_request.geometry)
+        geom_in_shape = shape(scatter_request.geometry)
 
-        if scatter_request.from_crs != dsx.crs.to_string():
+        if scatter_request.from_crs != x_ds.crs.to_string():
             logger.debug("Reprojecting geometry to X raster CRS")
-            transformer = Transformer.from_crs(
-                scatter_request.from_crs, dsx.crs, always_xy=True
+            transformer_obj = Transformer.from_crs(
+                scatter_request.from_crs, x_ds.crs, always_xy=True
             )
-            geom_x = shp_transform(
-                lambda x, y, z=None: transformer.transform(x, y), geom
+            geom_x_shape = shp_transform(
+                lambda x, y, z=None: transformer_obj.transform(x, y),
+                geom_in_shape,
             )
-
-        def _safe_window_for_geom(dataset, geometry):
-            """Compute a rasterio window safely enclosing a given geometry.
-
-            Ensures that the resulting window:
-            - Falls within the raster bounds
-            - Has nonzero dimensions (expands slightly if needed)
-            - Falls back to a single pixel window if geometry is too small
-
-            Args:
-                dataset (rasterio.io.DatasetReader): Open raster dataset.
-                geometry (shapely.geometry.base.BaseGeometry): Geometry to bound.
-
-            Returns:
-                rasterio.windows.Window: Window enclosing the geometry or a fallback pixel window.
-            """
-            geometry_bounds = geometry.bounds
-            candidate_window = rasterio.windows.from_bounds(
-                *geometry_bounds, transform=dataset.transform
-            )
-            candidate_window = candidate_window.round_offsets().round_lengths()
-            candidate_window = candidate_window.intersection(
-                Window(0, 0, dataset.width, dataset.height)
-            )
-
-            if (
-                int(candidate_window.width) > 0
-                and int(candidate_window.height) > 0
-            ):
-                return candidate_window
-
-            x_res, y_res = map(abs, dataset.res)
-            padded_bounds = (
-                geometry_bounds[0] - 0.5 * x_res,
-                geometry_bounds[1] - 0.5 * y_res,
-                geometry_bounds[2] + 0.5 * x_res,
-                geometry_bounds[3] + 0.5 * y_res,
-            )
-            padded_window = rasterio.windows.from_bounds(
-                *padded_bounds, transform=dataset.transform
-            )
-            padded_window = padded_window.round_offsets().round_lengths()
-            padded_window = padded_window.intersection(
-                Window(0, 0, dataset.width, dataset.height)
-            )
-
-            if int(padded_window.width) == 0 or int(padded_window.height) == 0:
-                centroid_x, centroid_y = (
-                    geometry.centroid.x,
-                    geometry.centroid.y,
-                )
-                row_idx, col_idx = rasterio.transform.rowcol(
-                    dataset.transform, centroid_x, centroid_y
-                )
-                row_idx = min(max(row_idx, 0), dataset.height - 1)
-                col_idx = min(max(col_idx, 0), dataset.width - 1)
-                fallback_window = Window(col_idx, row_idx, 1, 1)
-                return fallback_window
-
-            return padded_window
+        else:
+            geom_x_shape = geom_in_shape
 
         logger.debug("Building window on X grid")
-        win_x = _safe_window_for_geom(dsx, geom_x)
-        logger.debug("Reading data_x from raster")
-        data_x = dsx.read(1, window=win_x, boundless=True, masked=False)
-        if data_x.size == 0:
+        x_win_obj = _safe_window_for_geom(x_ds, geom_x_shape)
+
+        logger.debug("Reading x raster data")
+        x_data_nparray = x_ds.read(
+            1, window=x_win_obj, boundless=True, masked=False
+        )
+        if x_data_nparray.size == 0:
             raise HTTPException(
                 status_code=400,
                 detail="Empty read window (geometry outside raster_x).",
             )
 
         logger.debug("Computing transform for X window")
-        window_transform_x = dsx.window_transform(win_x)
+        x_win_affine = x_ds.window_transform(x_win_obj)
 
         logger.debug("Building geometry mask")
-        mask = geometry_mask(
-            [mapping(geom_x)],
-            transform=window_transform_x,
+        x_mask_nparray = geometry_mask(
+            [mapping(geom_x_shape)],
+            transform=x_win_affine,
             invert=True,
-            out_shape=data_x.shape,
+            out_shape=x_data_nparray.shape,
             all_touched=bool(scatter_request.all_touched),
         )
 
         logger.debug("Applying nodata mask for X")
-        arr_x = data_x.astype("float64", copy=False)
-        if nodata_x is not None:
-            arr_x = np.where(np.isclose(arr_x, nodata_x), np.nan, arr_x)
-        arr_x = np.where(mask, arr_x, np.nan)
+        x_arr_nparray = x_data_nparray.astype("float64", copy=False)
+        if x_nodata_val is not None:
+            x_arr_nparray = np.where(
+                np.isclose(x_arr_nparray, x_nodata_val), np.nan, x_arr_nparray
+            )
+        x_arr_nparray = np.where(x_mask_nparray, x_arr_nparray, np.nan)
 
         logger.debug("Computing Y window on its own grid")
 
-        # Build a tight window on Y raster
-        logger.debug("Reprojecting Y window into X window grid")
-        upper_left_x, upper_left_y = window_transform_x * (0, 0)
-        lower_right_x, lower_right_y = window_transform_x * (
-            data_x.shape[1],
-            data_x.shape[0],
+        logger.debug("Reprojecting X window extent into Y CRS")
+        upper_left_xy = x_win_affine * (0, 0)
+        lower_right_xy = x_win_affine * (
+            x_data_nparray.shape[1],
+            x_data_nparray.shape[0],
         )
-        min_x_in_x_crs, max_x_in_x_crs = sorted([upper_left_x, lower_right_x])
-        min_y_in_x_crs, max_y_in_x_crs = sorted([upper_left_y, lower_right_y])
 
-        # transform the X window extent into Y CRS and build a minimal Y read window
-        min_x_in_y_crs, min_y_in_y_crs, max_x_in_y_crs, max_y_in_y_crs = (
+        min_x_in_xcrs, max_x_in_xcrs = sorted(
+            [upper_left_xy[0], lower_right_xy[0]]
+        )
+        min_y_in_xcrs, max_y_in_xcrs = sorted(
+            [upper_left_xy[1], lower_right_xy[1]]
+        )
+
+        logger.debug("Transforming X bounds into Y CRS")
+        min_x_in_ycrs, min_y_in_ycrs, max_x_in_ycrs, max_y_in_ycrs = (
             transform_bounds(
-                dsx.crs,
-                dsy.crs,
-                min_x_in_x_crs,
-                min_y_in_x_crs,
-                max_x_in_x_crs,
-                max_y_in_x_crs,
+                x_ds.crs,
+                y_ds.crs,
+                min_x_in_xcrs,
+                min_y_in_xcrs,
+                max_x_in_xcrs,
+                max_y_in_xcrs,
                 densify_pts=0,
             )
         )
 
-        y_window_candidate = from_bounds(
-            min_x_in_y_crs,
-            min_y_in_y_crs,
-            max_x_in_y_crs,
-            max_y_in_y_crs,
-            transform=dsy.transform,
+        logger.debug("Building Y read window")
+        y_win_candidate_obj = from_bounds(  # _win_obj = Window candidate
+            min_x_in_ycrs,
+            min_y_in_ycrs,
+            max_x_in_ycrs,
+            max_y_in_ycrs,
+            transform=y_ds.transform,
         )
-        y_read_window = (
-            y_window_candidate.round_offsets()
+        y_win_obj = (
+            y_win_candidate_obj.round_offsets()
             .round_lengths()
-            .intersection(Window(0, 0, dsy.width, dsy.height))
+            .intersection(Window(0, 0, y_ds.width, y_ds.height))
         )
 
-        # read only the needed Y data and reproject onto the X window grid
-        y_source_band = dsy.read(1, window=y_read_window, masked=False).astype(
+        logger.debug("Reading Y source data")
+        y_src_nparray = y_ds.read(1, window=y_win_obj, masked=False).astype(
             "float64", copy=False
         )
-        y_source_transform = dsy.window_transform(y_read_window)
+        y_win_affine = y_ds.window_transform(
+            y_win_obj
+        )  # _affine = Affine transform
 
-        y_on_x_grid = np.full(data_x.shape, np.nan, dtype="float64")
+        logger.debug("Allocating destination array for reprojected Y on X grid")
+        y_on_xgrid_nparray = np.full(
+            x_data_nparray.shape, np.nan, dtype="float64"
+        )  # _nparray = np.ndarray
 
+        logger.debug("Reprojecting Y data onto X grid")
         reproject(
-            source=y_source_band,
-            destination=y_on_x_grid,
-            src_transform=y_source_transform,
-            src_crs=dsy.crs,
-            src_nodata=nodata_y if nodata_y is not None else None,
-            dst_transform=window_transform_x,
-            dst_crs=dsx.crs,
+            source=y_src_nparray,
+            destination=y_on_xgrid_nparray,
+            src_transform=y_win_affine,
+            src_crs=y_ds.crs,
+            src_nodata=y_nodata_val if y_nodata_val is not None else None,
+            dst_transform=x_win_affine,
+            dst_crs=x_ds.crs,
             dst_nodata=np.nan,
             resampling=Resampling.nearest,
             num_threads=0,
         )
-
         logger.debug("Applying same polygon mask to Y array")
-        arr_y = np.where(mask, y_on_x_grid, np.nan)
+        y_on_xgrid_masked_nparray = np.where(
+            x_mask_nparray, y_on_xgrid_nparray, np.nan
+        )
 
         logger.debug("Extracting finite paired values")
-        finite_mask = np.isfinite(arr_x) & np.isfinite(arr_y)
-        x_vals = arr_x[finite_mask]
-        y_vals = arr_y[finite_mask]
-        n_pairs = int(x_vals.size)
-        logger.debug(f"Found {n_pairs} finite pairs")
+        finite_mask_nparray = np.isfinite(x_arr_nparray) & np.isfinite(
+            y_on_xgrid_masked_nparray
+        )
+        x_vals_nparray = x_arr_nparray[finite_mask_nparray]
+        y_vals_nparray = y_on_xgrid_masked_nparray[finite_mask_nparray]
+        n_pairs_int = int(x_vals_nparray.size)
+        logger.debug(f"Found {n_pairs_int} finite pairs")
 
-        if n_pairs == 0:
+        if n_pairs_int == 0:
             logger.debug("No valid pairs found; returning empty ScatterOut")
             return ScatterOut(
                 raster_id_x=scatter_request.raster_id_x,
                 raster_id_y=scatter_request.raster_id_y,
                 n_pairs=0,
-                window_mask_pixels=int(np.count_nonzero(mask)),
+                window_mask_pixels=int(np.count_nonzero(x_mask_nparray)),
                 valid_pixels=0,
                 coverage_ratio=0.0,
                 geometry=scatter_request.geometry,
             )
 
         logger.debug("Downsampling data if needed")
-        if n_pairs > scatter_request.max_points:
-            rng = np.random.default_rng(0)
-            idx = rng.choice(
-                n_pairs, size=scatter_request.max_points, replace=False
+        if n_pairs_int > scatter_request.max_points:
+            rng_obj = np.random.default_rng(0)
+            idx_nparray = rng_obj.choice(
+                n_pairs_int, size=scatter_request.max_points, replace=False
             )
-            x_plot = x_vals[idx]
-            y_plot = y_vals[idx]
+            x_plot_nparray = x_vals_nparray[idx_nparray]
+            y_plot_nparray = y_vals_nparray[idx_nparray]
         else:
-            x_plot = x_vals
-            y_plot = y_vals
+            x_plot_nparray = x_vals_nparray
+            y_plot_nparray = y_vals_nparray
 
         logger.debug("Computing correlation and linear fit")
-        if n_pairs > 1:
-            x_std, y_std = np.std(x_vals), np.std(y_vals)
-            if x_std == 0 or y_std == 0:
-                pearson_r = None
+        if n_pairs_int > 1:
+            x_std_val, y_std_val = np.std(x_vals_nparray), np.std(
+                y_vals_nparray
+            )
+            if x_std_val == 0 or y_std_val == 0:
+                pearson_r_val = None
             else:
-                corr_value = np.corrcoef(x_vals, y_vals)[0, 1]
-                pearson_r = (
-                    float(corr_value) if np.isfinite(corr_value) else None
+                corr_val = np.corrcoef(x_vals_nparray, y_vals_nparray)[0, 1]
+                pearson_r_val = (
+                    float(corr_val) if np.isfinite(corr_val) else None
                 )
+        else:
+            pearson_r_val = None
 
+        if n_pairs_int > 1:
+            design_mtx_nparray = np.vstack(
+                [x_vals_nparray, np.ones_like(x_vals_nparray)]
+            ).T
+            slope_val, intercept_val = np.linalg.lstsq(
+                design_mtx_nparray, y_vals_nparray, rcond=None
+            )[
+                0
+            ]  # renamed: slope/intercept -> slope_val/intercept_val
+            slope_val = float(slope_val)
+            intercept_val = float(intercept_val)
         else:
-            pearson_r = None
-        if n_pairs > 1:
-            A = np.vstack([x_vals, np.ones_like(x_vals)]).T
-            slope, intercept = np.linalg.lstsq(A, y_vals, rcond=None)[0]
-            slope = float(slope)
-            intercept = float(intercept)
-        else:
-            slope = None
-            intercept = None
+            slope_val = None
+            intercept_val = None
 
         logger.debug("Computing 2D histogram")
-        hist2d_counts, x_edges, y_edges = np.histogram2d(
-            x_vals, y_vals, bins=scatter_request.histogram_bins
+        # existing 2D histogram
+        hist2d_counts_nparray, x_edges_nparray, y_edges_nparray = (
+            np.histogram2d(
+                x_vals_nparray,
+                y_vals_nparray,
+                bins=scatter_request.histogram_bins,
+            )
         )
-        hist2d_counts = hist2d_counts.astype("int64")
 
-        total_mask_pixels = int(np.count_nonzero(mask))
-        valid_pixels = int(n_pairs)
+        # add matching 1D histograms for X and Y using same edges
+        hist1d_x_counts_nparray, _ = np.histogram(
+            x_vals_nparray, bins=x_edges_nparray
+        )
+        hist1d_y_counts_nparray, _ = np.histogram(
+            y_vals_nparray, bins=y_edges_nparray
+        )
+
+        # ensure consistent dtype
+        hist2d_counts_nparray = hist2d_counts_nparray.astype("int64")
+        hist1d_x_counts_nparray = hist1d_x_counts_nparray.astype("int64")
+        hist1d_y_counts_nparray = hist1d_y_counts_nparray.astype("int64")
+        total_mask_pixels_int = int(np.count_nonzero(x_mask_nparray))
+        valid_pixels_int = int(n_pairs_int)
 
         logger.debug("Assembling ScatterOut response")
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
-            n_pairs=n_pairs,
-            x=x_plot.astype("float64").tolist(),
-            y=y_plot.astype("float64").tolist(),
-            hist2d=hist2d_counts.tolist(),
-            x_edges=x_edges.astype("float64").tolist(),
-            y_edges=y_edges.astype("float64").tolist(),
-            pearson_r=pearson_r,
-            slope=slope,
-            intercept=intercept,
-            window_mask_pixels=total_mask_pixels,
-            valid_pixels=valid_pixels,
+            n_pairs=n_pairs_int,
+            x=x_plot_nparray.astype("float64").tolist(),
+            y=y_plot_nparray.astype("float64").tolist(),
+            hist2d=hist2d_counts_nparray.tolist(),
+            x_edges=x_edges_nparray.astype("float64").tolist(),
+            y_edges=y_edges_nparray.astype("float64").tolist(),
+            pearson_r=pearson_r_val,
+            slope=slope_val,
+            intercept=intercept_val,
+            hist1d_x=hist1d_x_counts_nparray,
+            hist1d_y=hist1d_y_counts_nparray,
+            window_mask_pixels=total_mask_pixels_int,
+            valid_pixels=valid_pixels_int,
             coverage_ratio=(
-                float(valid_pixels / total_mask_pixels)
-                if total_mask_pixels
+                float(valid_pixels_int / total_mask_pixels_int)
+                if total_mask_pixels_int
                 else 0.0
             ),
             geometry=scatter_request.geometry,

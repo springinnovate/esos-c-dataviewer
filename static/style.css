@@ -286,19 +286,12 @@ select, input[type='range'], input[type='number'] {
   text-align: center;
 }
 
-/* add a narrow middle column for the flip button */
 .controls { grid-template-columns: auto minmax(260px, 1fr) auto minmax(420px, 1fr); }
-
-/* keep selectors in col 2, move style panels to col 4 */
 .selectors label:nth-child(1) { grid-column: 2; grid-row: 1; }
 .selectors label:nth-child(2) { grid-column: 2; grid-row: 2; }
 .style-panels .style-panel:nth-child(1) { grid-column: 4; grid-row: 1; }
 .style-panels .style-panel:nth-child(2) { grid-column: 4; grid-row: 2; }
-
-/* flip column centered vertically */
 .flip-col { grid-column: 3; grid-row: 1 / span 2; display: flex; align-items: center; justify-content: center; }
-
-/* button style reusing existing vars */
 .btn {
   padding: .4rem .8rem;
   background: var(--panel);

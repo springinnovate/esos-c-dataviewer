@@ -27,6 +27,11 @@ const state = {
   lastScatterOpts: null,
 }
 
+/**
+ * Set the visibility of a specified WMS layer and synchronize its checkbox state.
+ * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
+ * @param {boolean} visible - Whether the layer should be visible (true) or hidden (false).
+ */
 function setLayerVisibility(layerId, visible) {
   const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
   if (layer) layer.setOpacity(visible ? 1 : 0)
@@ -35,7 +40,10 @@ function setLayerVisibility(layerId, visible) {
   if (cb) cb.checked = !!visible
 }
 
-// apply stored visibility when (re)creating layers
+/**
+ * Apply the stored visibility state to a layer when it is created or reinitialized.
+ * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
+ */
 function attachInitialOpacity(layerId) {
   const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
   if (!layer) return
@@ -43,7 +51,10 @@ function attachInitialOpacity(layerId) {
   layer.setOpacity(visible ? 1 : 0)
 }
 
-// wire up checkboxes
+/**
+ * Initialize visibility checkboxes for layers A and B and wire their change events.
+ * When a checkbox is toggled, it updates the corresponding layer's visibility.
+ */
 function wireVisibilityCheckboxes() {
   ;['A', 'B'].forEach(id => {
     const cb = document.getElementById(`layerVisible${id}`)

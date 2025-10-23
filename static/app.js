@@ -819,9 +819,8 @@ function renderScatterOverlay(opts) {
     rasterX, rasterY,
     centerLng, centerLat,
     boxKm,
-    scatterObj // could be null if not generated yet
+    scatterObj // normal behavior to be null if not generated yet
   } = opts
-
 
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')

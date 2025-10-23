@@ -831,12 +831,12 @@ function renderScatterOverlay(opts) {
 
   const s = scatterObj || {}
   const stats = {
-    n: s.n_pairs ?? null,
+    n: parseInt(s.n_pairs) ?? null,
     r: s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
-    window_mask_pixels: s.window_mask_pixels ?? null,
-    valid_pixels: s.valid_pixels ?? null,
+    window_mask_pixels: parseInt(s.window_mask_pixels) ?? null,
+    valid_pixels: parseInt(s.valid_pixels) ?? null,
     coverage_ratio: s.coverage_ratio ?? null,
   }
 

@@ -454,7 +454,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         x_win_affine = x_ds.window_transform(x_win_obj)
 
         logger.debug("Building geometry mask")
-        x_mask_nparray = geometry_mask(  # _nparray = np.ndarray of bool
+        x_mask_nparray = geometry_mask(
             [mapping(geom_x_shape)],
             transform=x_win_affine,
             invert=True,

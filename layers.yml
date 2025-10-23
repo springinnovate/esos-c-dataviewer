@@ -8,7 +8,7 @@ local_working_dir: ${GEOSERVER_LOCAL_DATA_DIR}/processed_rasters
 
 style: ${GEOSERVER_LOCAL_DATA_DIR}/styles/dynamic_style.sld
 
-target_projection: EPSG:3857
+target_projection: EPSG:3347
 
 layers:
   carbon_above:

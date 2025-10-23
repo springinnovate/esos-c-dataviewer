@@ -33,12 +33,12 @@ Example:
 """
 
 from pathlib import Path
-from shutil import copy2
 from typing import Any
 import argparse
 import logging
 import os
 import sys
+import tempfile
 import time
 
 from dotenv import load_dotenv
@@ -46,8 +46,8 @@ from ecoshard import taskgraph
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
+from rasterio.windows import Window
 import numpy as np
-import psutil
 import rasterio
 import requests
 import yaml
@@ -582,8 +582,75 @@ def _build_overviews_inplace(
     with rasterio.Env(**env):
         with rasterio.open(tif_path, "r+") as ds:
             rs = _pick_resampling(ds.dtypes[0])
+            logger.debug(f"about to build these overview factors: {factors}")
             ds.build_overviews(factors, rs)
             ds.update_tags(ns="rio_overview", resampling=rs.name)
+
+
+def crop_to_valid(src_path: str, dst_path: str, tile: int, compress: str):
+    """Crop a raster to its valid (non-nodata) extent.
+
+    This function identifies the minimal bounding box that encloses all valid
+    pixels in the source raster (based on its dataset mask) and writes a new
+    GeoTIFF cropped to that region. It preserves the source dataset's
+    metadata and tags while updating spatial transform, dimensions, and
+    tiling/compression settings.
+
+    Args:
+        src_path (str): Path to the source raster file.
+        dst_path (str): Output path for the cropped raster file.
+        tile (int): Tile/block size in pixels for the output raster
+            (both x and y).
+        compress (str): Compression method for the output GeoTIFF
+            (e.g., 'DEFLATE', 'LZW', 'ZSTD').
+
+    Raises:
+        RuntimeError: If the source raster contains no valid pixels.
+
+    Notes:
+        - The function automatically determines the crop window based on the
+            valid data mask.
+        - The output is always tiled, with BIGTIFF enabled if necessary.
+        - Dataset-level and per-band tags are preserved.
+    """
+    with rasterio.open(src_path) as src:
+        valid = src.dataset_mask() > 0
+        if not valid.any():
+            raise RuntimeError("no valid pixels found")
+
+        rows = np.where(valid.any(axis=1))[0]
+        cols = np.where(valid.any(axis=0))[0]
+        r0, r1 = rows.min(), rows.max() + 1
+        c0, c1 = cols.min(), cols.max() + 1
+        window = Window.from_slices((r0, r1), (c0, c1))
+
+        out_transform = src.window_transform(window)
+        out_height = int(window.height)
+        out_width = int(window.width)
+
+        profile = src.profile.copy()
+        profile.update(
+            {
+                "driver": "GTiff",
+                "height": out_height,
+                "width": out_width,
+                "transform": out_transform,
+                "tiled": True,
+                "blockxsize": tile,
+                "blockysize": tile,
+                "compress": compress,
+                "BIGTIFF": "IF_SAFER",
+            }
+        )
+
+        with rasterio.open(dst_path, "w", **profile) as dst:
+            for bidx in range(1, src.count + 1):
+                dst.write(src.read(bidx, window=window), bidx)
+            # copy over dataset-level tags
+            dst.update_tags(**src.tags())
+            # copy band-level tags (if any)
+            for bidx in range(1, src.count + 1):
+                dst.update_tags(bidx, **src.tags(bidx))
 
 
 def reproject_and_build_overviews_if_needed(
@@ -612,38 +679,25 @@ def reproject_and_build_overviews_if_needed(
         ValueError: If the source raster lacks a valid CRS.
 
     """
+    logger.debug(f"starting processing of {src_path}")
     with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
         with rasterio.open(src_path) as src:
-            # dynamic overview factors: include 2**k while min_side / 2**k > 256
-            m = min(src.width, src.height)
-            factors = []
-            k = 1
-            while m / (2**k) > 256:
-                factors.append(2**k)
-                k += 1
-            overview_factors = tuple(factors)
-            src_crs = src.crs
-            if src_crs is not None and CRS.from_user_input(
-                src_crs
-            ) == CRS.from_user_input(target_projection):
-                copy2(src_path, dst_path)
-                out_path = str(dst_path)
-
-                _build_overviews_inplace(
-                    out_path,
-                    overview_factors,
-                )
-
-            if src_crs is None:
+            if src.crs is None:
                 raise ValueError(
                     "source raster has no CRS; cannot reproject reliably"
                 )
 
+            src_crs = CRS.from_user_input(src.crs)
             dst_crs = CRS.from_user_input(target_projection)
+            same_crs = src_crs == dst_crs
 
-            transform, width, height = calculate_default_transform(
-                src_crs, dst_crs, src.width, src.height, *src.bounds
-            )
+            # build destination profile (always enforce tiling/compression)
+            if same_crs:
+                transform, width, height = src.transform, src.width, src.height
+            else:
+                transform, width, height = calculate_default_transform(
+                    src_crs, dst_crs, src.width, src.height, *src.bounds
+                )
 
             dst_profile = src.profile.copy()
             dst_profile.update(
@@ -659,28 +713,59 @@ def reproject_and_build_overviews_if_needed(
                     "BIGTIFF": "IF_SAFER",
                 }
             )
-            rs = _pick_resampling(src.dtypes[0], resampling)
 
             os.makedirs(dst_path.parent, exist_ok=True)
+            rs = _pick_resampling(src.dtypes[0], resampling)
 
-            with rasterio.open(dst_path, "w", **dst_profile) as dst:
+            dst_dir = os.path.dirname(dst_path)
+            dst_base = os.path.basename(dst_path)
+
+            # create temporary file in same directory with unique suffix
+            tmp_fd, tmp_dst_path = tempfile.mkstemp(
+                prefix=dst_base + "_", suffix=".tmp", dir=dst_dir
+            )
+            os.close(
+                tmp_fd
+            )  # close descriptor immediately; we'll write manually later
+
+            with rasterio.open(tmp_dst_path, "w", **dst_profile) as dst:
                 if src.nodata is not None:
                     dst.nodata = src.nodata
-                for bidx in range(1, src.count + 1):
-                    reproject(
-                        source=rasterio.band(src, bidx),
-                        destination=rasterio.band(dst, bidx),
-                        src_transform=src.transform,
-                        src_crs=src_crs,
-                        dst_transform=transform,
-                        dst_crs=dst_crs,
-                        resampling=rs,
-                        num_threads=0,
-                    )
 
-    out_path = str(dst_path)
-    _build_overviews_inplace(out_path, overview_factors)
-    return out_path
+                if same_crs:
+                    # rewrite to enforce tiling/compression, no reprojection
+                    for bidx in range(1, src.count + 1):
+                        dst.write(src.read(bidx), bidx)
+                else:
+                    # reproject first, then build overviews
+                    for bidx in range(1, src.count + 1):
+                        reproject(
+                            source=rasterio.band(src, bidx),
+                            destination=rasterio.band(dst, bidx),
+                            src_transform=src.transform,
+                            src_crs=src_crs,
+                            dst_transform=transform,
+                            dst_crs=dst_crs,
+                            resampling=rs,
+                            num_threads=0,
+                        )
+
+        crop_to_valid(tmp_dst_path, dst_path, 256, "LZW")
+        os.remove(tmp_dst_path)
+
+        # compute overview factors from the FINAL raster size
+        with rasterio.open(dst_path, "r+") as dst:
+            min_side = min(dst.width, dst.height)
+            factors = []
+            k = 1
+            while min_side / (2**k) > 256:
+                factors.append(2**k)
+                k += 1
+            overview_factors = tuple(factors)
+
+        out_path = str(dst_path)
+        _build_overviews_inplace(out_path, overview_factors)
+        return out_path
 
 
 def main():
@@ -734,9 +819,9 @@ def main():
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
-    task_graph = taskgraph.TaskGraph(
-        local_working_dir, psutil.cpu_count(logical=False), 15.0
-    )
+    # doing -1 here because i often ran out of memory when processing more than
+    # one raster at a time
+    task_graph = taskgraph.TaskGraph(local_working_dir, -1, 15.0)
 
     timeout_seconds = 30
     geoserver_client = Gs(
@@ -784,7 +869,7 @@ def main():
                 geoserver_client,
                 workspace_id,
                 raster_id.lower(),
-                file_path,
+                target_path,
                 style_id,
             ),
             dependent_task_list=[process_task],

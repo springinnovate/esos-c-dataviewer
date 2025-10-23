@@ -1156,6 +1156,53 @@ function disableLeafletScrollOnAlt() {
 }
 
 /**
+ * Wire the "flip layers" button to toggle visibility between Layer A and Layer B.
+ *
+ * When the button with ID 'flipLayersBtn' is clicked, this function inverts
+ * the visibility state of the two layer checkboxes ('layerVisibleA' and
+ * 'layerVisibleB') so that only one layer is visible at a time.
+ *
+ * It then:
+ * - Dispatches 'change' events for both checkboxes to trigger any external listeners.
+ * - Calls `setLayerVisibility()` if available to update map layers directly.
+ * - Otherwise, adjusts layer opacity and `state.visibility` manually.
+ *
+ * This ensures the UI checkboxes, visibility state, and rendered layers
+ * remain synchronized when the user flips layers.
+ */
+function wireLayerFlipper() {
+  document.getElementById('flipLayersBtn')?.addEventListener('click', () => {
+    const cbA = document.getElementById('layerVisibleA');
+    const cbB = document.getElementById('layerVisibleB');
+    if (!cbA || !cbB) return;
+
+    const aOn = !!cbA.checked;
+    const bOn = !!cbB.checked;
+
+    const nextAOn = !(aOn && !bOn);
+    cbA.checked = nextAOn;
+    cbB.checked = !nextAOn;
+
+    cbA.dispatchEvent(new Event('change', { bubbles: true }));
+    cbB.dispatchEvent(new Event('change', { bubbles: true }));
+
+    if (typeof setLayerVisibility === 'function') {
+      setLayerVisibility('A', cbA.checked);
+      setLayerVisibility('B', cbB.checked);
+    } else {
+      const a = window.state?.wmsLayerA;
+      const b = window.state?.wmsLayerB;
+      if (a?.setOpacity) a.setOpacity(cbA.checked ? 1 : 0);
+      if (b?.setOpacity) b.setOpacity(cbB.checked ? 1 : 0);
+      if (window.state?.visibility) {
+        window.state.visibility.A = cbA.checked;
+        window.state.visibility.B = cbB.checked;
+      }
+    }
+  });
+}
+
+/**
  * App entrypoint.
  */
 ;(async function main() {
@@ -1169,6 +1216,7 @@ function disableLeafletScrollOnAlt() {
   document.getElementById('layerBCmaxInput').value = '#00ffff'
   initMap()
   wireSquareSamplerControls()
+  wireLayerFlipper()
   wireAreaSamplerClick()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()

@@ -285,3 +285,20 @@ select, input[type='range'], input[type='number'] {
   padding: 8px 12px;
   text-align: center;
 }
+
+.controls { grid-template-columns: auto minmax(260px, 1fr) auto minmax(420px, 1fr); }
+.selectors label:nth-child(1) { grid-column: 2; grid-row: 1; }
+.selectors label:nth-child(2) { grid-column: 2; grid-row: 2; }
+.style-panels .style-panel:nth-child(1) { grid-column: 4; grid-row: 1; }
+.style-panels .style-panel:nth-child(2) { grid-column: 4; grid-row: 2; }
+.flip-col { grid-column: 3; grid-row: 1 / span 2; display: flex; align-items: center; justify-content: center; }
+.btn {
+  padding: .4rem .8rem;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+.btn:hover { border-color: var(--brand); color: var(--brand-hover); }
+.btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

@@ -264,7 +264,6 @@ select, input[type='range'], input[type='number'] {
 .leaflet-layer.blend-base   { mix-blend-mode: normal; }
 .leaflet-container { background: transparent; }
 
-
 /* Minimal layout */
 .layer-control { display: grid; grid-template-columns: 100px 1fr; gap: var(--space-2, 8px); align-items: center; }
 .layer-inputs { display: flex; gap: var(--space-2, 8px); align-items: center; }

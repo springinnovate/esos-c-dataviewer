@@ -1204,11 +1204,8 @@ function wireLayerFlipper() {
  * - It fills the corresponding input fields:
  *   `layer{A,B}MinInput`, `layer{A,B}MedInput`, and `layer{A,B}MaxInput`.
  * - Each updated input dispatches a 'change' event so downstream listeners update.
- * - Finally, it calls `renderScatterOverlay()` (if defined) to refresh the plot.
+ * - Finally, it calls `renderScatterOverlay()` to refresh the plot.
  *
- * Dependencies:
- * - `state.scatterObj` containing `x_edges` and `y_edges`
- * - Optional: `renderScatterOverlay()` for UI refresh
  */
 function wireAutoStyleFromHistogram() {
   const btn = document.getElementById('applyAutoStyleBtn');

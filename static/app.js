@@ -25,6 +25,7 @@ const state = {
   didInitialCenter: false,
   visibility: { A: true, B: true },
   lastScatterOpts: null,
+  scatterObj: null,
 }
 
 /**
@@ -935,6 +936,7 @@ function renderScatterOverlay(opts) {
     );
     plotEl.appendChild(svg);
   }
+  state.scatterObj = scatterObj;
 }
 
 // do i actually want this?
@@ -1186,18 +1188,60 @@ function wireLayerFlipper() {
     cbA.dispatchEvent(new Event('change', { bubbles: true }));
     cbB.dispatchEvent(new Event('change', { bubbles: true }));
 
-    if (typeof setLayerVisibility === 'function') {
-      setLayerVisibility('A', cbA.checked);
-      setLayerVisibility('B', cbB.checked);
-    } else {
-      const a = window.state?.wmsLayerA;
-      const b = window.state?.wmsLayerB;
-      if (a?.setOpacity) a.setOpacity(cbA.checked ? 1 : 0);
-      if (b?.setOpacity) b.setOpacity(cbB.checked ? 1 : 0);
-      if (window.state?.visibility) {
-        window.state.visibility.A = cbA.checked;
-        window.state.visibility.B = cbB.checked;
-      }
+    setLayerVisibility('A', cbA.checked);
+    setLayerVisibility('B', cbB.checked);
+  });
+}
+
+/**
+ * Wire the "Set Min/Med/Max from Histogram" button to automatically
+ * populate layer style value inputs based on the current histogram ranges.
+ *
+ * When the button with ID 'applyAutoStyleBtn' is clicked:
+ * - It reads `state.scatterObj.x_edges` and `state.scatterObj.y_edges`, which
+ *   represent the histogram bin edges for Layer A (x-axis) and Layer B (y-axis).
+ * - For each layer, it computes the minimum, median, and maximum edge values.
+ * - It fills the corresponding input fields:
+ *   `layer{A,B}MinInput`, `layer{A,B}MedInput`, and `layer{A,B}MaxInput`.
+ * - Each updated input dispatches a 'change' event so downstream listeners update.
+ * - Finally, it calls `renderScatterOverlay()` to refresh the plot.
+ *
+ */
+function wireAutoStyleFromHistogram() {
+  const btn = document.getElementById('applyAutoStyleBtn');
+  if (!btn) return;
+
+  const getMinMedMaxFromEdges = (edges) => {
+    if (!edges || !edges.length) return null;
+    const min = edges[0];
+    const max = edges[edges.length - 1];
+    const mid = (edges.length - 1) / 2;
+    const med = Number.isInteger(mid) ? edges[mid] : (edges[Math.floor(mid)] + edges[Math.ceil(mid)]) / 2;
+    return { min, med, max };
+  };
+
+  const setTriple = (layerId, triple) => {
+    if (!triple) return;
+    const fmt = (v) => Number.isFinite(v) ? +v.toPrecision(6) : '';
+    const minEl = document.getElementById(`layer${layerId}MinInput`);
+    const medEl = document.getElementById(`layer${layerId}MedInput`);
+    const maxEl = document.getElementById(`layer${layerId}MaxInput`);
+    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true }))};
+    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true }))};
+    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }))};
+  };
+
+  btn.addEventListener('click', () => {
+    const so = state?.scatterObj;
+    const xEdges = so?.x_edges;
+    const yEdges = so?.y_edges;
+    const a = getMinMedMaxFromEdges(xEdges);
+    const b = getMinMedMaxFromEdges(yEdges);
+    setTriple('A', a);
+    setTriple('B', b);
+
+    if (typeof renderScatterOverlay === 'function') {
+      renderScatterOverlay(state?.lastScatterOpts);
     }
   });
 }
@@ -1221,6 +1265,7 @@ function wireLayerFlipper() {
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()
+  wireAutoStyleFromHistogram()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

@@ -302,3 +302,12 @@ select, input[type='range'], input[type='number'] {
 }
 .btn:hover { border-color: var(--brand); color: var(--brand-hover); }
 .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.flip-col { gap: 8px; flex-direction: column; }
+.flip-col .rule {
+  width: 80%;
+  height: 1px;
+  background: var(--border);
+  margin: 8px 0;
+  opacity: .8;
+}

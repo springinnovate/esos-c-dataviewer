@@ -815,10 +815,6 @@ function renderScatterOverlay(opts) {
   state.lastScatterOpts = opts
   const visA = document.getElementById('layerVisibleA')?.checked ?? true;
   const visB = document.getElementById('layerVisibleB')?.checked ?? true;
-
-  if (!visA & !visB) {
-    return;
-  }
   const {
     rasterX, rasterY,
     centerLng, centerLat,
@@ -833,7 +829,6 @@ function renderScatterOverlay(opts) {
 
   const hasData = !!scatterObj
 
-  // derive stats (optional keys guarded)
   const s = scatterObj || {}
   const stats = {
     n: s.n_pairs ?? null,
@@ -869,7 +864,6 @@ function renderScatterOverlay(opts) {
       </div>
 
       <div>
-        <div class='muted' style='margin-bottom:6px;'>Scatter</div>
         <div id='scatterPlot' class='plot-holder'>
           ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
         </div>
@@ -878,10 +872,16 @@ function renderScatterOverlay(opts) {
    `
   const plotEl = document.getElementById('scatterPlot');
   overlay.classList.remove('hidden');
-  plotEl.innerHTML = '';
+  if (!visA && !visB) {
+      plotEl.innerHTML = `<div class="no-layers-msg">
+        <span> No layers selected</span>
+      </div>`;
+      return
+  }
   if (!scatterObj) {
     return;
   }
+  plotEl.innerHTML = '';
   const has2D =
     !!scatterObj &&
     Array.isArray(scatterObj.hist2d) &&

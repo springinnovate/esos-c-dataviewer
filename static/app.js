@@ -1191,6 +1191,18 @@ function wireLayerFlipper() {
     setLayerVisibility('A', cbA.checked);
     setLayerVisibility('B', cbB.checked);
   });
+document.getElementById('bothLayersOnBtn')?.addEventListener('click', () => {
+    const cbA = document.getElementById('layerVisibleA');
+    const cbB = document.getElementById('layerVisibleB');
+    cbA.checked = true
+    cbB.checked = true
+
+    cbA.dispatchEvent(new Event('change', { bubbles: true }));
+    cbB.dispatchEvent(new Event('change', { bubbles: true }));
+
+    setLayerVisibility('A', cbA.checked);
+    setLayerVisibility('B', cbB.checked);
+  });
 }
 
 /**

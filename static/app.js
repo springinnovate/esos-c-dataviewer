@@ -1600,6 +1600,169 @@ function _blendScreenRGB(a, b) {
   ];
 }
 
+// Pixel value probe: hover overlay that follows the cursor and shows per-layer values
+function wirePixelProbe() {
+  const map = state.map
+  if (!map) return
+
+  // create probe element
+  let probe = document.querySelector('.pixel-probe')
+  if (!probe) {
+    probe = document.createElement('div')
+    probe.className = 'pixel-probe'
+    Object.assign(probe.style, {
+      position: 'fixed',
+      left: '0px',
+      top: '0px',
+      padding: '6px 8px',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: '11px',
+      color: '#e5e7eb',
+      background: 'rgba(17, 21, 28, 0.92)',
+      border: '1px solid #334155',
+      borderRadius: '6px',
+      pointerEvents: 'none',
+      zIndex: 9999,
+      display: 'none',
+      whiteSpace: 'pre',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+      maxWidth: '320px'
+    })
+    document.body.appendChild(probe)
+  }
+
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '—')
+  const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
+
+  let lastFetchTs = 0
+  let inFlight = null
+  let pending = null
+  const RATE_MS = 100
+
+  const abortPrev = () => {
+    if (inFlight?.ac) {
+      try { inFlight.ac.abort() } catch {}
+    }
+    inFlight = null
+  }
+
+  async function fetchPixelVal(rasterId, lng, lat, ac) {
+    const res = await fetch(`${state.baseStatsUrl}/stats/pixel_val`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: ac?.signal,
+      body: JSON.stringify({
+        raster_id: rasterId,
+        lon: lng,
+        lat: lat,
+        from_crs: 'EPSG:4326'
+      })
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }
+
+  async function queryAndRender(latlng, clientX, clientY) {
+    const ts = Date.now()
+    lastFetchTs = ts
+    const ac = new AbortController()
+    inFlight = { ts, ac }
+
+    const aIdx = state.activeLayerIdxA
+    const bIdx = state.activeLayerIdxB
+    const nameA = layerName(aIdx)
+    const nameB = layerName(bIdx)
+
+    let valA = null
+    let valB = null
+
+    try {
+      const jobs = []
+      if (Number.isInteger(aIdx)) {
+        jobs.push(
+          fetchPixelVal(nameA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
+        )
+      }
+      if (Number.isInteger(bIdx)) {
+        jobs.push(
+          fetchPixelVal(nameB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
+        )
+      }
+      await Promise.all(jobs)
+    } catch (e) {
+      if (ac.signal.aborted) return
+      // non-fatal: keep probe visible with error marker
+    } finally {
+      if (inFlight?.ts === ts) inFlight = null
+    }
+
+    // update probe position + content
+    const lines = [
+      `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
+      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '—' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '—' : String(valB)}` : null,
+    ].filter(Boolean)
+
+    probe.textContent = lines.join('\n')
+    probe.style.left = `${clientX + 12}px`
+    probe.style.top = `${clientY + 12}px`
+    probe.style.display = 'block'
+  }
+
+  function schedule(latlng, clientX, clientY) {
+    const now = Date.now()
+    if (inFlight) {
+      pending = { latlng, clientX, clientY }
+      abortPrev() // prefer newest pointer position
+    }
+    if (now - lastFetchTs < RATE_MS) {
+      pending = { latlng, clientX, clientY }
+      return
+    }
+    queryAndRender(latlng, clientX, clientY)
+  }
+
+  // drain any pending request after abort/rate-limit
+  const drainTimer = setInterval(() => {
+    if (!pending) return
+    if (inFlight) return
+    const p = pending
+    pending = null
+    queryAndRender(p.latlng, p.clientX, p.clientY)
+  }, 60)
+
+  map.on('mousemove', (e) => {
+    const latlng = e.latlng
+    const oe = e.originalEvent
+    const cx = oe?.clientX ?? 0
+    const cy = oe?.clientY ?? 0
+    schedule(latlng, cx, cy)
+  })
+
+  map.on('mouseout', () => {
+    probe.style.display = 'none'
+    abortPrev()
+    pending = null
+  })
+
+  // optional: hide on overlay close
+  const overlay = document.getElementById('statsOverlay')
+  if (overlay) {
+    overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
+    overlay.addEventListener('mouseleave', () => { /* will show again on next mousemove */ })
+  }
+
+  // teardown helper (if you ever need it)
+  map._pixelProbeTeardown = () => {
+    clearInterval(drainTimer)
+    abortPrev()
+    pending = null
+    map.off('mousemove')
+    map.off('mouseout')
+    if (probe && probe.parentNode) probe.parentNode.removeChild(probe)
+  }
+}
+
 
 /**
  * App entrypoint.
@@ -1622,6 +1785,7 @@ function _blendScreenRGB(a, b) {
   wireVisibilityCheckboxes()
   wireAutoStyleFromHistogram()
   wirePercentiles()
+  wirePixelProbe()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

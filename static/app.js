@@ -27,6 +27,7 @@ const state = {
   lastScatterOpts: null,
   scatterObj: null,
   percentiles: null,
+  lastPixelPoint: null,
 }
 
 /**
@@ -935,9 +936,16 @@ function renderScatterOverlay(opts) {
       scatterObj.x_edges,
       scatterObj.y_edges,
       scatterObj.hist2d,
-      { width: 420, height: 320, pad: 40, percentiles: state.percentiles,
-       layerIdX: 'A', layerIdY: 'B' },
-
+      {
+        width: 420,
+        height: 320,
+        pad: 40,
+        percentiles: state.percentiles,
+        layerIdX: 'A',
+        layerIdY: 'B',
+        blend: 'plus-lighter',
+        point: state.lastPixelPoint // <-- new
+      }
     );
     plotEl.appendChild(svg);
   }
@@ -1079,6 +1087,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const blendMode = opts.blend || 'plus-lighter';
   const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
   const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
+  const point = opts.point || null
 
   const parsePercent = p => {
     if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
@@ -1276,6 +1285,58 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
+
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+      // only draw if within current axis ranges
+      if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
+        const px = scaleX(point.x);
+        const py = scaleY(point.y);
+
+        const colA = _styleColorArrForValue(layerIdX, point.x);
+        const colB = _styleColorArrForValue(layerIdY, point.y);
+        const blended =
+          blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+        const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+
+        const circ = document.createElementNS(svgNS, 'circle');
+        circ.setAttribute('cx', String(px));
+        circ.setAttribute('cy', String(py));
+        circ.setAttribute('r', '3.5');
+        circ.setAttribute('fill', markerColor);
+        circ.setAttribute('stroke', '#000');
+        circ.setAttribute('stroke-width', '1');
+        circ.setAttribute('opacity', '0.95');
+        svg.appendChild(circ);
+
+        const label = document.createElementNS(svgNS, 'text');
+        label.textContent = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+        label.setAttribute('x', String(px + 6));
+        label.setAttribute('y', String(py - 6));
+        label.setAttribute('fill', '#ddd');
+        label.setAttribute('font-size', '10');
+        label.setAttribute('text-anchor', 'start');
+        label.setAttribute('paint-order', 'stroke');
+        label.setAttribute('stroke', '#000');
+        label.setAttribute('stroke-width', '2');
+        label.setAttribute('stroke-opacity', '0.6');
+        svg.appendChild(label);
+
+        // optional hover tooltip with layer/value annotation
+        const tipText = point.label || `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+        [circ, label].forEach(el => {
+          el.style.cursor = 'default';
+          el.addEventListener('mouseenter', e => {
+            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+          });
+          el.addEventListener('mousemove', e => {
+            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+          });
+          el.addEventListener('mouseleave', () => {
+            if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+          });
+        });
+    }
+  }
   return svg;
 }
 
@@ -1707,6 +1768,22 @@ function wirePixelProbe() {
     probe.style.left = `${clientX + 12}px`
     probe.style.top = `${clientY + 12}px`
     probe.style.display = 'block'
+
+    // in wirePixelProbe(), after computing valA/valB (inside queryAndRender) add:
+    const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
+    if (bothFinite) {
+      state.lastPixelPoint = {
+        x: valA,
+        y: valB,
+        label: `${nameA}: ${valA} • ${nameB}: ${valB}`
+      }
+      // if scatter is visible, refresh to draw marker
+      if (state?.lastScatterOpts && state?.scatterObj) {
+        renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
+      }
+    } else {
+      state.lastPixelPoint = null
+    }
   }
 
   function schedule(latlng, clientX, clientY) {

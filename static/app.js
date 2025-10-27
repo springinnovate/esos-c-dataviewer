@@ -27,6 +27,7 @@ const state = {
   lastScatterOpts: null,
   scatterObj: null,
   percentiles: null,
+  lastPixelPoint: null,
 }
 
 /**
@@ -935,9 +936,16 @@ function renderScatterOverlay(opts) {
       scatterObj.x_edges,
       scatterObj.y_edges,
       scatterObj.hist2d,
-      { width: 420, height: 320, pad: 40, percentiles: state.percentiles,
-       layerIdX: 'A', layerIdY: 'B' },
-
+      {
+        width: 420,
+        height: 320,
+        pad: 40,
+        percentiles: state.percentiles,
+        layerIdX: 'A',
+        layerIdY: 'B',
+        blend: 'plus-lighter',
+        point: state.lastPixelPoint
+      }
     );
     plotEl.appendChild(svg);
   }
@@ -1079,6 +1087,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const blendMode = opts.blend || 'plus-lighter';
   const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
   const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
+  const point = opts.point || null
 
   const parsePercent = p => {
     if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
@@ -1276,6 +1285,57 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
+
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+      // only draw if within current axis ranges
+      if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
+        const px = scaleX(point.x);
+        const py = scaleY(point.y);
+
+        const colA = _styleColorArrForValue(layerIdX, point.x);
+        const colB = _styleColorArrForValue(layerIdY, point.y);
+        const blended =
+          blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+        const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+
+        const circ = document.createElementNS(svgNS, 'circle');
+        circ.setAttribute('cx', String(px));
+        circ.setAttribute('cy', String(py));
+        circ.setAttribute('r', '3.5');
+        circ.setAttribute('fill', markerColor);
+        circ.setAttribute('stroke', '#000');
+        circ.setAttribute('stroke-width', '1');
+        circ.setAttribute('opacity', '0.95');
+        svg.appendChild(circ);
+
+        const label = document.createElementNS(svgNS, 'text');
+        label.textContent = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+        label.setAttribute('x', String(px + 6));
+        label.setAttribute('y', String(py - 6));
+        label.setAttribute('fill', '#ddd');
+        label.setAttribute('font-size', '10');
+        label.setAttribute('text-anchor', 'start');
+        label.setAttribute('paint-order', 'stroke');
+        label.setAttribute('stroke', '#000');
+        label.setAttribute('stroke-width', '2');
+        label.setAttribute('stroke-opacity', '0.6');
+        svg.appendChild(label);
+
+        const tipText = point.label || `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+        [circ, label].forEach(el => {
+          el.style.cursor = 'default';
+          el.addEventListener('mouseenter', e => {
+            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+          });
+          el.addEventListener('mousemove', e => {
+            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+          });
+          el.addEventListener('mouseleave', () => {
+            if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+          });
+        });
+    }
+  }
   return svg;
 }
 
@@ -1600,6 +1660,181 @@ function _blendScreenRGB(a, b) {
   ];
 }
 
+// Pixel value probe: hover overlay that follows the cursor and shows per-layer values
+function wirePixelProbe() {
+  const map = state.map
+  if (!map) return
+
+  // create probe element
+  let probe = document.querySelector('.pixel-probe')
+  if (!probe) {
+    probe = document.createElement('div')
+    probe.className = 'pixel-probe'
+    Object.assign(probe.style, {
+      position: 'fixed',
+      left: '0px',
+      top: '0px',
+      padding: '6px 8px',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: '11px',
+      color: '#e5e7eb',
+      background: 'rgba(17, 21, 28, 0.92)',
+      border: '1px solid #334155',
+      borderRadius: '6px',
+      pointerEvents: 'none',
+      zIndex: 9999,
+      display: 'none',
+      whiteSpace: 'pre',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+      maxWidth: '320px'
+    })
+    document.body.appendChild(probe)
+  }
+
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '—')
+  const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
+
+  let lastFetchTs = 0
+  let inFlight = null
+  let pending = null
+  const RATE_MS = 100
+
+  const abortPrev = () => {
+    if (inFlight?.ac) {
+      try { inFlight.ac.abort() } catch {}
+    }
+    inFlight = null
+  }
+
+  async function fetchPixelVal(rasterId, lng, lat, ac) {
+    const res = await fetch(`${state.baseStatsUrl}/stats/pixel_val`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: ac?.signal,
+      body: JSON.stringify({
+        raster_id: rasterId,
+        lon: lng,
+        lat: lat,
+        from_crs: 'EPSG:4326'
+      })
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }
+
+  async function queryAndRender(latlng, clientX, clientY) {
+    const ts = Date.now()
+    lastFetchTs = ts
+    const ac = new AbortController()
+    inFlight = { ts, ac }
+
+    const aIdx = state.activeLayerIdxA
+    const bIdx = state.activeLayerIdxB
+    const nameA = layerName(aIdx)
+    const nameB = layerName(bIdx)
+
+    let valA = null
+    let valB = null
+
+    try {
+      const jobs = []
+      if (Number.isInteger(aIdx)) {
+        jobs.push(
+          fetchPixelVal(nameA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
+        )
+      }
+      if (Number.isInteger(bIdx)) {
+        jobs.push(
+          fetchPixelVal(nameB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
+        )
+      }
+      await Promise.all(jobs)
+    } catch (e) {
+      if (ac.signal.aborted) return
+      // non-fatal: keep probe visible with error marker
+    } finally {
+      if (inFlight?.ts === ts) inFlight = null
+    }
+
+    const lines = [
+      `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
+      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '—' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '—' : String(valB)}` : null,
+    ].filter(Boolean)
+
+    probe.textContent = lines.join('\n')
+    probe.style.left = `${clientX + 12}px`
+    probe.style.top = `${clientY + 12}px`
+    probe.style.display = 'block'
+
+    const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
+    if (bothFinite) {
+      state.lastPixelPoint = {
+        x: valA,
+        y: valB,
+        label: `${nameA}: ${valA} • ${nameB}: ${valB}`
+      }
+      // if scatter is visible, refresh to draw marker
+      if (state?.lastScatterOpts && state?.scatterObj) {
+        renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
+      }
+    } else {
+      state.lastPixelPoint = null
+    }
+  }
+
+  function schedule(latlng, clientX, clientY) {
+    const now = Date.now()
+    if (inFlight) {
+      pending = { latlng, clientX, clientY }
+      abortPrev() // prefer newest pointer position
+    }
+    if (now - lastFetchTs < RATE_MS) {
+      pending = { latlng, clientX, clientY }
+      return
+    }
+    queryAndRender(latlng, clientX, clientY)
+  }
+
+  // drain any pending request after abort/rate-limit
+  const drainTimer = setInterval(() => {
+    if (!pending) return
+    if (inFlight) return
+    const p = pending
+    pending = null
+    queryAndRender(p.latlng, p.clientX, p.clientY)
+  }, 60)
+
+  map.on('mousemove', (e) => {
+    const latlng = e.latlng
+    const oe = e.originalEvent
+    const cx = oe?.clientX ?? 0
+    const cy = oe?.clientY ?? 0
+    schedule(latlng, cx, cy)
+  })
+
+  map.on('mouseout', () => {
+    probe.style.display = 'none'
+    abortPrev()
+    pending = null
+  })
+
+  const overlay = document.getElementById('statsOverlay')
+  if (overlay) {
+    overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
+    overlay.addEventListener('mouseleave', () => { /* will show again on next mousemove */ })
+  }
+
+  map._pixelProbeTeardown = () => {
+    clearInterval(drainTimer)
+    abortPrev()
+    pending = null
+    map.off('mousemove')
+    map.off('mouseout')
+    if (probe && probe.parentNode) probe.parentNode.removeChild(probe)
+  }
+}
+
 
 /**
  * App entrypoint.
@@ -1622,6 +1857,7 @@ function _blendScreenRGB(a, b) {
   wireVisibilityCheckboxes()
   wireAutoStyleFromHistogram()
   wirePercentiles()
+  wirePixelProbe()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

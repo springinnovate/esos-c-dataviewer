@@ -905,6 +905,7 @@ function renderScatterOverlay(opts) {
     Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
   // if either A or B is turned off, show a 1D histogram
+    ///put it here???
   if (!visA && visB && has1DY) {
     // A off -> show histogram along Y axis
     const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
@@ -964,10 +965,11 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   const innerH = h - pad * 2;
 
   const n = Math.max(0, edges.length - 1);
-  const maxCount = Math.max(1, ...counts);
+  const maxCount = Math.max(1, ...counts.map(c => (Number.isFinite(c) ? c : 0)));
 
   const minVal = Math.min(...edges);
   const maxVal = Math.max(...edges);
+  const domainSpan = Math.max(1e-9, maxVal - minVal);
 
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
@@ -987,7 +989,7 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     l.setAttribute('stroke-width', '1');
     return l;
   };
-  const mkText = (txt, x, y, anchor = 'middle') => {
+  const mkText = (txt, x, y, anchor = 'middle', rotate = 0) => {
     const t = document.createElementNS(svgNS, 'text');
     t.textContent = txt;
     t.setAttribute('x', x);
@@ -995,16 +997,60 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     t.setAttribute('fill', '#aaa');
     t.setAttribute('font-size', '10');
     t.setAttribute('text-anchor', anchor);
+    if (rotate) t.setAttribute('transform', `rotate(${rotate}, ${x}, ${y})`);
     return t;
   };
+
+  // helpers for percentiles
+  const parsePercent = p => {
+    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
+    if (typeof p === 'string') {
+      const s = p.trim();
+      if (!s) return null;
+      const hasPct = s.endsWith('%');
+      const num = parseFloat(s);
+      if (!Number.isFinite(num)) return null;
+      return hasPct || num > 1 ? num / 100 : num;
+    }
+    return null;
+  };
+
+  const totalCount = counts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  const percentileColor = opts.percentileColor ?? '#60a5fa';
+  const percentileTickLength = opts.percentileTickLength ?? 6;
+  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
+
+  const getQuantileValue = q => {
+    const target = q * totalCount;
+    if (target <= 0) return minVal;
+    let cum = 0;
+    for (let i = 0; i < n; i++) {
+      const c = Number.isFinite(counts[i]) ? counts[i] : 0;
+      const nextCum = cum + c;
+      if (target <= nextCum) {
+        const e0 = edges[i];
+        const e1 = edges[i + 1];
+        const f = c > 0 ? (target - cum) / c : 0;
+        return e0 + f * (e1 - e0);
+      }
+      cum = nextCum;
+    }
+    return maxVal;
+  };
+
+  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
+  const percentiles = [...new Set(percentilesRaw
+    .map(parsePercent)
+    .filter(p => p !== null && p >= 0 && p <= 1)
+  )].sort((a, b) => a - b);
 
   if (axis === 'x') {
     // axes
     svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis
     svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis
 
-    const scaleX = v => pad + ((v - minVal) / (maxVal - minVal)) * innerW;
-    const scaleH = c => (c / maxCount) * innerH;
+    const scaleX = v => pad + ((v - minVal) / domainSpan) * innerW;
+    const scaleH = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerH;
 
     for (let i = 0; i < n; i++) {
       const x0 = scaleX(edges[i]);
@@ -1021,6 +1067,27 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
       svg.appendChild(rect);
     }
 
+    // percentile ticks (x-axis)
+    if (percentiles.length && totalCount > 0) {
+      for (const p of percentiles) {
+        const val = getQuantileValue(p);
+        const x = scaleX(val);
+
+        const tick = document.createElementNS(svgNS, 'line');
+        tick.setAttribute('x1', String(x));
+        tick.setAttribute('y1', String(h - pad));
+        tick.setAttribute('x2', String(x));
+        tick.setAttribute('y2', String(h - pad + percentileTickLength));
+        tick.setAttribute('stroke', percentileColor);
+        tick.setAttribute('stroke-width', '1');
+        svg.appendChild(tick);
+
+        const lbl = mkText(val.toFixed(percentileDecimals), x, h - pad + percentileTickLength + 10, 'middle', -45);
+        lbl.setAttribute('fill', percentileColor);
+        svg.appendChild(lbl);
+      }
+    }
+
     svg.appendChild(mkText(minVal.toFixed(2), pad, h - pad + 12, 'start'));
     svg.appendChild(mkText(maxVal.toFixed(2), w - pad, h - pad + 12, 'end'));
     svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
@@ -1030,8 +1097,8 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis (counts)
     svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis (values)
 
-    const scaleY = v => h - pad - ((v - minVal) / (maxVal - minVal)) * innerH;
-    const scaleW = c => (c / maxCount) * innerW;
+    const scaleY = v => h - pad - ((v - minVal) / domainSpan) * innerH;
+    const scaleW = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerW;
 
     for (let i = 0; i < n; i++) {
       const y0 = scaleY(edges[i]);
@@ -1046,6 +1113,27 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
       rect.setAttribute('fill', '#eab308');
       rect.setAttribute('fill-opacity', '0.85');
       svg.appendChild(rect);
+    }
+
+    // percentile ticks (y-axis)
+    if (percentiles.length && totalCount > 0) {
+      for (const p of percentiles) {
+        const val = getQuantileValue(p);
+        const y = scaleY(val);
+
+        const tick = document.createElementNS(svgNS, 'line');
+        tick.setAttribute('x1', String(pad - percentileTickLength));
+        tick.setAttribute('y1', String(y));
+        tick.setAttribute('x2', String(pad));
+        tick.setAttribute('y2', String(y));
+        tick.setAttribute('stroke', percentileColor);
+        tick.setAttribute('stroke-width', '1');
+        svg.appendChild(tick);
+
+        const lbl = mkText(val.toFixed(percentileDecimals), pad - percentileTickLength - 4, y + 3, 'end');
+        lbl.setAttribute('fill', percentileColor);
+        svg.appendChild(lbl);
+      }
     }
 
     svg.appendChild(mkText('0', pad, h - pad + 12, 'middle'));

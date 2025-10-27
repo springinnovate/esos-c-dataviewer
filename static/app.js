@@ -906,7 +906,6 @@ function renderScatterOverlay(opts) {
     Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
   // if either A or B is turned off, show a 1D histogram
-    ///put it here???
   if (!visA && visB && has1DY) {
     // A off -> show histogram along Y axis
     const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {

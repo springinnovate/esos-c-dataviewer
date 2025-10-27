@@ -180,11 +180,47 @@ const state = {
       lightenerColor: '#00ffff',
       strength: 1.0
     }),
-    cmapGrayWhite: createBivariateColormap({
+
+    grayWhite: createBivariateColormap({
       baseRamp: ['#222222', '#777777', '#dddddd'],
       lightenerColor: '#ffffff',
       strength: 1.0
     }),
+
+    tealMagenta: createBivariateColormap({
+      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
+      lightenerColor: '#ff66cc',
+      strength: 0.9
+    }),
+
+    greenPurple: createBivariateColormap({
+      baseRamp: ['#003300', '#66aa55', '#ccff99'],
+      lightenerColor: '#aa55ff',
+      strength: 1.0
+    }),
+
+    redCyan: createBivariateColormap({
+      baseRamp: ['#220000', '#cc3333', '#ff6666'],
+      lightenerColor: '#00ffff',
+      strength: 0.8
+    }),
+
+    indigoGold: createBivariateColormap({
+      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
+      lightenerColor: '#ffef99',
+      strength: 1.0
+    }),
+
+    brownSky: createBivariateColormap({
+      baseRamp: ['#332211', '#996633', '#ffcc66'],
+      lightenerColor: '#66ccff',
+      strength: 1.0
+    }),
+    steelRose: createBivariateColormap({
+      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
+      lightenerColor: '#f472b6',
+      strength: 1.0
+    })
   },
 }
 
@@ -1064,7 +1100,7 @@ function renderScatterOverlay(opts) {
     Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
   // if either A or B is turned off, show a 1D histogram
-  if (!visA && visB && has1DY) {
+  /*if (!visA && visB && has1DY) {
     // A off -> show histogram along Y axis
     const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
       width: 420,
@@ -1085,7 +1121,7 @@ function renderScatterOverlay(opts) {
       layerId: 'A'
     });
     plotEl.appendChild(svg);
-  }
+  }*/
 
   // otherwise show 2D heatmap
   if (has2D) {
@@ -2099,6 +2135,65 @@ function wirePixelProbe() {
   }
 }
 
+function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+  const ensureSelect = () => {
+    let sel = document.getElementById(selectId);
+    if (!sel) {
+      sel = document.createElement('select');
+      sel.id = selectId;
+      const container = document.getElementById('bivariatePaletteContainer') || document.body;
+      container.appendChild(sel);
+    }
+    return sel;
+  };
+
+  const getKeys = () => Object.keys(state.bivariatePalette || {}).sort();
+
+  const refreshOptions = (sel) => {
+    const cur = sel.value;
+    sel.innerHTML = '';
+    getKeys().forEach(key => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = key;
+      sel.appendChild(opt);
+    });
+    if (getKeys().length) {
+      sel.value = getKeys().includes(cur) ? cur : getKeys()[0];
+    }
+  };
+
+  const applySelected = (key) => {
+    const pal = state.bivariatePalette?.[key];
+    if (!pal) return;
+    if (typeof pal === 'function') {
+      applyBivariateColormapToAB(pal);
+      return;
+    }
+    if (typeof pal.cmap === 'function') {
+      applyBivariateColormapToAB(pal.cmap);
+      return;
+    }
+    if (pal.A && pal.B) {
+      applyBivariatePalette(pal);
+      return;
+    }
+    // fallback no-op
+  };
+
+  const sel = ensureSelect();
+  refreshOptions(sel);
+  applySelected(sel.value);
+
+  sel.addEventListener('change', () => applySelected(sel.value));
+
+  // expose a manual refresh if palettes are added later
+  state.refreshBivariatePalettePicker = () => {
+    refreshOptions(sel);
+    applySelected(sel.value);
+  };
+}
+
 /**
  * App entrypoint.
  */
@@ -2114,6 +2209,7 @@ function wirePixelProbe() {
   wireAutoStyleFromHistogram()
   wirePercentiles()
   wirePixelProbe()
+  wireBivariatePalettePicker()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

@@ -602,7 +602,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   const svg = document.createElementNS(svgNS, 'svg')
   svg.setAttribute('width', String(w))
   svg.setAttribute('height', String(h))
-  svg.style.background = '#11151c'
 
   const axisColor = '#666'
   const mkLine = (x1, y1, x2, y2) => {
@@ -990,7 +989,6 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', String(w));
   svg.setAttribute('height', String(h));
-  svg.style.background = '#11151c';
 
   const axisColor = '#666';
   const mkLine = (x1, y1, x2, y2) => {
@@ -1129,7 +1127,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', String(w)); svg.setAttribute('height', String(h));
-  svg.style.background = '#11151c';
 
   const axisColor = '#666';
   const mkLine = (x1,y1,x2,y2, stroke=axisColor, sw='1') => {

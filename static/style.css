@@ -233,11 +233,18 @@ select, input[type='range'], input[type='number'] {
   overflow: hidden;
 }
 
+#scatterPlot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 #scatterPlot svg {
   max-width: 100%;
   height: auto;
   display: block;
   overflow: visible;
+  background: rgb(45, 45, 45)
 }
 
 #scatterPlot rect {
@@ -245,8 +252,6 @@ select, input[type='range'], input[type='number'] {
   stroke-width: 0.3px;
   vector-effect: non-scaling-stroke;
 }
-
-#scatterPlot > svg > rect:nth-child(399)
 
 .spinner {
   width: 32px;

@@ -1099,7 +1099,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const yMin = Math.min(...yEdges), yMax = Math.max(...yEdges);
   const nx = hist2d.length, ny = hist2d[0].length;
 
-  // 1D reductions
   const xCounts = new Array(nx).fill(0);
   const yCounts = new Array(ny).fill(0);
   let maxCount2d = 1;
@@ -1216,7 +1215,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     svg.appendChild(rect);
   }
 
-  // percentiles across both with hover (same as earlier behavior)
   const totalX = xCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
   const totalY = yCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
   const getQuantileX = q => {
@@ -1280,7 +1278,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 
   return svg;
 }
-
 
 /**
  * Prevent Leaflet map zooming when the Alt key is held during scroll.

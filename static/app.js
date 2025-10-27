@@ -1059,7 +1059,6 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   return svg;
 }
 
-
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.
  * @param {number[]} xEdges

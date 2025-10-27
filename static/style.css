@@ -240,6 +240,14 @@ select, input[type='range'], input[type='number'] {
   overflow: visible;
 }
 
+#scatterPlot rect {
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 0.3px;
+  vector-effect: non-scaling-stroke;
+}
+
+#scatterPlot > svg > rect:nth-child(399)
+
 .spinner {
   width: 32px;
   height: 32px;

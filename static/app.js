@@ -916,7 +916,6 @@ function renderScatterOverlay(opts) {
       percentiles: state.percentiles
     });
     plotEl.appendChild(svg);
-    return;
   }
   if (!visB && visA && has1DX) {
     // B off -> show histogram along X axis
@@ -927,7 +926,6 @@ function renderScatterOverlay(opts) {
       percentiles: state.percentiles
     });
     plotEl.appendChild(svg);
-    return;
   }
 
   // otherwise show 2D heatmap
@@ -1063,23 +1061,44 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     }
 
     // percentile ticks (x-axis)
+    // percentile guides (x-axis: full-height dashed lines with top labels)
     if (percentiles.length && totalCount > 0) {
       for (const p of percentiles) {
         const val = getQuantileValue(p);
         const x = scaleX(val);
 
-        const tick = document.createElementNS(svgNS, 'line');
-        tick.setAttribute('x1', String(x));
-        tick.setAttribute('y1', String(h - pad));
-        tick.setAttribute('x2', String(x));
-        tick.setAttribute('y2', String(h - pad + percentileTickLength));
-        tick.setAttribute('stroke', percentileColor);
-        tick.setAttribute('stroke-width', '1');
-        svg.appendChild(tick);
+        const guide = document.createElementNS(svgNS, 'line');
+        guide.setAttribute('x1', String(x));
+        guide.setAttribute('y1', String(pad));
+        guide.setAttribute('x2', String(x));
+        guide.setAttribute('y2', String(h - pad));
+        guide.setAttribute('stroke', percentileColor);
+        guide.setAttribute('stroke-width', '1');
+        guide.setAttribute('stroke-dasharray', '4,3');
+        guide.setAttribute('opacity', '0.9');
+        svg.appendChild(guide);
 
-        const lbl = mkText(val.toFixed(percentileDecimals), x, h - pad + percentileTickLength + 10, 'middle', -45);
+        const lbl = mkText(`${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`, x, pad - 6, 'middle');
         lbl.setAttribute('fill', percentileColor);
         svg.appendChild(lbl);
+
+        // hover interactions for both line and label
+        [guide, lbl].forEach(el => {
+          el.style.cursor = 'pointer';
+          el.addEventListener('mouseenter', e => {
+            guide.setAttribute('stroke-width', '2');
+            guide.setAttribute('opacity', '1');
+            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
+          });
+          el.addEventListener('mousemove', e => {
+            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
+          });
+          el.addEventListener('mouseleave', () => {
+            guide.setAttribute('stroke-width', '1');
+            guide.setAttribute('opacity', '0.9');
+            _hidePctTooltip();
+          });
+        });
       }
     }
 
@@ -1088,8 +1107,7 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
     svg.appendChild(mkText(String(maxCount), pad - 6, pad + 4, 'end'));
   } else {
-    // axis === 'y' (horizontal bars)
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis (counts)
+    //svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis (counts)
     svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis (values)
 
     const scaleY = v => h - pad - ((v - minVal) / domainSpan) * innerH;
@@ -1110,24 +1128,44 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
       svg.appendChild(rect);
     }
 
-    // percentile ticks (y-axis)
+    // percentile guides (y-axis: full-width dashed lines with right labels)
     if (percentiles.length && totalCount > 0) {
       for (const p of percentiles) {
         const val = getQuantileValue(p);
         const y = scaleY(val);
 
-        const tick = document.createElementNS(svgNS, 'line');
-        tick.setAttribute('x1', String(pad - percentileTickLength));
-        tick.setAttribute('y1', String(y));
-        tick.setAttribute('x2', String(pad));
-        tick.setAttribute('y2', String(y));
-        tick.setAttribute('stroke', percentileColor);
-        tick.setAttribute('stroke-width', '1');
-        svg.appendChild(tick);
+        const guide = document.createElementNS(svgNS, 'line');
+        guide.setAttribute('x1', String(pad));
+        guide.setAttribute('y1', String(y));
+        guide.setAttribute('x2', String(w - pad));
+        guide.setAttribute('y2', String(y));
+        guide.setAttribute('stroke', percentileColor);
+        guide.setAttribute('stroke-width', '1');
+        guide.setAttribute('stroke-dasharray', '4,3');
+        guide.setAttribute('opacity', '0.9');
+        svg.appendChild(guide);
 
-        const lbl = mkText(val.toFixed(percentileDecimals), pad - percentileTickLength - 4, y + 3, 'end');
+        const lbl = mkText(
+          `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`,
+          w - pad + 4, y + 3, 'start');
         lbl.setAttribute('fill', percentileColor);
         svg.appendChild(lbl);
+        [guide, lbl].forEach(el => {
+          el.style.cursor = 'pointer';
+          el.addEventListener('mouseenter', e => {
+            guide.setAttribute('stroke-width', '2');
+            guide.setAttribute('opacity', '1');
+            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
+          });
+          el.addEventListener('mousemove', e => {
+            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
+          });
+          el.addEventListener('mouseleave', () => {
+            guide.setAttribute('stroke-width', '1');
+            guide.setAttribute('opacity', '0.9');
+            _hidePctTooltip();
+          });
+        });
       }
     }
 
@@ -1368,6 +1406,41 @@ function wirePercentiles() {
     if (raf) cancelAnimationFrame(raf)
     raf = requestAnimationFrame(rerender)
   })
+}
+
+
+function _ensurePctTooltip() {
+  let tip = document.querySelector('.pct-tooltip')
+  if (!tip) {
+    tip = document.createElement('div')
+    tip.className = 'pct-tooltip'
+    Object.assign(tip.style, {
+      position: 'fixed',
+      background: '#111',
+      color: '#fff',
+      padding: '4px 6px',
+      borderRadius: '4px',
+      fontSize: '11px',
+      pointerEvents: 'none',
+      display: 'none',
+      zIndex: 9999
+    })
+    document.body.appendChild(tip)
+  }
+  return tip
+}
+
+function _showPctTooltip(text, x, y) {
+  const tip = _ensurePctTooltip()
+  tip.textContent = text
+  tip.style.left = `${x + 8}px`
+  tip.style.top = `${y + 8}px`
+  tip.style.display = 'block'
+}
+
+function _hidePctTooltip() {
+  const tip = document.querySelector('.pct-tooltip')
+  if (tip) tip.style.display = 'none'
 }
 
 

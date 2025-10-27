@@ -602,7 +602,6 @@ function buildHistogramSVG(hist, binEdges, opts = {}) {
   const svg = document.createElementNS(svgNS, 'svg')
   svg.setAttribute('width', String(w))
   svg.setAttribute('height', String(h))
-  svg.style.background = '#11151c'
 
   const axisColor = '#666'
   const mkLine = (x1, y1, x2, y2) => {
@@ -858,7 +857,7 @@ function renderScatterOverlay(opts) {
     <div class='overlay-header'>
       <div>
         <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} • box: ${boxKm} km</div>
+        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
       </div>
     </div>
 
@@ -870,8 +869,8 @@ function renderScatterOverlay(opts) {
             <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
             <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
             <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels) : '-'}</div>
-            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels) : '-'}</div>
+            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels, 0) : '-'}</div>
+            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels, 0) : '-'}</div>
             <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
         </div>
       </div>
@@ -990,7 +989,6 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', String(w));
   svg.setAttribute('height', String(h));
-  svg.style.background = '#11151c';
 
   const axisColor = '#666';
   const mkLine = (x1, y1, x2, y2) => {
@@ -1129,7 +1127,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', String(w)); svg.setAttribute('height', String(h));
-  svg.style.background = '#11151c';
 
   const axisColor = '#666';
   const mkLine = (x1,y1,x2,y2, stroke=axisColor, sw='1') => {
@@ -1209,6 +1206,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const yMid = (plotY0 + plotY1) / 2;
     const yTitle = document.createElementNS(svgNS, 'text');
     yTitle.textContent = axisLabelY;
+    const tx = plotX0 - 34;
     const tx = plotX0 - 34; // left of y-axis ticks
     const ty = yMid;
     yTitle.setAttribute('x', String(tx));
@@ -1250,9 +1248,9 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const fill = _styleColorForValue(layerIdY, mid);
 
     const rect = document.createElementNS(svgNS, 'rect');
-    rect.setAttribute('x', String(rightX0)); // base on the left
+    rect.setAttribute('x', String(rightX0));
     rect.setAttribute('y', String(y1));
-    rect.setAttribute('width', String(wPix)); // extend to the right
+    rect.setAttribute('width', String(wPix));
     rect.setAttribute('height', String(barH));
     rect.setAttribute('fill', fill);
     rect.setAttribute('fill-opacity', '0.85');
@@ -1695,7 +1693,29 @@ function _blendScreenRGB(a, b) {
   ];
 }
 
-// Pixel value probe: hover overlay that follows the cursor and shows per-layer values
+/**
+ * Wire a pixel probe that follows the mouse and displays live raster values.
+ *
+ * This function attaches a mousemove listener to the Leaflet map that queries
+ * the `/stats/pixel_val` API endpoint for the raster value(s) at the cursor’s
+ * geographic coordinate. The response values for the active layers (A and/or B)
+ * are shown in a floating tooltip that tracks the cursor.
+ *
+ * Features:
+ * - Creates a `.pixel-probe` DOM element styled as a floating readout.
+ * - Throttles queries to avoid excessive API calls (default 100 ms).
+ * - Aborts previous requests when the mouse moves quickly.
+ * - Displays pixel values for both layers if available.
+ * - Updates `state.lastPixelPoint` so the sampled point can be rendered
+ *   as a marker on the scatterplot via `renderScatterOverlay`.
+ * - Cleans up event listeners and intervals with `map._pixelProbeTeardown()`.
+ *
+ * Side effects:
+ * - Modifies global `state.lastPixelPoint` (used for scatter marker).
+ * - Adds/removes DOM elements (`.pixel-probe`) and map event listeners.
+ *
+ * @returns {void}
+ */
 function wirePixelProbe() {
   const map = state.map
   if (!map) return
@@ -1734,6 +1754,16 @@ function wirePixelProbe() {
   let pending = null
   const RATE_MS = 100
 
+  /**
+   * Abort any in-flight pixel value request.
+   *
+   * If an active request exists, this function calls `AbortController.abort()`
+   * to cancel it and clears the `inFlight` reference. Used to prevent race
+   * conditions when the cursor moves rapidly across the map.
+   *
+   * @private
+   * @returns {void}
+   */
   const abortPrev = () => {
     if (inFlight?.ac) {
       try { inFlight.ac.abort() } catch {}
@@ -1741,6 +1771,21 @@ function wirePixelProbe() {
     inFlight = null
   }
 
+  /**
+   * Fetch the raster value for a given geographic coordinate from the backend.
+   *
+   * Sends a POST request to `/stats/pixel_val` with raster ID, longitude,
+   * latitude, and CRS. The server returns the pixel value (or `null` if
+   * out-of-bounds/nodata). Supports cancellation via `AbortController`.
+   *
+   * @async
+   * @param {string} rasterId - Identifier of the raster to query.
+   * @param {number} lng - Longitude in degrees (EPSG:4326).
+   * @param {number} lat - Latitude in degrees (EPSG:4326).
+   * @param {AbortController} [ac] - Optional abort controller for request cancellation.
+   * @returns {Promise<object>} JSON response containing `{ value: number | null }`.
+   * @throws {Error} If the fetch fails or the server returns a non-OK status.
+   */
   async function fetchPixelVal(rasterId, lng, lat, ac) {
     const res = await fetch(`${state.baseStatsUrl}/stats/pixel_val`, {
       method: 'POST',
@@ -1757,6 +1802,21 @@ function wirePixelProbe() {
     return res.json()
   }
 
+  /**
+   * Query the backend for pixel values under the cursor and update the probe.
+   *
+   * Requests current values from active rasters (A and/or B) using `fetchPixelVal`,
+   * updates the `.pixel-probe` tooltip with results, and—if both values are
+   * finite—records the coordinate in `state.lastPixelPoint` for plotting on
+   * the scatterplot. Handles throttling, aborting prior requests, and tooltip
+   * placement relative to the mouse.
+   *
+   * @async
+   * @param {L.LatLng} latlng - Leaflet latitude/longitude of the cursor.
+   * @param {number} clientX - Screen X coordinate of the mouse pointer.
+   * @param {number} clientY - Screen Y coordinate of the mouse pointer.
+   * @returns {Promise<void>}
+   */
   async function queryAndRender(latlng, clientX, clientY) {
     const ts = Date.now()
     lastFetchTs = ts
@@ -1818,6 +1878,18 @@ function wirePixelProbe() {
     }
   }
 
+  /**
+   * Schedule a new pixel value query with simple rate-limiting.
+   *
+   * Ensures that requests are not issued more often than `RATE_MS`
+   * (default 100 ms). Aborts any in-flight request if a newer mouse event
+   * arrives and defers pending queries until the previous one completes.
+   *
+   * @param {L.LatLng} latlng - Cursor location in map coordinates.
+   * @param {number} clientX - Screen X coordinate for tooltip placement.
+   * @param {number} clientY - Screen Y coordinate for tooltip placement.
+   * @returns {void}
+   */
   function schedule(latlng, clientX, clientY) {
     const now = Date.now()
     if (inFlight) {

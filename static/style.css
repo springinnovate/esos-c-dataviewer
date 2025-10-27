@@ -233,11 +233,24 @@ select, input[type='range'], input[type='number'] {
   overflow: hidden;
 }
 
+#scatterPlot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 #scatterPlot svg {
   max-width: 100%;
   height: auto;
   display: block;
   overflow: visible;
+  background: rgb(45, 45, 45)
+}
+
+#scatterPlot rect {
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 0.3px;
+  vector-effect: non-scaling-stroke;
 }
 
 .spinner {

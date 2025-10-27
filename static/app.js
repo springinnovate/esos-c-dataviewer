@@ -8,6 +8,152 @@
  * Docstrings use JSDoc so editors/TS can infer types.
  */
 
+function axesFromGrid3x3(grid) {
+  return {
+    A: { cmin: grid['1-1'], cmed: grid['2-1'], cmax: grid['3-1'] },
+    B: { cmin: grid['1-1'], cmed: grid['1-2'], cmax: grid['1-3'] }
+  };
+}
+
+function createBivariateColormap(opts = {}) {
+  const baseRamp = opts.baseRamp || ['#000000', '#888888', '#ffffff'];
+  const lightenerColor = opts.lightenerColor || '#ffffff';
+  const strength = opts.strength == null ? 1.0 : opts.strength;
+
+  const [c0, c1, c2] = baseRamp.map(hexToRgb);
+  const lightener = hexToRgb(lightenerColor);
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  // piecewise linear ramp: min→mid→max
+  function ramp3(rgb0, rgb1, rgb2, t) {
+    t = clamp01(t);
+    if (t <= 0.5) {
+      const u = t / 0.5;
+      return [
+        Math.round(lerp(rgb0[0], rgb1[0], u)),
+        Math.round(lerp(rgb0[1], rgb1[1], u)),
+        Math.round(lerp(rgb0[2], rgb1[2], u))
+      ];
+    } else {
+      const u = (t - 0.5) / 0.5;
+      return [
+        Math.round(lerp(rgb1[0], rgb2[0], u)),
+        Math.round(lerp(rgb1[1], rgb2[1], u)),
+        Math.round(lerp(rgb1[2], rgb2[2], u))
+      ];
+    }
+  }
+
+  // mix in HSL space toward 'lightener' for smoother lightening
+  function mixTowardLightener(rgbBase, rgbLightener, amt) {
+    const hslBase = rgbToHsl(...rgbBase);
+    const hslLight = rgbToHsl(...rgbLightener);
+    const h = lerpAngle(hslBase[0], hslLight[0], amt);
+    const s = lerp(hslBase[1], hslLight[1], amt);
+    const l = lerp(hslBase[2], hslLight[2], amt);
+    const mixed = hslToRgb(h, s, l);
+    return mixed.map(v => Math.round(v));
+  }
+
+  function lerpAngle(a, b, t) {
+    // a,b in [0,1) representing hue circle
+    const twoPi = 1.0;
+    let d = b - a;
+    if (d > 0.5) d -= 1.0;
+    if (d < -0.5) d += 1.0;
+    let h = a + d * t;
+    if (h < 0) h += 1.0;
+    if (h >= 1) h -= 1.0;
+    return h;
+  }
+
+  return function bivariateColor(x, y) {
+    x = clamp01(x);
+    y = clamp01(y);
+
+    const base = ramp3(c0, c1, c2, x);
+    const amt = clamp01(y * strength);
+    const mixed = mixTowardLightener(base, lightener, amt);
+    return rgbToHex(mixed[0], mixed[1], mixed[2]);
+  };
+}
+
+// ----- Helpers: color conversions -----
+
+function hexToRgb(hex) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const num = parseInt(h, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function rgbToHex(r, g, b) {
+  const toHex = v => v.toString(16).padStart(2, '0');
+  return '#' + toHex(r) + toHex(g) + toHex(b);
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s;
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) {
+    h = 0; s = 0;
+  } else {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+function hslToRgb(h, s, l) {
+  if (s === 0) {
+    const v = l * 255;
+    return [v, v, v];
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = hue2rgb(p, q, h + 1/3) * 255;
+  const g = hue2rgb(p, q, h) * 255;
+  const b = hue2rgb(p, q, h - 1/3) * 255;
+  return [r, g, b];
+}
+
+function applyBivariateColormapToAB(cmap) {
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  // A axis: vary x, hold y=0
+  setVal('layerACminInput', cmap(0.0, 0.0));
+  setVal('layerACmedInput', cmap(0.5, 0.0));
+  setVal('layerACmaxInput', cmap(1.0, 0.0));
+
+  // B axis: vary y, hold x=0
+  setVal('layerBCminInput', cmap(0.0, 0.0));
+  setVal('layerBCmedInput', cmap(0.0, 0.5));
+  setVal('layerBCmaxInput', cmap(0.0, 1.0));
+}
+
 const state = {
   map: null,
   geoserverBaseUrl: null,
@@ -28,6 +174,18 @@ const state = {
   scatterObj: null,
   percentiles: null,
   lastPixelPoint: null,
+  bivariatePalette: {
+    orangeBlue: createBivariateColormap({
+      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+      lightenerColor: '#00ffff',
+      strength: 1.0
+    }),
+    cmapGrayWhite: createBivariateColormap({
+      baseRamp: ['#222222', '#777777', '#dddddd'],
+      lightenerColor: '#ffffff',
+      strength: 1.0
+    }),
+  },
 }
 
 /**
@@ -1207,7 +1365,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const yTitle = document.createElementNS(svgNS, 'text');
     yTitle.textContent = axisLabelY;
     const tx = plotX0 - 34;
-    const tx = plotX0 - 34; // left of y-axis ticks
     const ty = yMid;
     yTitle.setAttribute('x', String(tx));
     yTitle.setAttribute('y', String(ty));
@@ -1942,19 +2099,11 @@ function wirePixelProbe() {
   }
 }
 
-
 /**
  * App entrypoint.
  */
 ;(async function main() {
-
-  // Orange vs turquoise axis
-  document.getElementById('layerACminInput').value = '#000000'
-  document.getElementById('layerACmedInput').value = '#ff8000'
-  document.getElementById('layerACmaxInput').value = '#ffcc00'
-  document.getElementById('layerBCminInput').value = '#000000'
-  document.getElementById('layerBCmedInput').value = '#00b3b3'
-  document.getElementById('layerBCmaxInput').value = '#00ffff'
+  applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()

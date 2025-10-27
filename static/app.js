@@ -1078,6 +1078,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const percentileColor = opts.percentileColor ?? '#60a5fa';
   const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
   const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
+  const blendMode = opts.blend || 'plus-lighter';
   const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
   const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
 
@@ -1140,19 +1141,37 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
   const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
 
-  // heatmap
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
       const binCount = Number(hist2d[i][j]) || 0;
       if (binCount <= 0) continue;
-      const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i+1]);
-      const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j+1]);
+
+      const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
+      const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
+
+      // midpoint values for color sampling
+      const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
+      const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
+
+      // colors from current UI styles for A (x) and B (y)
+      const colA = _styleColorArrForValue(layerIdX, xMid);
+      const colB = _styleColorArrForValue(layerIdY, yMid);
+
+      // blend
+      const blended =
+        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+
       const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(x0)); rect.setAttribute('y', String(y1));
-      rect.setAttribute('width', String(x1 - x0)); rect.setAttribute('height', String(y0 - y1));
-      const t = Math.log1p(binCount) / Math.log1p(maxCount2d);
+      rect.setAttribute('x', String(x0));
+      rect.setAttribute('y', String(y1));
+      rect.setAttribute('width', String(x1 - x0));
+      rect.setAttribute('height', String(y0 - y1));
+
+      const t = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]
       const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
-      rect.setAttribute('fill', '#3b82f6'); rect.setAttribute('fill-opacity', alpha.toFixed(3));
+
+      rect.setAttribute('fill', `rgb(${blended[0]},${blended[1]},${blended[2]})`);
+      rect.setAttribute('fill-opacity', alpha.toFixed(3));
       svg.appendChild(rect);
     }
   }
@@ -1477,6 +1496,52 @@ function _styleColorForValue(layerId, v) {
     const t = (v - med) / Math.max(1e-9, (max - med));
     return _interpRgb(cmed, cmax, t);
   }
+}
+
+function _interpRgbArr(c1, c2, t) {
+  const u = 1 - t;
+  return [
+    Math.round(u * c1[0] + t * c2[0]),
+    Math.round(u * c1[1] + t * c2[1]),
+    Math.round(u * c1[2] + t * c2[2]),
+  ];
+}
+
+// returns [r,g,b] for layerId at numeric value v based on current UI min/med/max + colors
+function _styleColorArrForValue(layerId, v) {
+  const s = _readStyleInputsFromUI(layerId);
+  const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
+  const cmin = _hexToRgb(s.cmin || '#000000');
+  const cmed = _hexToRgb(s.cmed || '#888888');
+  const cmax = _hexToRgb(s.cmax || '#ffffff');
+  if (!Number.isFinite(v) || !Number.isFinite(min) || !Number.isFinite(med) || !Number.isFinite(max)) return [136,136,136];
+  if (v <= min) return cmin.slice();
+  if (v >= max) return cmax.slice();
+  if (v <= med) {
+    const t = (v - min) / Math.max(1e-9, (med - min));
+    return _interpRgbArr(cmin, cmed, t);
+  } else {
+    const t = (v - med) / Math.max(1e-9, (max - med));
+    return _interpRgbArr(cmed, cmax, t);
+  }
+}
+
+// additive blend (CSS plus-lighter approximation): clamp per-channel sum
+function _blendPlusLighterRGB(a, b) {
+  return [
+    Math.min(255, a[0] + b[0]),
+    Math.min(255, a[1] + b[1]),
+    Math.min(255, a[2] + b[2]),
+  ];
+}
+
+// optional: 'screen' blend if you want an alternative look
+function _blendScreenRGB(a, b) {
+  return [
+    255 - Math.round((255 - a[0]) * (255 - b[0]) / 255),
+    255 - Math.round((255 - a[1]) * (255 - b[1]) / 255),
+    255 - Math.round((255 - a[2]) * (255 - b[2]) / 255),
+  ];
 }
 
 

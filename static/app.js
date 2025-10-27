@@ -1423,7 +1423,11 @@ function wirePercentiles() {
   })
 }
 
-
+/**
+ * Ensure that a single reusable DOM element for displaying percentile tooltips exists.
+ * Creates a fixed-position, styled <div> appended to the document body if none exists.
+ * @returns {HTMLDivElement} The tooltip element.
+ */
 function _ensurePctTooltip() {
   let tip = document.querySelector('.pct-tooltip')
   if (!tip) {
@@ -1445,6 +1449,14 @@ function _ensurePctTooltip() {
   return tip
 }
 
+
+/**
+ * Display the percentile tooltip near the specified screen coordinates.
+ * Updates its text and position relative to the mouse pointer.
+ * @param {string} text - Tooltip content text.
+ * @param {number} x - Mouse X coordinate (in client space).
+ * @param {number} y - Mouse Y coordinate (in client space).
+ */
 function _showPctTooltip(text, x, y) {
   const tip = _ensurePctTooltip()
   tip.textContent = text
@@ -1453,12 +1465,20 @@ function _showPctTooltip(text, x, y) {
   tip.style.display = 'block'
 }
 
+/**
+ * Hide the percentile tooltip if currently visible.
+ * Clears its display without removing the element from the DOM.
+ */
 function _hidePctTooltip() {
   const tip = document.querySelector('.pct-tooltip')
   if (tip) tip.style.display = 'none'
 }
 
-// helpers: color from current style at a value
+/**
+ * Convert a hexadecimal color string (e.g., '#ffcc00' or 'fc0') to an RGB array.
+ * @param {string} hex - Hexadecimal color string.
+ * @returns {[number, number, number]} Array of [r, g, b] values (0–255).
+ */
 function _hexToRgb(hex) {
   const s = String(hex || '').trim();
   const m = s.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -1468,6 +1488,14 @@ function _hexToRgb(hex) {
   const n = parseInt(h, 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
+
+/**
+ * Interpolate between two RGB colors and return a CSS 'rgb(...)' string.
+ * @param {[number, number, number]} c1 - Starting RGB color.
+ * @param {[number, number, number]} c2 - Ending RGB color.
+ * @param {number} t - Interpolation fraction (0–1).
+ * @returns {string} CSS color string in 'rgb(r,g,b)' format.
+ */
 function _interpRgb(c1, c2, t) {
   const u = 1 - t;
   const r = Math.round(u * c1[0] + t * c2[0]);
@@ -1475,6 +1503,14 @@ function _interpRgb(c1, c2, t) {
   const b = Math.round(u * c1[2] + t * c2[2]);
   return `rgb(${r},${g},${b})`;
 }
+
+/**
+ * Compute an interpolated CSS RGB color for a given numeric value based on
+ * the active style inputs (min/med/max and their colors) for a specified layer.
+ * @param {'A'|'B'} layerId - Layer identifier.
+ * @param {number} v - Numeric value to colorize.
+ * @returns {string} CSS color string ('rgb(r,g,b)').
+ */
 function _styleColorForValue(layerId, v) {
   const s = _readStyleInputsFromUI(layerId);
   const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
@@ -1493,6 +1529,13 @@ function _styleColorForValue(layerId, v) {
   }
 }
 
+/**
+ * Interpolate between two RGB color arrays and return a new [r,g,b] array.
+ * @param {[number, number, number]} c1 - Starting color.
+ * @param {[number, number, number]} c2 - Ending color.
+ * @param {number} t - Interpolation fraction (0–1).
+ * @returns {[number, number, number]} Interpolated RGB array.
+ */
 function _interpRgbArr(c1, c2, t) {
   const u = 1 - t;
   return [
@@ -1502,7 +1545,13 @@ function _interpRgbArr(c1, c2, t) {
   ];
 }
 
-// returns [r,g,b] for layerId at numeric value v based on current UI min/med/max + colors
+/**
+ * Compute an interpolated RGB array for a numeric value given the current
+ * style parameters (min/med/max and their colors) for a specific layer.
+ * @param {'A'|'B'} layerId - Layer identifier ('A' or 'B').
+ * @param {number} v - Numeric value to colorize.
+ * @returns {[number, number, number]} RGB array representing the color.
+ */
 function _styleColorArrForValue(layerId, v) {
   const s = _readStyleInputsFromUI(layerId);
   const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
@@ -1521,7 +1570,13 @@ function _styleColorArrForValue(layerId, v) {
   }
 }
 
-// additive blend (CSS plus-lighter approximation): clamp per-channel sum
+/**
+ * Combine two RGB colors using additive blending (approximation of CSS 'plus-lighter').
+ * Each channel is summed and clamped to 255.
+ * @param {[number, number, number]} a - First RGB color.
+ * @param {[number, number, number]} b - Second RGB color.
+ * @returns {[number, number, number]} Blended RGB color array.
+ */
 function _blendPlusLighterRGB(a, b) {
   return [
     Math.min(255, a[0] + b[0]),
@@ -1530,7 +1585,13 @@ function _blendPlusLighterRGB(a, b) {
   ];
 }
 
-// optional: 'screen' blend if you want an alternative look
+/**
+ * Combine two RGB colors using screen blending mode.
+ * Equivalent to CSS 'screen' mix-blend-mode calculation.
+ * @param {[number, number, number]} a - First RGB color.
+ * @param {[number, number, number]} b - Second RGB color.
+ * @returns {[number, number, number]} Blended RGB color array.
+ */
 function _blendScreenRGB(a, b) {
   return [
     255 - Math.round((255 - a[0]) * (255 - b[0]) / 255),

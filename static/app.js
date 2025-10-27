@@ -26,6 +26,7 @@ const state = {
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
+  percentiles: null,
 }
 
 /**
@@ -911,7 +912,8 @@ function renderScatterOverlay(opts) {
     const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
       width: 420,
       height: 320,
-      pad: 40
+      pad: 40,
+      percentiles: state.percentiles
     });
     plotEl.appendChild(svg);
     return;
@@ -921,7 +923,8 @@ function renderScatterOverlay(opts) {
     const svg = buildHistogram1D(scatterObj.x_edges, scatterObj.hist1d_x, 'x', {
       width: 420,
       height: 320,
-      pad: 40
+      pad: 40,
+      percentiles: state.percentiles
     });
     plotEl.appendChild(svg);
     return;
@@ -1003,15 +1006,7 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
 
   // helpers for percentiles
   const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === 'string') {
-      const s = p.trim();
-      if (!s) return null;
-      const hasPct = s.endsWith('%');
-      const num = parseFloat(s);
-      if (!Number.isFinite(num)) return null;
-      return hasPct || num > 1 ? num / 100 : num;
-    }
+    if (typeof p === 'number' && Number.isFinite(p)) return p/100;
     return null;
   };
 
@@ -1346,6 +1341,36 @@ function wireAutoStyleFromHistogram() {
   });
 }
 
+function wirePercentiles() {
+  const percentilesInput = document.getElementById('percentiles')
+  if (!percentilesInput) return
+
+  let raf = null
+  const rerender = () => {
+    // ensure we pass a scatterObj so it renders immediately (1D or 2D as appropriate)
+    if (state?.lastScatterOpts && state?.scatterObj) {
+      const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj }
+      renderScatterOverlay(opts)
+    }
+  }
+
+  percentilesInput.addEventListener('input', () => {
+    const raw = percentilesInput.value
+    const nums = raw
+      .split(/[,\s]+/)
+      .map(s => parseInt(s.trim(), 10))
+      .filter(n => Number.isFinite(n))
+      .sort((a, b) => a - b)
+
+    state.percentiles = nums
+
+    // throttle to next frame to avoid redraw per keystroke burst
+    if (raf) cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(rerender)
+  })
+}
+
+
 /**
  * App entrypoint.
  */
@@ -1366,6 +1391,7 @@ function wireAutoStyleFromHistogram() {
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()
   wireAutoStyleFromHistogram()
+  wirePercentiles()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

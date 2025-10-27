@@ -143,12 +143,10 @@ function applyBivariateColormapToAB(cmap) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
-  // A axis: vary x, hold y=0
   setVal('layerACminInput', cmap(0.0, 0.0));
   setVal('layerACmedInput', cmap(0.5, 0.0));
   setVal('layerACmaxInput', cmap(1.0, 0.0));
 
-  // B axis: vary y, hold x=0
   setVal('layerBCminInput', cmap(0.0, 0.0));
   setVal('layerBCmedInput', cmap(0.0, 0.5));
   setVal('layerBCmaxInput', cmap(0.0, 1.0));
@@ -1099,31 +1097,6 @@ function renderScatterOverlay(opts) {
   const has1DY =
     Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
-  // if either A or B is turned off, show a 1D histogram
-  /*if (!visA && visB && has1DY) {
-    // A off -> show histogram along Y axis
-    const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
-      width: 420,
-      height: 320,
-      pad: 40,
-      percentiles: state.percentiles,
-      layerId: 'B'
-    });
-    plotEl.appendChild(svg);
-  }
-  if (!visB && visA && has1DX) {
-    // B off -> show histogram along X axis
-    const svg = buildHistogram1D(scatterObj.x_edges, scatterObj.hist1d_x, 'x', {
-      width: 420,
-      height: 320,
-      pad: 40,
-      percentiles: state.percentiles,
-      layerId: 'A'
-    });
-    plotEl.appendChild(svg);
-  }*/
-
-  // otherwise show 2D heatmap
   if (has2D) {
     const svg = buildScatterSVG(
       scatterObj.x_edges,
@@ -1152,114 +1125,6 @@ function renderScatterOverlay(opts) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
 });
-
-
-/**
- * Build a simple 1D histogram SVG using provided bin edges and counts.
- * axis: 'x' -> bars grow upward from bottom (x-axis bins)
- *       'y' -> bars grow rightward from left (y-axis bins)
- * @param {number[]} edges
- * @param {number[]} counts
- * @param {'x'|'y'} axis
- * @param {{width?:number,height?:number,pad?:number}} opts
- * @returns {SVGSVGElement}
- */
-// use layer-based coloring in 1D histograms
-function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
-  const w = opts.width ?? 400;
-  const h = opts.height ?? 300;
-  const pad = opts.pad ?? 40;
-  const layerId = opts.layerId; // 'A' | 'B' (optional)
-  const innerW = w - pad * 2;
-  const innerH = h - pad * 2;
-
-  const n = Math.max(0, edges.length - 1);
-  const maxCount = Math.max(1, ...counts.map(c => (Number.isFinite(c) ? c : 0)));
-  const minVal = Math.min(...edges);
-  const maxVal = Math.max(...edges);
-  const domainSpan = Math.max(1e-9, maxVal - minVal);
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', String(w));
-  svg.setAttribute('height', String(h));
-
-  const axisColor = '#666';
-  const mkLine = (x1, y1, x2, y2) => {
-    const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-    l.setAttribute('stroke', axisColor); l.setAttribute('stroke-width', '1');
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text');
-    t.textContent = txt;
-    t.setAttribute('x', x); t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
-    t.setAttribute('text-anchor', anchor);
-    return t;
-  };
-
-  if (axis === 'x') {
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
-    svg.appendChild(mkLine(pad, pad, pad, h - pad));
-    const scaleX = v => pad + ((v - minVal) / domainSpan) * innerW;
-    const scaleH = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerH;
-
-    for (let i = 0; i < n; i++) {
-      const x0 = scaleX(edges[i]);
-      const x1 = scaleX(edges[i + 1]);
-      const barW = Math.max(1, x1 - x0);
-      const hPix = scaleH(counts[i] ?? 0);
-      const mid = (edges[i] + edges[i + 1]) / 2;
-      const fill = layerId ? _styleColorForValue(layerId, mid) : '#22c55e';
-
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(x0));
-      rect.setAttribute('y', String(h - pad - hPix));
-      rect.setAttribute('width', String(barW));
-      rect.setAttribute('height', String(hPix));
-      rect.setAttribute('fill', fill);
-      rect.setAttribute('fill-opacity', '0.85');
-      svg.appendChild(rect);
-    }
-
-    svg.appendChild(mkText(minVal.toFixed(2), pad, h - pad + 12, 'start'));
-    svg.appendChild(mkText(maxVal.toFixed(2), w - pad, h - pad + 12, 'end'));
-    svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
-    svg.appendChild(mkText(String(maxCount), pad - 6, pad + 4, 'end'));
-  } else {
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
-    svg.appendChild(mkLine(pad, pad, pad, h - pad));
-
-    const scaleY = v => h - pad - ((v - minVal) / domainSpan) * innerH;
-    const scaleW = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerW;
-
-    for (let i = 0; i < n; i++) {
-      const y0 = scaleY(edges[i]);
-      const y1 = scaleY(edges[i + 1]);
-      const barH = Math.max(1, y0 - y1);
-      const wPix = scaleW(counts[i] ?? 0);
-      const mid = (edges[i] + edges[i + 1]) / 2;
-      const fill = layerId ? _styleColorForValue(layerId, mid) : '#eab308';
-
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(pad));
-      rect.setAttribute('y', String(y1));
-      rect.setAttribute('width', String(wPix));
-      rect.setAttribute('height', String(barH));
-      rect.setAttribute('fill', fill);
-      rect.setAttribute('fill-opacity', '0.85');
-      svg.appendChild(rect);
-    }
-
-    svg.appendChild(mkText('0', pad, h - pad + 12, 'middle'));
-    svg.appendChild(mkText(minVal.toFixed(2), pad - 6, h - pad, 'end'));
-    svg.appendChild(mkText(maxVal.toFixed(2), pad - 6, pad + 4, 'end'));
-  }
-  return svg;
-}
 
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.

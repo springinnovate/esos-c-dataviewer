@@ -944,7 +944,9 @@ function renderScatterOverlay(opts) {
         layerIdX: 'A',
         layerIdY: 'B',
         blend: 'plus-lighter',
-        point: state.lastPixelPoint
+        point: state.lastPixelPoint,
+        axisLabelX: rasterX,
+        axisLabelY: rasterY
       }
     );
     plotEl.appendChild(svg);
@@ -1088,6 +1090,8 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
   const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
   const point = opts.point || null
+  const axisLabelX = opts.axisLabelX || '';
+  const axisLabelY = opts.axisLabelY || '';
 
   const parsePercent = p => {
     if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
@@ -1190,6 +1194,32 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, 'end'));
   svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'));
 
+  if (axisLabelX) {
+    const xMid = (plotX0 + plotX1) / 2;
+    const xTitle = document.createElementNS(svgNS, 'text');
+    xTitle.textContent = axisLabelX;
+    xTitle.setAttribute('x', String(xMid));
+    xTitle.setAttribute('y', String(plotY1 + 28));
+    xTitle.setAttribute('fill', '#bbb');
+    xTitle.setAttribute('font-size', '11');
+    xTitle.setAttribute('text-anchor', 'middle');
+    svg.appendChild(xTitle);
+  }
+  if (axisLabelY) {
+    const yMid = (plotY0 + plotY1) / 2;
+    const yTitle = document.createElementNS(svgNS, 'text');
+    yTitle.textContent = axisLabelY;
+    const tx = plotX0 - 34; // left of y-axis ticks
+    const ty = yMid;
+    yTitle.setAttribute('x', String(tx));
+    yTitle.setAttribute('y', String(ty));
+    yTitle.setAttribute('fill', '#bbb');
+    yTitle.setAttribute('font-size', '11');
+    yTitle.setAttribute('text-anchor', 'middle');
+    yTitle.setAttribute('transform', `rotate(-90 ${tx} ${ty})`);
+    svg.appendChild(yTitle);
+  }
+
   // top histogram (x)
   const topY1 = pad + mSize, topY0 = pad;
   const topInnerH = Math.max(1, mSize - 6);
@@ -1211,16 +1241,21 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const rightX0 = pad + innerW, rightX1 = pad + innerW + mSize;
   const rightInnerW = Math.max(1, mSize - 6);
   const scaleRightW = c => ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW;
+
   for (let j = 0; j < ny; j++) {
     const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
     const barH = Math.max(1, y0 - y1);
     const wPix = scaleRightW(yCounts[j]);
     const mid = (yEdges[j] + yEdges[j + 1]) / 2;
     const fill = _styleColorForValue(layerIdY, mid);
+
     const rect = document.createElementNS(svgNS, 'rect');
-    rect.setAttribute('x', String(rightX1 - wPix)); rect.setAttribute('y', String(y1));
-    rect.setAttribute('width', String(wPix)); rect.setAttribute('height', String(barH));
-    rect.setAttribute('fill', fill); rect.setAttribute('fill-opacity', '0.85');
+    rect.setAttribute('x', String(rightX0)); // base on the left
+    rect.setAttribute('y', String(y1));
+    rect.setAttribute('width', String(wPix)); // extend to the right
+    rect.setAttribute('height', String(barH));
+    rect.setAttribute('fill', fill);
+    rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 

@@ -934,7 +934,8 @@ function renderScatterOverlay(opts) {
       scatterObj.x_edges,
       scatterObj.y_edges,
       scatterObj.hist2d,
-      { width: 420, height: 320, pad: 40 }
+      { width: 420, height: 320, pad: 40, percentiles: state.percentiles },
+
     );
     plotEl.appendChild(svg);
   }
@@ -1190,8 +1191,29 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const w = opts.width ?? 400
   const h = opts.height ?? 300
   const pad = opts.pad ?? 40
-  const innerW = w - pad * 2
-  const innerH = h - pad * 2
+  const mSize = opts.marginalSize ?? 48 // band for top/right histograms
+  const percentileColor = opts.percentileColor ?? '#60a5fa'
+  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2
+  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : []
+
+  // parse 0..1 quantiles from numbers or strings like '90' or '90%'
+  const parsePercent = p => {
+    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p
+    if (typeof p === 'string') {
+      const s = p.trim()
+      if (!s) return null
+      const hasPct = s.endsWith('%')
+      const num = parseFloat(s)
+      if (!Number.isFinite(num)) return null
+      return hasPct || num > 1 ? num / 100 : num
+    }
+    return null
+  }
+  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b)
+
+  // inner plot (heatmap) area leaves space for top/right histograms
+  const innerW = Math.max(1, w - pad * 2 - mSize)
+  const innerH = Math.max(1, h - pad * 2 - mSize)
 
   const xMin = Math.min(...xEdges)
   const xMax = Math.max(...xEdges)
@@ -1199,7 +1221,23 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const yMax = Math.max(...yEdges)
   const nx = hist2d.length
   const ny = hist2d[0].length
-  const maxCount = Math.max(1, ...hist2d.flat())
+
+  // 1D histograms from 2D
+  const xCounts = new Array(nx).fill(0)
+  const yCounts = new Array(ny).fill(0)
+  let maxCount2d = 1
+  for (let i = 0; i < nx; i++) {
+    let rowSum = 0
+    for (let j = 0; j < ny; j++) {
+      const v = Number(hist2d[i][j]) || 0
+      rowSum += v
+      yCounts[j] += v
+      if (v > maxCount2d) maxCount2d = v
+    }
+    xCounts[i] = rowSum
+  }
+  const maxCountTop = Math.max(1, ...xCounts)
+  const maxCountRight = Math.max(1, ...yCounts)
 
   const svgNS = 'http://www.w3.org/2000/svg'
   const svg = document.createElementNS(svgNS, 'svg')
@@ -1207,12 +1245,40 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   svg.setAttribute('height', String(h))
   svg.style.background = '#11151c'
 
-  const scaleX = (v) => pad + ((v - xMin) / (xMax - xMin)) * innerW
-  const scaleY = (v) => h - pad - ((v - yMin) / (yMax - yMin)) * innerH
+  const axisColor = '#666'
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const l = document.createElementNS(svgNS, 'line')
+    l.setAttribute('x1', String(x1))
+    l.setAttribute('y1', String(y1))
+    l.setAttribute('x2', String(x2))
+    l.setAttribute('y2', String(y2))
+    l.setAttribute('stroke', stroke)
+    l.setAttribute('stroke-width', sw)
+    return l
+  }
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text')
+    t.textContent = txt
+    t.setAttribute('x', String(x))
+    t.setAttribute('y', String(y))
+    t.setAttribute('fill', '#aaa')
+    t.setAttribute('font-size', '10')
+    t.setAttribute('text-anchor', anchor)
+    return t
+  }
 
+  // scales for heatmap
+  const plotX0 = pad
+  const plotY0 = pad + mSize
+  const plotX1 = pad + innerW
+  const plotY1 = pad + mSize + innerH
+  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW
+  const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH
+
+  // draw heatmap bins
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
-      const binCount = hist2d[i][j]
+      const binCount = Number(hist2d[i][j]) || 0
       if (binCount <= 0) continue
       const x0 = scaleX(xEdges[i])
       const x1 = scaleX(xEdges[i + 1])
@@ -1223,46 +1289,156 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       rect.setAttribute('y', String(y1))
       rect.setAttribute('width', String(x1 - x0))
       rect.setAttribute('height', String(y0 - y1))
-      const t = Math.log1p(binCount) / Math.log1p(maxCount); // [0,1]
-      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
-      rect.setAttribute('fill', '#3b82f6');           // brighter blue
-      rect.setAttribute('fill-opacity', alpha.toFixed(3));
+      const t = Math.log1p(binCount) / Math.log1p(maxCount2d)
+      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2)
+      rect.setAttribute('fill', '#3b82f6')
+      rect.setAttribute('fill-opacity', alpha.toFixed(3))
       svg.appendChild(rect)
     }
   }
 
-  // axes
-  const axisColor = '#666'
-  const mkLine = (x1, y1, x2, y2) => {
-    const l = document.createElementNS(svgNS, 'line')
-    l.setAttribute('x1', x1)
-    l.setAttribute('y1', y1)
-    l.setAttribute('x2', x2)
-    l.setAttribute('y2', y2)
-    l.setAttribute('stroke', axisColor)
-    l.setAttribute('stroke-width', '1')
-    return l
-  }
-  svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad))
-  svg.appendChild(mkLine(pad, pad, pad, h - pad))
+  // axes for heatmap
+  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1)) // x-axis
+  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1)) // y-axis
+  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'))
+  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'))
+  svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, 'end'))
+  svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'))
 
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text')
-    t.textContent = txt
-    t.setAttribute('x', x)
-    t.setAttribute('y', y)
-    t.setAttribute('fill', '#aaa')
-    t.setAttribute('font-size', '10')
-    t.setAttribute('text-anchor', anchor)
-    return t
+  // ------ TOP histogram (over x) ------
+  const topY1 = pad + mSize
+  const topY0 = pad
+  const topInnerH = Math.max(1, mSize - 6)
+  const scaleTopH = c => ((Number.isFinite(c) ? c : 0) / maxCountTop) * topInnerH
+
+  for (let i = 0; i < nx; i++) {
+    const x0 = scaleX(xEdges[i])
+    const x1 = scaleX(xEdges[i + 1])
+    const barW = Math.max(1, x1 - x0)
+    const hPix = scaleTopH(xCounts[i])
+    const rect = document.createElementNS(svgNS, 'rect')
+    rect.setAttribute('x', String(x0))
+    rect.setAttribute('y', String(topY1 - hPix))
+    rect.setAttribute('width', String(barW))
+    rect.setAttribute('height', String(hPix))
+    rect.setAttribute('fill', '#22c55e')
+    rect.setAttribute('fill-opacity', '0.75')
+    svg.appendChild(rect)
   }
-  svg.appendChild(mkText(xMin.toFixed(2), pad, h - pad + 12, 'start'))
-  svg.appendChild(mkText(xMax.toFixed(2), w - pad, h - pad + 12, 'end'))
-  svg.appendChild(mkText(yMin.toFixed(2), pad - 6, h - pad, 'end'))
-  svg.appendChild(mkText(yMax.toFixed(2), pad - 6, pad + 4, 'end'))
+
+  // ------ RIGHT histogram (over y) ------
+  const rightX0 = pad + innerW
+  const rightX1 = pad + innerW + mSize
+  const rightInnerW = Math.max(1, mSize - 6)
+  const scaleRightW = c => ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW
+
+  for (let j = 0; j < ny; j++) {
+    const y0 = scaleY(yEdges[j])
+    const y1 = scaleY(yEdges[j + 1])
+    const barH = Math.max(1, y0 - y1)
+    const wPix = scaleRightW(yCounts[j])
+    const rect = document.createElementNS(svgNS, 'rect')
+    rect.setAttribute('x', String(rightX1 - wPix))
+    rect.setAttribute('y', String(y1))
+    rect.setAttribute('width', String(wPix))
+    rect.setAttribute('height', String(barH))
+    rect.setAttribute('fill', '#eab308')
+    rect.setAttribute('fill-opacity', '0.75')
+    svg.appendChild(rect)
+  }
+
+  // ------ Percentile guides + interactive labels ------
+  const pctLabel = (p, val) => `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`
+  const attachPctHover = (guideEl, lblEl, text) => {
+    [guideEl, lblEl].forEach(el => {
+      el.style.cursor = 'pointer'
+      el.addEventListener('mouseenter', e => {
+        guideEl.setAttribute('stroke-width', '2')
+        guideEl.setAttribute('opacity', '1')
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY)
+      })
+      el.addEventListener('mousemove', e => {
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY)
+      })
+      el.addEventListener('mouseleave', () => {
+        guideEl.setAttribute('stroke-width', '1')
+        guideEl.setAttribute('opacity', '0.9')
+        if (typeof _hidePctTooltip === 'function') _hidePctTooltip()
+      })
+    })
+  }
+
+  const totalX = xCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
+  const totalY = yCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
+
+  const getQuantileX = q => {
+    if (totalX <= 0) return xMin
+    const target = q * totalX
+    let cum = 0
+    for (let i = 0; i < nx; i++) {
+      const c = Number.isFinite(xCounts[i]) ? xCounts[i] : 0
+      const next = cum + c
+      if (target <= next) {
+        const e0 = xEdges[i], e1 = xEdges[i + 1]
+        const f = c > 0 ? (target - cum) / c : 0
+        return e0 + f * (e1 - e0)
+      }
+      cum = next
+    }
+    return xMax
+  }
+  const getQuantileY = q => {
+    if (totalY <= 0) return yMin
+    const target = q * totalY
+    let cum = 0
+    for (let j = 0; j < ny; j++) {
+      const c = Number.isFinite(yCounts[j]) ? yCounts[j] : 0
+      const next = cum + c
+      if (target <= next) {
+        const e0 = yEdges[j], e1 = yEdges[j + 1]
+        const f = c > 0 ? (target - cum) / c : 0
+        return e0 + f * (e1 - e0)
+      }
+      cum = next
+    }
+    return yMax
+  }
+
+  // X percentile guides (vertical through top hist + heatmap), label at top
+  for (const p of percentiles) {
+    const val = getQuantileX(p)
+    const x = scaleX(val)
+    const guide = mkLine(x, topY0, x, plotY1, percentileColor)
+    guide.setAttribute('stroke-dasharray', '4,3')
+    guide.setAttribute('opacity', '0.9')
+    svg.appendChild(guide)
+
+    const lbl = mkText(pctLabel(p, val), x, topY0 - 6, 'middle')
+    lbl.setAttribute('fill', percentileColor)
+    svg.appendChild(lbl)
+
+    attachPctHover(guide, lbl, `${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`)
+  }
+
+  // Y percentile guides (horizontal through heatmap + right hist), label at right
+  for (const p of percentiles) {
+    const val = getQuantileY(p)
+    const y = scaleY(val)
+    const guide = mkLine(plotX0, y, rightX1, y, percentileColor)
+    guide.setAttribute('stroke-dasharray', '4,3')
+    guide.setAttribute('opacity', '0.9')
+    svg.appendChild(guide)
+
+    const lbl = mkText(pctLabel(p, val), rightX1 + 4, y + 3, 'start')
+    lbl.setAttribute('fill', percentileColor)
+    svg.appendChild(lbl)
+
+    attachPctHover(guide, lbl, `${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`)
+  }
 
   return svg
 }
+
 
 /**
  * Prevent Leaflet map zooming when the Alt key is held during scroll.

@@ -128,9 +128,9 @@ select, input[type='range'], input[type='number'] {
 .overlay-row .link-btn:hover { color: var(--brand-hover); }
 .overlay-row .link-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
-.overlay-body svg rect { fill: #1e90ff; }
+/*.overlay-body svg rect { fill: #1e90ff; }
 .overlay-body svg text { fill: #aaa; }
-
+*/
 .hist-tooltip {
   position: absolute;
   z-index: var(--z-tooltip);

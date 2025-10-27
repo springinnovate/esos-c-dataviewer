@@ -913,7 +913,8 @@ function renderScatterOverlay(opts) {
       width: 420,
       height: 320,
       pad: 40,
-      percentiles: state.percentiles
+      percentiles: state.percentiles,
+      layerId: 'B'
     });
     plotEl.appendChild(svg);
   }
@@ -923,7 +924,8 @@ function renderScatterOverlay(opts) {
       width: 420,
       height: 320,
       pad: 40,
-      percentiles: state.percentiles
+      percentiles: state.percentiles,
+      layerId: 'A'
     });
     plotEl.appendChild(svg);
   }
@@ -934,7 +936,8 @@ function renderScatterOverlay(opts) {
       scatterObj.x_edges,
       scatterObj.y_edges,
       scatterObj.hist2d,
-      { width: 420, height: 320, pad: 40, percentiles: state.percentiles },
+      { width: 420, height: 320, pad: 40, percentiles: state.percentiles,
+       layerIdX: 'A', layerIdY: 'B' },
 
     );
     plotEl.appendChild(svg);
@@ -959,16 +962,17 @@ function renderScatterOverlay(opts) {
  * @param {{width?:number,height?:number,pad?:number}} opts
  * @returns {SVGSVGElement}
  */
+// use layer-based coloring in 1D histograms
 function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   const w = opts.width ?? 400;
   const h = opts.height ?? 300;
   const pad = opts.pad ?? 40;
+  const layerId = opts.layerId; // 'A' | 'B' (optional)
   const innerW = w - pad * 2;
   const innerH = h - pad * 2;
 
   const n = Math.max(0, edges.length - 1);
   const maxCount = Math.max(1, ...counts.map(c => (Number.isFinite(c) ? c : 0)));
-
   const minVal = Math.min(...edges);
   const maxVal = Math.max(...edges);
   const domainSpan = Math.max(1e-9, maxVal - minVal);
@@ -980,69 +984,25 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
   svg.style.background = '#11151c';
 
   const axisColor = '#666';
-
   const mkLine = (x1, y1, x2, y2) => {
     const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1);
-    l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2);
-    l.setAttribute('y2', y2);
-    l.setAttribute('stroke', axisColor);
-    l.setAttribute('stroke-width', '1');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', axisColor); l.setAttribute('stroke-width', '1');
     return l;
   };
-  const mkText = (txt, x, y, anchor = 'middle', rotate = 0) => {
+  const mkText = (txt, x, y, anchor = 'middle') => {
     const t = document.createElementNS(svgNS, 'text');
     t.textContent = txt;
-    t.setAttribute('x', x);
-    t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa');
-    t.setAttribute('font-size', '10');
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
     t.setAttribute('text-anchor', anchor);
-    if (rotate) t.setAttribute('transform', `rotate(${rotate}, ${x}, ${y})`);
     return t;
   };
 
-  // helpers for percentiles
-  const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p/100;
-    return null;
-  };
-
-  const totalCount = counts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const percentileColor = opts.percentileColor ?? '#60a5fa';
-  const percentileTickLength = opts.percentileTickLength ?? 6;
-  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
-
-  const getQuantileValue = q => {
-    const target = q * totalCount;
-    if (target <= 0) return minVal;
-    let cum = 0;
-    for (let i = 0; i < n; i++) {
-      const c = Number.isFinite(counts[i]) ? counts[i] : 0;
-      const nextCum = cum + c;
-      if (target <= nextCum) {
-        const e0 = edges[i];
-        const e1 = edges[i + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = nextCum;
-    }
-    return maxVal;
-  };
-
-  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
-  const percentiles = [...new Set(percentilesRaw
-    .map(parsePercent)
-    .filter(p => p !== null && p >= 0 && p <= 1)
-  )].sort((a, b) => a - b);
-
   if (axis === 'x') {
-    // axes
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis
-    svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis
-
+    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
+    svg.appendChild(mkLine(pad, pad, pad, h - pad));
     const scaleX = v => pad + ((v - minVal) / domainSpan) * innerW;
     const scaleH = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerH;
 
@@ -1051,56 +1011,17 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
       const x1 = scaleX(edges[i + 1]);
       const barW = Math.max(1, x1 - x0);
       const hPix = scaleH(counts[i] ?? 0);
+      const mid = (edges[i] + edges[i + 1]) / 2;
+      const fill = layerId ? _styleColorForValue(layerId, mid) : '#22c55e';
+
       const rect = document.createElementNS(svgNS, 'rect');
       rect.setAttribute('x', String(x0));
       rect.setAttribute('y', String(h - pad - hPix));
       rect.setAttribute('width', String(barW));
       rect.setAttribute('height', String(hPix));
-      rect.setAttribute('fill', '#22c55e');
+      rect.setAttribute('fill', fill);
       rect.setAttribute('fill-opacity', '0.85');
       svg.appendChild(rect);
-    }
-
-    // percentile ticks (x-axis)
-    // percentile guides (x-axis: full-height dashed lines with top labels)
-    if (percentiles.length && totalCount > 0) {
-      for (const p of percentiles) {
-        const val = getQuantileValue(p);
-        const x = scaleX(val);
-
-        const guide = document.createElementNS(svgNS, 'line');
-        guide.setAttribute('x1', String(x));
-        guide.setAttribute('y1', String(pad));
-        guide.setAttribute('x2', String(x));
-        guide.setAttribute('y2', String(h - pad));
-        guide.setAttribute('stroke', percentileColor);
-        guide.setAttribute('stroke-width', '1');
-        guide.setAttribute('stroke-dasharray', '4,3');
-        guide.setAttribute('opacity', '0.9');
-        svg.appendChild(guide);
-
-        const lbl = mkText(`${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`, x, pad - 6, 'middle');
-        lbl.setAttribute('fill', percentileColor);
-        svg.appendChild(lbl);
-
-        // hover interactions for both line and label
-        [guide, lbl].forEach(el => {
-          el.style.cursor = 'pointer';
-          el.addEventListener('mouseenter', e => {
-            guide.setAttribute('stroke-width', '2');
-            guide.setAttribute('opacity', '1');
-            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
-          });
-          el.addEventListener('mousemove', e => {
-            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
-          });
-          el.addEventListener('mouseleave', () => {
-            guide.setAttribute('stroke-width', '1');
-            guide.setAttribute('opacity', '0.9');
-            _hidePctTooltip();
-          });
-        });
-      }
     }
 
     svg.appendChild(mkText(minVal.toFixed(2), pad, h - pad + 12, 'start'));
@@ -1108,8 +1029,8 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
     svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
     svg.appendChild(mkText(String(maxCount), pad - 6, pad + 4, 'end'));
   } else {
-    //svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad)); // x axis (counts)
-    svg.appendChild(mkLine(pad, pad, pad, h - pad)); // y axis (values)
+    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
+    svg.appendChild(mkLine(pad, pad, pad, h - pad));
 
     const scaleY = v => h - pad - ((v - minVal) / domainSpan) * innerH;
     const scaleW = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerW;
@@ -1119,65 +1040,26 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
       const y1 = scaleY(edges[i + 1]);
       const barH = Math.max(1, y0 - y1);
       const wPix = scaleW(counts[i] ?? 0);
+      const mid = (edges[i] + edges[i + 1]) / 2;
+      const fill = layerId ? _styleColorForValue(layerId, mid) : '#eab308';
+
       const rect = document.createElementNS(svgNS, 'rect');
       rect.setAttribute('x', String(pad));
       rect.setAttribute('y', String(y1));
       rect.setAttribute('width', String(wPix));
       rect.setAttribute('height', String(barH));
-      rect.setAttribute('fill', '#eab308');
+      rect.setAttribute('fill', fill);
       rect.setAttribute('fill-opacity', '0.85');
       svg.appendChild(rect);
     }
 
-    // percentile guides (y-axis: full-width dashed lines with right labels)
-    if (percentiles.length && totalCount > 0) {
-      for (const p of percentiles) {
-        const val = getQuantileValue(p);
-        const y = scaleY(val);
-
-        const guide = document.createElementNS(svgNS, 'line');
-        guide.setAttribute('x1', String(pad));
-        guide.setAttribute('y1', String(y));
-        guide.setAttribute('x2', String(w - pad));
-        guide.setAttribute('y2', String(y));
-        guide.setAttribute('stroke', percentileColor);
-        guide.setAttribute('stroke-width', '1');
-        guide.setAttribute('stroke-dasharray', '4,3');
-        guide.setAttribute('opacity', '0.9');
-        svg.appendChild(guide);
-
-        const lbl = mkText(
-          `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`,
-          w - pad + 4, y + 3, 'start');
-        lbl.setAttribute('fill', percentileColor);
-        svg.appendChild(lbl);
-        [guide, lbl].forEach(el => {
-          el.style.cursor = 'pointer';
-          el.addEventListener('mouseenter', e => {
-            guide.setAttribute('stroke-width', '2');
-            guide.setAttribute('opacity', '1');
-            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
-          });
-          el.addEventListener('mousemove', e => {
-            _showPctTooltip(`${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`, e.clientX, e.clientY);
-          });
-          el.addEventListener('mouseleave', () => {
-            guide.setAttribute('stroke-width', '1');
-            guide.setAttribute('opacity', '0.9');
-            _hidePctTooltip();
-          });
-        });
-      }
-    }
-
     svg.appendChild(mkText('0', pad, h - pad + 12, 'middle'));
-    svg.appendChild(mkText(String(maxCount), w - pad, h - pad + 12, 'end'));
     svg.appendChild(mkText(minVal.toFixed(2), pad - 6, h - pad, 'end'));
     svg.appendChild(mkText(maxVal.toFixed(2), pad - 6, pad + 4, 'end'));
   }
-
   return svg;
 }
+
 
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.
@@ -1187,256 +1069,199 @@ function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
  * @param {{width?:number,height?:number,pad?:number}} opts
  * @returns {SVGSVGElement}
  */
+// color top/right histograms in scatter using layer styles
 function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
-  const w = opts.width ?? 400
-  const h = opts.height ?? 300
-  const pad = opts.pad ?? 40
-  const mSize = opts.marginalSize ?? 48 // band for top/right histograms
-  const percentileColor = opts.percentileColor ?? '#60a5fa'
-  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2
-  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : []
+  const w = opts.width ?? 400;
+  const h = opts.height ?? 300;
+  const pad = opts.pad ?? 40;
+  const mSize = opts.marginalSize ?? 48;
+  const percentileColor = opts.percentileColor ?? '#60a5fa';
+  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
+  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
+  const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
+  const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
 
-  // parse 0..1 quantiles from numbers or strings like '90' or '90%'
   const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p
+    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
     if (typeof p === 'string') {
-      const s = p.trim()
-      if (!s) return null
-      const hasPct = s.endsWith('%')
-      const num = parseFloat(s)
-      if (!Number.isFinite(num)) return null
-      return hasPct || num > 1 ? num / 100 : num
+      const s = p.trim(); if (!s) return null;
+      const num = parseFloat(s);
+      if (!Number.isFinite(num)) return null;
+      return (s.endsWith('%') || num > 1) ? num / 100 : num;
     }
-    return null
-  }
-  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b)
+    return null;
+  };
+  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a,b)=>a-b);
 
-  // inner plot (heatmap) area leaves space for top/right histograms
-  const innerW = Math.max(1, w - pad * 2 - mSize)
-  const innerH = Math.max(1, h - pad * 2 - mSize)
+  const innerW = Math.max(1, w - pad * 2 - mSize);
+  const innerH = Math.max(1, h - pad * 2 - mSize);
 
-  const xMin = Math.min(...xEdges)
-  const xMax = Math.max(...xEdges)
-  const yMin = Math.min(...yEdges)
-  const yMax = Math.max(...yEdges)
-  const nx = hist2d.length
-  const ny = hist2d[0].length
+  const xMin = Math.min(...xEdges), xMax = Math.max(...xEdges);
+  const yMin = Math.min(...yEdges), yMax = Math.max(...yEdges);
+  const nx = hist2d.length, ny = hist2d[0].length;
 
-  // 1D histograms from 2D
-  const xCounts = new Array(nx).fill(0)
-  const yCounts = new Array(ny).fill(0)
-  let maxCount2d = 1
+  // 1D reductions
+  const xCounts = new Array(nx).fill(0);
+  const yCounts = new Array(ny).fill(0);
+  let maxCount2d = 1;
   for (let i = 0; i < nx; i++) {
-    let rowSum = 0
+    let rowSum = 0;
     for (let j = 0; j < ny; j++) {
-      const v = Number(hist2d[i][j]) || 0
-      rowSum += v
-      yCounts[j] += v
-      if (v > maxCount2d) maxCount2d = v
+      const v = Number(hist2d[i][j]) || 0;
+      rowSum += v; yCounts[j] += v; if (v > maxCount2d) maxCount2d = v;
     }
-    xCounts[i] = rowSum
+    xCounts[i] = rowSum;
   }
-  const maxCountTop = Math.max(1, ...xCounts)
-  const maxCountRight = Math.max(1, ...yCounts)
+  const maxCountTop = Math.max(1, ...xCounts);
+  const maxCountRight = Math.max(1, ...yCounts);
 
-  const svgNS = 'http://www.w3.org/2000/svg'
-  const svg = document.createElementNS(svgNS, 'svg')
-  svg.setAttribute('width', String(w))
-  svg.setAttribute('height', String(h))
-  svg.style.background = '#11151c'
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w)); svg.setAttribute('height', String(h));
+  svg.style.background = '#11151c';
 
-  const axisColor = '#666'
-  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
-    const l = document.createElementNS(svgNS, 'line')
-    l.setAttribute('x1', String(x1))
-    l.setAttribute('y1', String(y1))
-    l.setAttribute('x2', String(x2))
-    l.setAttribute('y2', String(y2))
-    l.setAttribute('stroke', stroke)
-    l.setAttribute('stroke-width', sw)
-    return l
-  }
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text')
-    t.textContent = txt
-    t.setAttribute('x', String(x))
-    t.setAttribute('y', String(y))
-    t.setAttribute('fill', '#aaa')
-    t.setAttribute('font-size', '10')
-    t.setAttribute('text-anchor', anchor)
-    return t
-  }
+  const axisColor = '#666';
+  const mkLine = (x1,y1,x2,y2, stroke=axisColor, sw='1') => {
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
+    return l;
+  };
+  const mkText = (txt, x, y, anchor='middle') => {
+    const t = document.createElementNS(svgNS, 'text');
+    t.textContent = txt; t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10'); t.setAttribute('text-anchor', anchor);
+    return t;
+  };
 
-  // scales for heatmap
-  const plotX0 = pad
-  const plotY0 = pad + mSize
-  const plotX1 = pad + innerW
-  const plotY1 = pad + mSize + innerH
-  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW
-  const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH
+  const plotX0 = pad, plotY0 = pad + mSize;
+  const plotX1 = pad + innerW, plotY1 = pad + mSize + innerH;
+  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
+  const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
 
-  // draw heatmap bins
+  // heatmap
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
-      const binCount = Number(hist2d[i][j]) || 0
-      if (binCount <= 0) continue
-      const x0 = scaleX(xEdges[i])
-      const x1 = scaleX(xEdges[i + 1])
-      const y0 = scaleY(yEdges[j])
-      const y1 = scaleY(yEdges[j + 1])
-      const rect = document.createElementNS(svgNS, 'rect')
-      rect.setAttribute('x', String(x0))
-      rect.setAttribute('y', String(y1))
-      rect.setAttribute('width', String(x1 - x0))
-      rect.setAttribute('height', String(y0 - y1))
-      const t = Math.log1p(binCount) / Math.log1p(maxCount2d)
-      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2)
-      rect.setAttribute('fill', '#3b82f6')
-      rect.setAttribute('fill-opacity', alpha.toFixed(3))
-      svg.appendChild(rect)
+      const binCount = Number(hist2d[i][j]) || 0;
+      if (binCount <= 0) continue;
+      const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i+1]);
+      const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j+1]);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', String(x0)); rect.setAttribute('y', String(y1));
+      rect.setAttribute('width', String(x1 - x0)); rect.setAttribute('height', String(y0 - y1));
+      const t = Math.log1p(binCount) / Math.log1p(maxCount2d);
+      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
+      rect.setAttribute('fill', '#3b82f6'); rect.setAttribute('fill-opacity', alpha.toFixed(3));
+      svg.appendChild(rect);
     }
   }
 
-  // axes for heatmap
-  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1)) // x-axis
-  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1)) // y-axis
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'))
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'))
-  svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, 'end'))
-  svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'))
+  // axes + labels
+  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
+  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
+  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+  svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, 'end'));
+  svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'));
 
-  // ------ TOP histogram (over x) ------
-  const topY1 = pad + mSize
-  const topY0 = pad
-  const topInnerH = Math.max(1, mSize - 6)
-  const scaleTopH = c => ((Number.isFinite(c) ? c : 0) / maxCountTop) * topInnerH
-
+  // top histogram (x)
+  const topY1 = pad + mSize, topY0 = pad;
+  const topInnerH = Math.max(1, mSize - 6);
+  const scaleTopH = c => ((Number.isFinite(c) ? c : 0) / maxCountTop) * topInnerH;
   for (let i = 0; i < nx; i++) {
-    const x0 = scaleX(xEdges[i])
-    const x1 = scaleX(xEdges[i + 1])
-    const barW = Math.max(1, x1 - x0)
-    const hPix = scaleTopH(xCounts[i])
-    const rect = document.createElementNS(svgNS, 'rect')
-    rect.setAttribute('x', String(x0))
-    rect.setAttribute('y', String(topY1 - hPix))
-    rect.setAttribute('width', String(barW))
-    rect.setAttribute('height', String(hPix))
-    rect.setAttribute('fill', '#22c55e')
-    rect.setAttribute('fill-opacity', '0.75')
-    svg.appendChild(rect)
+    const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
+    const barW = Math.max(1, x1 - x0);
+    const hPix = scaleTopH(xCounts[i]);
+    const mid = (xEdges[i] + xEdges[i + 1]) / 2;
+    const fill = _styleColorForValue(layerIdX, mid);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(x0)); rect.setAttribute('y', String(topY1 - hPix));
+    rect.setAttribute('width', String(barW)); rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', fill); rect.setAttribute('fill-opacity', '0.85');
+    svg.appendChild(rect);
   }
 
-  // ------ RIGHT histogram (over y) ------
-  const rightX0 = pad + innerW
-  const rightX1 = pad + innerW + mSize
-  const rightInnerW = Math.max(1, mSize - 6)
-  const scaleRightW = c => ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW
-
+  // right histogram (y)
+  const rightX0 = pad + innerW, rightX1 = pad + innerW + mSize;
+  const rightInnerW = Math.max(1, mSize - 6);
+  const scaleRightW = c => ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW;
   for (let j = 0; j < ny; j++) {
-    const y0 = scaleY(yEdges[j])
-    const y1 = scaleY(yEdges[j + 1])
-    const barH = Math.max(1, y0 - y1)
-    const wPix = scaleRightW(yCounts[j])
-    const rect = document.createElementNS(svgNS, 'rect')
-    rect.setAttribute('x', String(rightX1 - wPix))
-    rect.setAttribute('y', String(y1))
-    rect.setAttribute('width', String(wPix))
-    rect.setAttribute('height', String(barH))
-    rect.setAttribute('fill', '#eab308')
-    rect.setAttribute('fill-opacity', '0.75')
-    svg.appendChild(rect)
+    const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
+    const barH = Math.max(1, y0 - y1);
+    const wPix = scaleRightW(yCounts[j]);
+    const mid = (yEdges[j] + yEdges[j + 1]) / 2;
+    const fill = _styleColorForValue(layerIdY, mid);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(rightX1 - wPix)); rect.setAttribute('y', String(y1));
+    rect.setAttribute('width', String(wPix)); rect.setAttribute('height', String(barH));
+    rect.setAttribute('fill', fill); rect.setAttribute('fill-opacity', '0.85');
+    svg.appendChild(rect);
   }
 
-  // ------ Percentile guides + interactive labels ------
-  const pctLabel = (p, val) => `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`
+  // percentiles across both with hover (same as earlier behavior)
+  const totalX = xCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
+  const totalY = yCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
+  const getQuantileX = q => {
+    if (totalX <= 0) return xMin;
+    const target = q * totalX; let cum = 0;
+    for (let i = 0; i < nx; i++) {
+      const c = Number.isFinite(xCounts[i]) ? xCounts[i] : 0;
+      const next = cum + c; if (target <= next) {
+        const e0 = xEdges[i], e1 = xEdges[i+1]; const f = c>0 ? (target-cum)/c : 0;
+        return e0 + f * (e1 - e0);
+      } cum = next;
+    } return xMax;
+  };
+  const getQuantileY = q => {
+    if (totalY <= 0) return yMin;
+    const target = q * totalY; let cum = 0;
+    for (let j = 0; j < ny; j++) {
+      const c = Number.isFinite(yCounts[j]) ? yCounts[j] : 0;
+      const next = cum + c; if (target <= next) {
+        const e0 = yEdges[j], e1 = yEdges[j+1]; const f = c>0 ? (target-cum)/c : 0;
+        return e0 + f * (e1 - e0);
+      } cum = next;
+    } return yMax;
+  };
+  const pctLabel = (p, val) => `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`;
   const attachPctHover = (guideEl, lblEl, text) => {
     [guideEl, lblEl].forEach(el => {
-      el.style.cursor = 'pointer'
+      el.style.cursor = 'pointer';
       el.addEventListener('mouseenter', e => {
-        guideEl.setAttribute('stroke-width', '2')
-        guideEl.setAttribute('opacity', '1')
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY)
-      })
+        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+      });
       el.addEventListener('mousemove', e => {
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY)
-      })
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+      });
       el.addEventListener('mouseleave', () => {
-        guideEl.setAttribute('stroke-width', '1')
-        guideEl.setAttribute('opacity', '0.9')
-        if (typeof _hidePctTooltip === 'function') _hidePctTooltip()
-      })
-    })
-  }
+        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
+        if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+      });
+    });
+  };
 
-  const totalX = xCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
-  const totalY = yCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
-
-  const getQuantileX = q => {
-    if (totalX <= 0) return xMin
-    const target = q * totalX
-    let cum = 0
-    for (let i = 0; i < nx; i++) {
-      const c = Number.isFinite(xCounts[i]) ? xCounts[i] : 0
-      const next = cum + c
-      if (target <= next) {
-        const e0 = xEdges[i], e1 = xEdges[i + 1]
-        const f = c > 0 ? (target - cum) / c : 0
-        return e0 + f * (e1 - e0)
-      }
-      cum = next
-    }
-    return xMax
-  }
-  const getQuantileY = q => {
-    if (totalY <= 0) return yMin
-    const target = q * totalY
-    let cum = 0
-    for (let j = 0; j < ny; j++) {
-      const c = Number.isFinite(yCounts[j]) ? yCounts[j] : 0
-      const next = cum + c
-      if (target <= next) {
-        const e0 = yEdges[j], e1 = yEdges[j + 1]
-        const f = c > 0 ? (target - cum) / c : 0
-        return e0 + f * (e1 - e0)
-      }
-      cum = next
-    }
-    return yMax
-  }
-
-  // X percentile guides (vertical through top hist + heatmap), label at top
   for (const p of percentiles) {
-    const val = getQuantileX(p)
-    const x = scaleX(val)
-    const guide = mkLine(x, topY0, x, plotY1, percentileColor)
-    guide.setAttribute('stroke-dasharray', '4,3')
-    guide.setAttribute('opacity', '0.9')
-    svg.appendChild(guide)
-
-    const lbl = mkText(pctLabel(p, val), x, topY0 - 6, 'middle')
-    lbl.setAttribute('fill', percentileColor)
-    svg.appendChild(lbl)
-
-    attachPctHover(guide, lbl, `${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`)
+    const xv = getQuantileX(p), x = scaleX(xv);
+    const gx = mkLine(x, pad, x, plotY1, percentileColor);
+    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.9');
+    svg.appendChild(gx);
+    const lx = mkText(pctLabel(p, xv), x, pad - 6, 'middle');
+    lx.setAttribute('fill', percentileColor); svg.appendChild(lx);
+    attachPctHover(gx, lx, `${Math.round(p*100)}% • ${xv.toFixed(percentileDecimals)}`);
   }
-
-  // Y percentile guides (horizontal through heatmap + right hist), label at right
   for (const p of percentiles) {
-    const val = getQuantileY(p)
-    const y = scaleY(val)
-    const guide = mkLine(plotX0, y, rightX1, y, percentileColor)
-    guide.setAttribute('stroke-dasharray', '4,3')
-    guide.setAttribute('opacity', '0.9')
-    svg.appendChild(guide)
-
-    const lbl = mkText(pctLabel(p, val), rightX1 + 4, y + 3, 'start')
-    lbl.setAttribute('fill', percentileColor)
-    svg.appendChild(lbl)
-
-    attachPctHover(guide, lbl, `${Math.round(p * 100)}% • ${val.toFixed(percentileDecimals)}`)
+    const yv = getQuantileY(p), y = scaleY(yv);
+    const gy = mkLine(plotX0, y, pad + innerW + mSize, y, percentileColor);
+    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.9');
+    svg.appendChild(gy);
+    const ly = mkText(pctLabel(p, yv), pad + innerW + mSize + 4, y + 3, 'start');
+    ly.setAttribute('fill', percentileColor); svg.appendChild(ly);
+    attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
-  return svg
+  return svg;
 }
 
 
@@ -1617,6 +1442,41 @@ function _showPctTooltip(text, x, y) {
 function _hidePctTooltip() {
   const tip = document.querySelector('.pct-tooltip')
   if (tip) tip.style.display = 'none'
+}
+
+// helpers: color from current style at a value
+function _hexToRgb(hex) {
+  const s = String(hex || '').trim();
+  const m = s.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return [136, 136, 136];
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map(ch => ch + ch).join('');
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function _interpRgb(c1, c2, t) {
+  const u = 1 - t;
+  const r = Math.round(u * c1[0] + t * c2[0]);
+  const g = Math.round(u * c1[1] + t * c2[1]);
+  const b = Math.round(u * c1[2] + t * c2[2]);
+  return `rgb(${r},${g},${b})`;
+}
+function _styleColorForValue(layerId, v) {
+  const s = _readStyleInputsFromUI(layerId);
+  const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
+  const cmin = _hexToRgb(s.cmin || '#000000');
+  const cmed = _hexToRgb(s.cmed || '#888888');
+  const cmax = _hexToRgb(s.cmax || '#ffffff');
+  if (!Number.isFinite(v) || !Number.isFinite(min) || !Number.isFinite(med) || !Number.isFinite(max)) return 'rgb(136,136,136)';
+  if (v <= min) return `rgb(${cmin[0]},${cmin[1]},${cmin[2]})`;
+  if (v >= max) return `rgb(${cmax[0]},${cmax[1]},${cmax[2]})`;
+  if (v <= med) {
+    const t = (v - min) / Math.max(1e-9, (med - min));
+    return _interpRgb(cmin, cmed, t);
+  } else {
+    const t = (v - med) / Math.max(1e-9, (max - med));
+    return _interpRgb(cmed, cmax, t);
+  }
 }
 
 

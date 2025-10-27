@@ -944,7 +944,7 @@ function renderScatterOverlay(opts) {
         layerIdX: 'A',
         layerIdY: 'B',
         blend: 'plus-lighter',
-        point: state.lastPixelPoint // <-- new
+        point: state.lastPixelPoint
       }
     );
     plotEl.appendChild(svg);
@@ -1321,7 +1321,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
         label.setAttribute('stroke-opacity', '0.6');
         svg.appendChild(label);
 
-        // optional hover tooltip with layer/value annotation
         const tipText = point.label || `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
         [circ, label].forEach(el => {
           el.style.cursor = 'default';
@@ -1757,7 +1756,6 @@ function wirePixelProbe() {
       if (inFlight?.ts === ts) inFlight = null
     }
 
-    // update probe position + content
     const lines = [
       `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
       Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '—' : String(valA)}` : null,
@@ -1769,7 +1767,6 @@ function wirePixelProbe() {
     probe.style.top = `${clientY + 12}px`
     probe.style.display = 'block'
 
-    // in wirePixelProbe(), after computing valA/valB (inside queryAndRender) add:
     const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
     if (bothFinite) {
       state.lastPixelPoint = {
@@ -1822,14 +1819,12 @@ function wirePixelProbe() {
     pending = null
   })
 
-  // optional: hide on overlay close
   const overlay = document.getElementById('statsOverlay')
   if (overlay) {
     overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
     overlay.addEventListener('mouseleave', () => { /* will show again on next mousemove */ })
   }
 
-  // teardown helper (if you ever need it)
   map._pixelProbeTeardown = () => {
     clearInterval(drainTimer)
     abortPrev()

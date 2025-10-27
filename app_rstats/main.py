@@ -139,6 +139,44 @@ class ScatterOut(BaseModel):
     geometry: dict
 
 
+class PixelValIn(BaseModel):
+    """Input model for single-pixel value query.
+
+    Attributes:
+        raster_id (str): Identifier of the target raster in the registry.
+        lon (float): Longitude (or X) of the query coordinate in `from_crs`.
+        lat (float): Latitude (or Y) of the query coordinate in `from_crs`.
+        from_crs (str): CRS of the input coordinate, default 'EPSG:4326'.
+    """
+
+    raster_id: str
+    lon: float
+    lat: float
+    from_crs: str = "EPSG:4326"
+
+
+class PixelValOut(BaseModel):
+    """Output model for single-pixel value query.
+
+    Attributes:
+        raster_id (str): Identifier of the raster queried.
+        lon (float): Input longitude (X) in `from_crs`.
+        lat (float): Input latitude (Y) in `from_crs`.
+        row (Optional[int]): Raster row index (0-based) if within bounds, else None.
+        col (Optional[int]): Raster column index (0-based) if within bounds, else None.
+        in_bounds (bool): Whether the projected coordinate fell inside raster bounds.
+        value (Optional[float]): Pixel value or None if nodata/out-of-bounds/non-finite.
+    """
+
+    raster_id: str
+    lon: float
+    lat: float
+    row: Optional[int] = None
+    col: Optional[int] = None
+    in_bounds: bool = False
+    value: Optional[float] = None
+
+
 def _load_registry() -> dict:
     """Load the raster layer registry from a YAML configuration file.
 
@@ -663,4 +701,68 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         raise HTTPException(
             status_code=500,
             detail=f"Scatter computation failed: {type(e).__name__}: {e}",
+        )
+
+
+@app.post("/stats/pixel_val", response_model=PixelValOut)
+def pixel_val(req: PixelValIn):
+    """Return the value of the pixel containing a given coordinate.
+
+    Projects the (lon, lat) from `from_crs` to the raster CRS, checks bounds,
+    and returns the nearest pixel value. Nodata or non-finite values are returned
+    as `None`. If the point is out of bounds, `in_bounds=False` with `value=None`.
+    """
+    try:
+        ds, nodata = _open_raster(req.raster_id)
+
+        # project input coordinate to raster CRS if needed
+        if req.from_crs and ds.crs and req.from_crs != ds.crs.to_string():
+            tf = Transformer.from_crs(req.from_crs, ds.crs, always_xy=True)
+            x, y = tf.transform(req.lon, req.lat)
+        else:
+            x, y = req.lon, req.lat
+
+        # compute row/col and check bounds
+        r, c = rasterio.transform.rowcol(ds.transform, x, y)
+        if r < 0 or c < 0 or r >= ds.height or c >= ds.width:
+            return PixelValOut(
+                raster_id=req.raster_id,
+                lon=req.lon,
+                lat=req.lat,
+                row=None,
+                col=None,
+                in_bounds=False,
+                value=None,
+            )
+
+        # read single pixel
+        win = Window(c, r, 1, 1)
+        arr = ds.read(1, window=win, masked=False)
+        v = float(arr[0, 0])
+
+        # nodata / non-finite -> None
+        if (nodata is not None and np.isclose(v, nodata)) or (
+            not np.isfinite(v)
+        ):
+            val = None
+        else:
+            val = v
+
+        return PixelValOut(
+            raster_id=req.raster_id,
+            lon=req.lon,
+            lat=req.lat,
+            row=int(r),
+            col=int(c),
+            in_bounds=True,
+            value=val,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("pixel_val failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pixel value query failed: {type(e).__name__}: {e}",
         )

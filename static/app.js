@@ -1207,6 +1207,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const yTitle = document.createElementNS(svgNS, 'text');
     yTitle.textContent = axisLabelY;
     const tx = plotX0 - 34;
+    const tx = plotX0 - 34; // left of y-axis ticks
     const ty = yMid;
     yTitle.setAttribute('x', String(tx));
     yTitle.setAttribute('y', String(ty));

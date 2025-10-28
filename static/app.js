@@ -2125,6 +2125,24 @@ function wirePixelProbe() {
   }
 }
 
+/**
+ * Initializes and manages a bivariate palette picker dropdown UI element.
+ *
+ * This function creates (if necessary) and populates a <select> element used to switch
+ * between registered bivariate palettes defined in `state.bivariatePalette`.
+ * It also wires up automatic application of the selected palette and provides
+ * a manual refresh hook if palettes are added dynamically.
+ *
+ * Behavior summary:
+ * - Ensures a <select> element with the given ID exists (default: 'bivariatePaletteSelect').
+ * - Populates it with sorted keys from `state.bivariatePalette`.
+ * - Automatically applies the currently selected palette to active axes (A and B).
+ * - Supports palettes defined as functions, objects with `.cmap`, or objects containing `{A, B}`.
+ * - Exposes a refresh method `state.refreshBivariatePalettePicker()` to rebuild the dropdown and reapply.
+ *
+ * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
+ * @returns {void}
+ */
 function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
   const ensureSelect = () => {
     let sel = document.getElementById(selectId);

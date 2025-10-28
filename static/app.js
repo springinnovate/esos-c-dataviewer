@@ -847,9 +847,9 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
     body.appendChild(label)
   }
 
-  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '—' }
-  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '—' }
-  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
+  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '-' }
+  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '-' }
+  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '-' }
 }
 
 /**
@@ -1126,7 +1126,7 @@ function renderScatterOverlay(opts) {
     coverage_ratio: s.coverage_ratio ?? null,
   }
 
-  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
+  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
   body.innerHTML = `
     <div class='overlay-header'>
       <div>
@@ -1202,7 +1202,6 @@ function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 }
 
-// do i actually want this?
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
@@ -1458,55 +1457,85 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
+  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+    if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
+      const px = scaleX(point.x);
+      const py = scaleY(point.y);
 
-    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-      // only draw if within current axis ranges
-      if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
-        const px = scaleX(point.x);
-        const py = scaleY(point.y);
+      const colA = _styleColorArrForValue(layerIdX, point.x);
+      const colB = _styleColorArrForValue(layerIdY, point.y);
+      const blended =
+        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+      const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
-        const colA = _styleColorArrForValue(layerIdX, point.x);
-        const colB = _styleColorArrForValue(layerIdY, point.y);
-        const blended =
-          blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
-        const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+      const g = document.createElementNS(svgNS, 'g');
+      svg.appendChild(g);
 
-        const circ = document.createElementNS(svgNS, 'circle');
-        circ.setAttribute('cx', String(px));
-        circ.setAttribute('cy', String(py));
-        circ.setAttribute('r', '3.5');
-        circ.setAttribute('fill', markerColor);
-        circ.setAttribute('stroke', '#000');
-        circ.setAttribute('stroke-width', '1');
-        circ.setAttribute('opacity', '0.95');
-        svg.appendChild(circ);
+      const circ = document.createElementNS(svgNS, 'circle');
+      circ.setAttribute('cx', String(px));
+      circ.setAttribute('cy', String(py));
+      circ.setAttribute('r', '3.5');
+      circ.setAttribute('fill', markerColor);
+      circ.setAttribute('stroke', '#000');
+      circ.setAttribute('stroke-width', '1');
+      circ.setAttribute('opacity', '0.95');
+      g.appendChild(circ);
 
-        const label = document.createElementNS(svgNS, 'text');
-        label.textContent = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-        label.setAttribute('x', String(px + 6));
-        label.setAttribute('y', String(py - 6));
-        label.setAttribute('fill', '#ddd');
-        label.setAttribute('font-size', '10');
-        label.setAttribute('text-anchor', 'start');
-        label.setAttribute('paint-order', 'stroke');
-        label.setAttribute('stroke', '#000');
-        label.setAttribute('stroke-width', '2');
-        label.setAttribute('stroke-opacity', '0.6');
-        svg.appendChild(label);
+      const label = document.createElementNS(svgNS, 'text');
+      const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+      label.textContent = labelText;
+      label.setAttribute('x', String(px + 6));
+      label.setAttribute('y', String(py - 6));
+      label.setAttribute('fill', '#ddd');
+      label.setAttribute('font-size', '10px'); // ensure CSS unit
+      label.setAttribute('text-anchor', 'start');
+      label.setAttribute('dominant-baseline', 'alphabetic');
+      label.setAttribute('paint-order', 'stroke');
+      label.setAttribute('stroke', '#000');
+      label.setAttribute('stroke-width', '2');
+      label.setAttribute('stroke-opacity', '0.6');
+      g.appendChild(label);
 
-        const tipText = point.label || `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-        [circ, label].forEach(el => {
-          el.style.cursor = 'default';
-          el.addEventListener('mouseenter', e => {
-            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-          });
-          el.addEventListener('mousemove', e => {
-            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-          });
-          el.addEventListener('mouseleave', () => {
-            if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
-          });
+      // defer bbox measure to ensure it's rendered
+      requestAnimationFrame(() => {
+        let bbox = label.getBBox();
+        // fallback if getBBox fails or returns zero (some browsers/layouts)
+        if (!bbox.width || !bbox.height) {
+          const fs = 10; // px
+          const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+          bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
+        }
+
+        const padX = 3;
+        const padY = 2;
+
+        const bg = document.createElementNS(svgNS, 'rect');
+        bg.setAttribute('x', String(bbox.x - padX));
+        bg.setAttribute('y', String(bbox.y - padY));
+        bg.setAttribute('width', String(bbox.width + padX * 2));
+        bg.setAttribute('height', String(bbox.height + padY * 2));
+        bg.setAttribute('rx', '2');
+        bg.setAttribute('ry', '2');
+        bg.setAttribute('fill', '#000');           // avoid rgba() in SVG attribute
+        bg.setAttribute('fill-opacity', '0.6');    // use separate opacity
+        bg.setAttribute('pointer-events', 'none');
+
+        g.insertBefore(bg, label);
+      });
+
+      const tipText = point.label || labelText;
+      [circ, label].forEach(el => {
+        el.style.cursor = 'default';
+        el.addEventListener('mouseenter', e => {
+          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
         });
+        el.addEventListener('mousemove', e => {
+          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+        });
+        el.addEventListener('mouseleave', () => {
+          if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+        });
+      });
     }
   }
   return svg;
@@ -1886,7 +1915,7 @@ function wirePixelProbe() {
     document.body.appendChild(probe)
   }
 
-  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '—')
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
   const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
@@ -1946,8 +1975,8 @@ function wirePixelProbe() {
    * Query the backend for pixel values under the cursor and update the probe.
    *
    * Requests current values from active rasters (A and/or B) using `fetchPixelVal`,
-   * updates the `.pixel-probe` tooltip with results, and—if both values are
-   * finite—records the coordinate in `state.lastPixelPoint` for plotting on
+   * updates the `.pixel-probe` tooltip with results, and-if both values are
+   * finite-records the coordinate in `state.lastPixelPoint` for plotting on
    * the scatterplot. Handles throttling, aborting prior requests, and tooltip
    * placement relative to the mouse.
    *
@@ -1993,8 +2022,8 @@ function wirePixelProbe() {
 
     const lines = [
       `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '—' : String(valA)}` : null,
-      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '—' : String(valB)}` : null,
+      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '-' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '-' : String(valB)}` : null,
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
@@ -2043,7 +2072,6 @@ function wirePixelProbe() {
     queryAndRender(latlng, clientX, clientY)
   }
 
-  // drain any pending request after abort/rate-limit
   const drainTimer = setInterval(() => {
     if (!pending) return
     if (inFlight) return
@@ -2069,7 +2097,7 @@ function wirePixelProbe() {
   const overlay = document.getElementById('statsOverlay')
   if (overlay) {
     overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
-    overlay.addEventListener('mouseleave', () => { /* will show again on next mousemove */ })
+    overlay.addEventListener('mouseleave', () => { })
   }
 
   map._pixelProbeTeardown = () => {

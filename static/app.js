@@ -15,6 +15,27 @@ function axesFromGrid3x3(grid) {
   };
 }
 
+/**
+ * Create a continuous 2D colormap that combines a base color ramp (X-axis)
+ * with a lightening or tinting effect (Y-axis). Produces a function (x, y) → hex.
+ *
+ * The baseRamp defines the horizontal color progression (e.g., dark → mid → light),
+ * while lightenerColor defines the color that brightens or tints as Y increases.
+ *
+ * @param {Object} opts - Configuration options.
+ * @param {string[]} opts.baseRamp - Array of 3 hex colors for the base ramp (min, mid, max) along X.
+ * @param {string} [opts.lightenerColor='#ffffff'] - Target color for the Y-axis tint or lightening effect.
+ * @param {number} [opts.strength=1.0] - Scale (0–1) controlling how strong the Y-axis lightening is.
+ * @returns {Function} A function that takes normalized coordinates (x, y ∈ [0,1]) and returns a hex color.
+ *
+ * @example
+ * const cmap = createBivariateColormap({
+ *   baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+ *   lightenerColor: '#00ffff',
+ *   strength: 1.0
+ * });
+ * const color = cmap(0.5, 0.8);
+ */
 function createBivariateColormap(opts = {}) {
   const baseRamp = opts.baseRamp || ['#000000', '#888888', '#ffffff'];
   const lightenerColor = opts.lightenerColor || '#ffffff';
@@ -80,8 +101,17 @@ function createBivariateColormap(opts = {}) {
   };
 }
 
-// ----- Helpers: color conversions -----
-
+/**
+ * Convert a hex color string to an RGB triplet.
+ *
+ * Supports both 3-digit (#abc) and 6-digit (#aabbcc) formats.
+ *
+ * @param {string} hex - Hexadecimal color string (e.g. '#ff8800' or '#f80').
+ * @returns {number[]} Array [r, g, b] with integer values in the range 0–255.
+ *
+ * @example
+ * hexToRgb('#ff8000'); // → [255, 128, 0]
+ */
 function hexToRgb(hex) {
   let h = hex.replace('#', '');
   if (h.length === 3) h = h.split('').map(c => c + c).join('');
@@ -89,11 +119,36 @@ function hexToRgb(hex) {
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
 
+/**
+ * Convert RGB integer values to a hex color string.
+ *
+ * @param {number} r - Red channel (0–255).
+ * @param {number} g - Green channel (0–255).
+ * @param {number} b - Blue channel (0–255).
+ * @returns {string} Hex color string beginning with '#'.
+ *
+ * @example
+ * rgbToHex(255, 128, 0); // → '#ff8000'
+ */
 function rgbToHex(r, g, b) {
   const toHex = v => v.toString(16).padStart(2, '0');
   return '#' + toHex(r) + toHex(g) + toHex(b);
 }
 
+/**
+ * Convert RGB values to HSL (Hue–Saturation–Lightness) representation.
+ *
+ * The returned hue is normalized to [0,1), where 0 = red, 1/3 = green, 2/3 = blue.
+ * Saturation and lightness are also in [0,1].
+ *
+ * @param {number} r - Red channel (0–255).
+ * @param {number} g - Green channel (0–255).
+ * @param {number} b - Blue channel (0–255).
+ * @returns {number[]} Array [h, s, l], all normalized 0–1.
+ *
+ * @example
+ * rgbToHsl(255, 128, 0); // → [0.0833, 1, 0.5]
+ */
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -114,6 +169,20 @@ function rgbToHsl(r, g, b) {
   return [h, s, l];
 }
 
+/**
+ * Convert HSL (Hue–Saturation–Lightness) values to RGB.
+ *
+ * The hue value wraps cyclically, allowing negative or >1 input.
+ * Output values are floats in [0,255].
+ *
+ * @param {number} h - Hue in [0,1).
+ * @param {number} s - Saturation in [0,1].
+ * @param {number} l - Lightness in [0,1].
+ * @returns {number[]} Array [r, g, b], each in [0,255].
+ *
+ * @example
+ * hslToRgb(0.0833, 1, 0.5); // → [255, 128, 0]
+ */
 function hslToRgb(h, s, l) {
   if (s === 0) {
     const v = l * 255;
@@ -135,6 +204,19 @@ function hslToRgb(h, s, l) {
   return [r, g, b];
 }
 
+/**
+ * Set DOM input values for A and B layer color controls from a bivariate colormap.
+ *
+ * Samples the provided colormap function along both axes:
+ * - A colors: x = [0, 0.5, 1], y = 0
+ * - B colors: x = 0, y = [0, 0.5, 1]
+ *
+ * Updates the following element IDs and triggers input events:
+ *   layerACminInput, layerACmedInput, layerACmaxInput,
+ *   layerBCminInput, layerBCmedInput, layerBCmaxInput
+ *
+ * @param {Function} cmap - The colormap function (x, y) → hex.
+ */
 function applyBivariateColormapToAB(cmap) {
   const setVal = (id, value) => {
     const el = document.getElementById(id);

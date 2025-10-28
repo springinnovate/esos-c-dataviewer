@@ -2144,7 +2144,7 @@ function wirePixelProbe() {
  * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
  * @returns {void}
  */
-function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+function wireBivariatePalettePicker(selectId) {
   const ensureSelect = () => {
     let sel = document.getElementById(selectId);
     if (!sel) {
@@ -2191,6 +2191,9 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
 
   const sel = ensureSelect();
   refreshOptions(sel);
+  if (sel.querySelector('option[value="orangeBlue"]')) {
+      sel.value = 'orangeBlue';
+  }
   applySelected(sel.value);
 
   sel.addEventListener('change', () => applySelected(sel.value));
@@ -2299,7 +2302,7 @@ function wireShapefileAOIControl() {
   wireAutoStyleFromHistogram()
   wirePercentiles()
   wirePixelProbe()
-  wireBivariatePalettePicker()
+  wireBivariatePalettePicker('bivariatePaletteSelect')
   wireShapefileAOIControl()
 
   const cfg = await loadConfig()

@@ -8,6 +8,21 @@
  * Docstrings use JSDoc so editors/TS can infer types.
  */
 
+
+/**
+ * Derives two axis definitions (A and B) from a 3×3 grid of color control values.
+ *
+ * The input `grid` is expected to be an object keyed by string positions of the form 'row-col',
+ * where rows and columns are numbered from 1 to 3 (e.g. '1-1', '2-3').
+ *
+ * Axis A takes its cmin, cmed, and cmax values from the first column (rows 1–3),
+ * while axis B takes them from the first row (columns 1–3).
+ *
+ * @param {Object<string, number|string>} grid - A 3×3 lookup object with keys like '1-1', '1-2', '1-3', etc.
+ * @returns {Object} Object containing axis definitions:
+ *   - {Object} A: { cmin, cmed, cmax } from the first column of the grid.
+ *   - {Object} B: { cmin, cmed, cmax } from the first row of the grid.
+ */
 function axesFromGrid3x3(grid) {
   return {
     A: { cmin: grid['1-1'], cmed: grid['2-1'], cmax: grid['3-1'] },
@@ -565,9 +580,9 @@ function wireSquareSamplerControls() {
 
   const kmFromNum = parseFloat(rNum.value)
   if (Number.isFinite(kmFromNum)) {
-    setFromKm(kmFromNum)        // honors the number input's value (e.g., 150)
+    setFromKm(kmFromNum)
   } else {
-    setFromSlider(Number(rRange.value)) // fallback to slider's value (e.g., 50)
+    setFromSlider(Number(rRange.value))
   }
 }
 
@@ -2153,7 +2168,6 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
       applyBivariatePalette(pal);
       return;
     }
-    // fallback no-op
   };
 
   const sel = ensureSelect();

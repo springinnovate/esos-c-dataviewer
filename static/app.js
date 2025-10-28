@@ -8,6 +8,247 @@
  * Docstrings use JSDoc so editors/TS can infer types.
  */
 
+
+/**
+ * Derives two axis definitions (A and B) from a 3×3 grid of color control values.
+ *
+ * The input `grid` is expected to be an object keyed by string positions of the form 'row-col',
+ * where rows and columns are numbered from 1 to 3 (e.g. '1-1', '2-3').
+ *
+ * Axis A takes its cmin, cmed, and cmax values from the first column (rows 1–3),
+ * while axis B takes them from the first row (columns 1–3).
+ *
+ * @param {Object<string, number|string>} grid - A 3×3 lookup object with keys like '1-1', '1-2', '1-3', etc.
+ * @returns {Object} Object containing axis definitions:
+ *   - {Object} A: { cmin, cmed, cmax } from the first column of the grid.
+ *   - {Object} B: { cmin, cmed, cmax } from the first row of the grid.
+ */
+function axesFromGrid3x3(grid) {
+  return {
+    A: { cmin: grid['1-1'], cmed: grid['2-1'], cmax: grid['3-1'] },
+    B: { cmin: grid['1-1'], cmed: grid['1-2'], cmax: grid['1-3'] }
+  };
+}
+
+/**
+ * Create a continuous 2D colormap that combines a base color ramp (X-axis)
+ * with a lightening or tinting effect (Y-axis). Produces a function (x, y) → hex.
+ *
+ * The baseRamp defines the horizontal color progression (e.g., dark → mid → light),
+ * while lightenerColor defines the color that brightens or tints as Y increases.
+ *
+ * @param {Object} opts - Configuration options.
+ * @param {string[]} opts.baseRamp - Array of 3 hex colors for the base ramp (min, mid, max) along X.
+ * @param {string} [opts.lightenerColor='#ffffff'] - Target color for the Y-axis tint or lightening effect.
+ * @param {number} [opts.strength=1.0] - Scale (0–1) controlling how strong the Y-axis lightening is.
+ * @returns {Function} A function that takes normalized coordinates (x, y ∈ [0,1]) and returns a hex color.
+ *
+ * @example
+ * const cmap = createBivariateColormap({
+ *   baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+ *   lightenerColor: '#00ffff',
+ *   strength: 1.0
+ * });
+ * const color = cmap(0.5, 0.8);
+ */
+function createBivariateColormap(opts = {}) {
+  const baseRamp = opts.baseRamp || ['#000000', '#888888', '#ffffff'];
+  const lightenerColor = opts.lightenerColor || '#ffffff';
+  const strength = opts.strength == null ? 1.0 : opts.strength;
+
+  const [c0, c1, c2] = baseRamp.map(hexToRgb);
+  const lightener = hexToRgb(lightenerColor);
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  // piecewise linear ramp: min→mid→max
+  function ramp3(rgb0, rgb1, rgb2, t) {
+    t = clamp01(t);
+    if (t <= 0.5) {
+      const u = t / 0.5;
+      return [
+        Math.round(lerp(rgb0[0], rgb1[0], u)),
+        Math.round(lerp(rgb0[1], rgb1[1], u)),
+        Math.round(lerp(rgb0[2], rgb1[2], u))
+      ];
+    } else {
+      const u = (t - 0.5) / 0.5;
+      return [
+        Math.round(lerp(rgb1[0], rgb2[0], u)),
+        Math.round(lerp(rgb1[1], rgb2[1], u)),
+        Math.round(lerp(rgb1[2], rgb2[2], u))
+      ];
+    }
+  }
+
+  // mix in HSL space toward 'lightener' for smoother lightening
+  function mixTowardLightener(rgbBase, rgbLightener, amt) {
+    const hslBase = rgbToHsl(...rgbBase);
+    const hslLight = rgbToHsl(...rgbLightener);
+    const h = lerpAngle(hslBase[0], hslLight[0], amt);
+    const s = lerp(hslBase[1], hslLight[1], amt);
+    const l = lerp(hslBase[2], hslLight[2], amt);
+    const mixed = hslToRgb(h, s, l);
+    return mixed.map(v => Math.round(v));
+  }
+
+  function lerpAngle(a, b, t) {
+    // a,b in [0,1) representing hue circle
+    const twoPi = 1.0;
+    let d = b - a;
+    if (d > 0.5) d -= 1.0;
+    if (d < -0.5) d += 1.0;
+    let h = a + d * t;
+    if (h < 0) h += 1.0;
+    if (h >= 1) h -= 1.0;
+    return h;
+  }
+
+  return function bivariateColor(x, y) {
+    x = clamp01(x);
+    y = clamp01(y);
+
+    const base = ramp3(c0, c1, c2, x);
+    const amt = clamp01(y * strength);
+    const mixed = mixTowardLightener(base, lightener, amt);
+    return rgbToHex(mixed[0], mixed[1], mixed[2]);
+  };
+}
+
+/**
+ * Convert a hex color string to an RGB triplet.
+ *
+ * Supports both 3-digit (#abc) and 6-digit (#aabbcc) formats.
+ *
+ * @param {string} hex - Hexadecimal color string (e.g. '#ff8800' or '#f80').
+ * @returns {number[]} Array [r, g, b] with integer values in the range 0–255.
+ *
+ * @example
+ * hexToRgb('#ff8000'); // → [255, 128, 0]
+ */
+function hexToRgb(hex) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const num = parseInt(h, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+/**
+ * Convert RGB integer values to a hex color string.
+ *
+ * @param {number} r - Red channel (0–255).
+ * @param {number} g - Green channel (0–255).
+ * @param {number} b - Blue channel (0–255).
+ * @returns {string} Hex color string beginning with '#'.
+ *
+ * @example
+ * rgbToHex(255, 128, 0); // → '#ff8000'
+ */
+function rgbToHex(r, g, b) {
+  const toHex = v => v.toString(16).padStart(2, '0');
+  return '#' + toHex(r) + toHex(g) + toHex(b);
+}
+
+/**
+ * Convert RGB values to HSL (Hue–Saturation–Lightness) representation.
+ *
+ * The returned hue is normalized to [0,1), where 0 = red, 1/3 = green, 2/3 = blue.
+ * Saturation and lightness are also in [0,1].
+ *
+ * @param {number} r - Red channel (0–255).
+ * @param {number} g - Green channel (0–255).
+ * @param {number} b - Blue channel (0–255).
+ * @returns {number[]} Array [h, s, l], all normalized 0–1.
+ *
+ * @example
+ * rgbToHsl(255, 128, 0); // → [0.0833, 1, 0.5]
+ */
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s;
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) {
+    h = 0; s = 0;
+  } else {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+/**
+ * Convert HSL (Hue–Saturation–Lightness) values to RGB.
+ *
+ * The hue value wraps cyclically, allowing negative or >1 input.
+ * Output values are floats in [0,255].
+ *
+ * @param {number} h - Hue in [0,1).
+ * @param {number} s - Saturation in [0,1].
+ * @param {number} l - Lightness in [0,1].
+ * @returns {number[]} Array [r, g, b], each in [0,255].
+ *
+ * @example
+ * hslToRgb(0.0833, 1, 0.5); // → [255, 128, 0]
+ */
+function hslToRgb(h, s, l) {
+  if (s === 0) {
+    const v = l * 255;
+    return [v, v, v];
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = hue2rgb(p, q, h + 1/3) * 255;
+  const g = hue2rgb(p, q, h) * 255;
+  const b = hue2rgb(p, q, h - 1/3) * 255;
+  return [r, g, b];
+}
+
+/**
+ * Set DOM input values for A and B layer color controls from a bivariate colormap.
+ *
+ * Samples the provided colormap function along both axes:
+ * - A colors: x = [0, 0.5, 1], y = 0
+ * - B colors: x = 0, y = [0, 0.5, 1]
+ *
+ * Updates the following element IDs and triggers input events:
+ *   layerACminInput, layerACmedInput, layerACmaxInput,
+ *   layerBCminInput, layerBCmedInput, layerBCmaxInput
+ *
+ * @param {Function} cmap - The colormap function (x, y) → hex.
+ */
+function applyBivariateColormapToAB(cmap) {
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  setVal('layerACminInput', cmap(0.0, 0.0));
+  setVal('layerACmedInput', cmap(0.5, 0.0));
+  setVal('layerACmaxInput', cmap(1.0, 0.0));
+
+  setVal('layerBCminInput', cmap(0.0, 0.0));
+  setVal('layerBCmedInput', cmap(0.0, 0.5));
+  setVal('layerBCmaxInput', cmap(0.0, 1.0));
+}
+
 const state = {
   map: null,
   geoserverBaseUrl: null,
@@ -28,6 +269,54 @@ const state = {
   scatterObj: null,
   percentiles: null,
   lastPixelPoint: null,
+  bivariatePalette: {
+    orangeBlue: createBivariateColormap({
+      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+      lightenerColor: '#00ffff',
+      strength: 1.0
+    }),
+
+    grayWhite: createBivariateColormap({
+      baseRamp: ['#222222', '#777777', '#dddddd'],
+      lightenerColor: '#ffffff',
+      strength: 1.0
+    }),
+
+    tealMagenta: createBivariateColormap({
+      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
+      lightenerColor: '#ff66cc',
+      strength: 0.9
+    }),
+
+    greenPurple: createBivariateColormap({
+      baseRamp: ['#003300', '#66aa55', '#ccff99'],
+      lightenerColor: '#aa55ff',
+      strength: 1.0
+    }),
+
+    redCyan: createBivariateColormap({
+      baseRamp: ['#220000', '#cc3333', '#ff6666'],
+      lightenerColor: '#00ffff',
+      strength: 0.8
+    }),
+
+    indigoGold: createBivariateColormap({
+      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
+      lightenerColor: '#ffef99',
+      strength: 1.0
+    }),
+
+    brownSky: createBivariateColormap({
+      baseRamp: ['#332211', '#996633', '#ffcc66'],
+      lightenerColor: '#66ccff',
+      strength: 1.0
+    }),
+    steelRose: createBivariateColormap({
+      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
+      lightenerColor: '#f472b6',
+      strength: 1.0
+    })
+  },
 }
 
 /**
@@ -291,9 +580,9 @@ function wireSquareSamplerControls() {
 
   const kmFromNum = parseFloat(rNum.value)
   if (Number.isFinite(kmFromNum)) {
-    setFromKm(kmFromNum)        // honors the number input's value (e.g., 150)
+    setFromKm(kmFromNum)
   } else {
-    setFromSlider(Number(rRange.value)) // fallback to slider's value (e.g., 50)
+    setFromSlider(Number(rRange.value))
   }
 }
 
@@ -573,9 +862,9 @@ function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsOb
     body.appendChild(label)
   }
 
-  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '—' }
-  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '—' }
-  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '—' }
+  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '-' }
+  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '-' }
+  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '-' }
 }
 
 /**
@@ -852,7 +1141,7 @@ function renderScatterOverlay(opts) {
     coverage_ratio: s.coverage_ratio ?? null,
   }
 
-  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(digits))
+  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
   body.innerHTML = `
     <div class='overlay-header'>
       <div>
@@ -905,31 +1194,6 @@ function renderScatterOverlay(opts) {
   const has1DY =
     Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
-  // if either A or B is turned off, show a 1D histogram
-  if (!visA && visB && has1DY) {
-    // A off -> show histogram along Y axis
-    const svg = buildHistogram1D(scatterObj.y_edges, scatterObj.hist1d_y, 'y', {
-      width: 420,
-      height: 320,
-      pad: 40,
-      percentiles: state.percentiles,
-      layerId: 'B'
-    });
-    plotEl.appendChild(svg);
-  }
-  if (!visB && visA && has1DX) {
-    // B off -> show histogram along X axis
-    const svg = buildHistogram1D(scatterObj.x_edges, scatterObj.hist1d_x, 'x', {
-      width: 420,
-      height: 320,
-      pad: 40,
-      percentiles: state.percentiles,
-      layerId: 'A'
-    });
-    plotEl.appendChild(svg);
-  }
-
-  // otherwise show 2D heatmap
   if (has2D) {
     const svg = buildScatterSVG(
       scatterObj.x_edges,
@@ -953,119 +1217,10 @@ function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 }
 
-// do i actually want this?
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
 });
-
-
-/**
- * Build a simple 1D histogram SVG using provided bin edges and counts.
- * axis: 'x' -> bars grow upward from bottom (x-axis bins)
- *       'y' -> bars grow rightward from left (y-axis bins)
- * @param {number[]} edges
- * @param {number[]} counts
- * @param {'x'|'y'} axis
- * @param {{width?:number,height?:number,pad?:number}} opts
- * @returns {SVGSVGElement}
- */
-// use layer-based coloring in 1D histograms
-function buildHistogram1D(edges, counts, axis = 'x', opts = {}) {
-  const w = opts.width ?? 400;
-  const h = opts.height ?? 300;
-  const pad = opts.pad ?? 40;
-  const layerId = opts.layerId; // 'A' | 'B' (optional)
-  const innerW = w - pad * 2;
-  const innerH = h - pad * 2;
-
-  const n = Math.max(0, edges.length - 1);
-  const maxCount = Math.max(1, ...counts.map(c => (Number.isFinite(c) ? c : 0)));
-  const minVal = Math.min(...edges);
-  const maxVal = Math.max(...edges);
-  const domainSpan = Math.max(1e-9, maxVal - minVal);
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', String(w));
-  svg.setAttribute('height', String(h));
-
-  const axisColor = '#666';
-  const mkLine = (x1, y1, x2, y2) => {
-    const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-    l.setAttribute('stroke', axisColor); l.setAttribute('stroke-width', '1');
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text');
-    t.textContent = txt;
-    t.setAttribute('x', x); t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
-    t.setAttribute('text-anchor', anchor);
-    return t;
-  };
-
-  if (axis === 'x') {
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
-    svg.appendChild(mkLine(pad, pad, pad, h - pad));
-    const scaleX = v => pad + ((v - minVal) / domainSpan) * innerW;
-    const scaleH = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerH;
-
-    for (let i = 0; i < n; i++) {
-      const x0 = scaleX(edges[i]);
-      const x1 = scaleX(edges[i + 1]);
-      const barW = Math.max(1, x1 - x0);
-      const hPix = scaleH(counts[i] ?? 0);
-      const mid = (edges[i] + edges[i + 1]) / 2;
-      const fill = layerId ? _styleColorForValue(layerId, mid) : '#22c55e';
-
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(x0));
-      rect.setAttribute('y', String(h - pad - hPix));
-      rect.setAttribute('width', String(barW));
-      rect.setAttribute('height', String(hPix));
-      rect.setAttribute('fill', fill);
-      rect.setAttribute('fill-opacity', '0.85');
-      svg.appendChild(rect);
-    }
-
-    svg.appendChild(mkText(minVal.toFixed(2), pad, h - pad + 12, 'start'));
-    svg.appendChild(mkText(maxVal.toFixed(2), w - pad, h - pad + 12, 'end'));
-    svg.appendChild(mkText('0', pad - 6, h - pad, 'end'));
-    svg.appendChild(mkText(String(maxCount), pad - 6, pad + 4, 'end'));
-  } else {
-    svg.appendChild(mkLine(pad, h - pad, w - pad, h - pad));
-    svg.appendChild(mkLine(pad, pad, pad, h - pad));
-
-    const scaleY = v => h - pad - ((v - minVal) / domainSpan) * innerH;
-    const scaleW = c => ((Number.isFinite(c) ? c : 0) / maxCount) * innerW;
-
-    for (let i = 0; i < n; i++) {
-      const y0 = scaleY(edges[i]);
-      const y1 = scaleY(edges[i + 1]);
-      const barH = Math.max(1, y0 - y1);
-      const wPix = scaleW(counts[i] ?? 0);
-      const mid = (edges[i] + edges[i + 1]) / 2;
-      const fill = layerId ? _styleColorForValue(layerId, mid) : '#eab308';
-
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(pad));
-      rect.setAttribute('y', String(y1));
-      rect.setAttribute('width', String(wPix));
-      rect.setAttribute('height', String(barH));
-      rect.setAttribute('fill', fill);
-      rect.setAttribute('fill-opacity', '0.85');
-      svg.appendChild(rect);
-    }
-
-    svg.appendChild(mkText('0', pad, h - pad + 12, 'middle'));
-    svg.appendChild(mkText(minVal.toFixed(2), pad - 6, h - pad, 'end'));
-    svg.appendChild(mkText(maxVal.toFixed(2), pad - 6, pad + 4, 'end'));
-  }
-  return svg;
-}
 
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.
@@ -1207,7 +1362,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const yTitle = document.createElementNS(svgNS, 'text');
     yTitle.textContent = axisLabelY;
     const tx = plotX0 - 34;
-    const tx = plotX0 - 34; // left of y-axis ticks
     const ty = yMid;
     yTitle.setAttribute('x', String(tx));
     yTitle.setAttribute('y', String(ty));
@@ -1318,55 +1472,85 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
+  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+    if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
+      const px = scaleX(point.x);
+      const py = scaleY(point.y);
 
-    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-      // only draw if within current axis ranges
-      if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
-        const px = scaleX(point.x);
-        const py = scaleY(point.y);
+      const colA = _styleColorArrForValue(layerIdX, point.x);
+      const colB = _styleColorArrForValue(layerIdY, point.y);
+      const blended =
+        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+      const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
-        const colA = _styleColorArrForValue(layerIdX, point.x);
-        const colB = _styleColorArrForValue(layerIdY, point.y);
-        const blended =
-          blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
-        const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+      const g = document.createElementNS(svgNS, 'g');
+      svg.appendChild(g);
 
-        const circ = document.createElementNS(svgNS, 'circle');
-        circ.setAttribute('cx', String(px));
-        circ.setAttribute('cy', String(py));
-        circ.setAttribute('r', '3.5');
-        circ.setAttribute('fill', markerColor);
-        circ.setAttribute('stroke', '#000');
-        circ.setAttribute('stroke-width', '1');
-        circ.setAttribute('opacity', '0.95');
-        svg.appendChild(circ);
+      const circ = document.createElementNS(svgNS, 'circle');
+      circ.setAttribute('cx', String(px));
+      circ.setAttribute('cy', String(py));
+      circ.setAttribute('r', '3.5');
+      circ.setAttribute('fill', markerColor);
+      circ.setAttribute('stroke', '#000');
+      circ.setAttribute('stroke-width', '1');
+      circ.setAttribute('opacity', '0.95');
+      g.appendChild(circ);
 
-        const label = document.createElementNS(svgNS, 'text');
-        label.textContent = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-        label.setAttribute('x', String(px + 6));
-        label.setAttribute('y', String(py - 6));
-        label.setAttribute('fill', '#ddd');
-        label.setAttribute('font-size', '10');
-        label.setAttribute('text-anchor', 'start');
-        label.setAttribute('paint-order', 'stroke');
-        label.setAttribute('stroke', '#000');
-        label.setAttribute('stroke-width', '2');
-        label.setAttribute('stroke-opacity', '0.6');
-        svg.appendChild(label);
+      const label = document.createElementNS(svgNS, 'text');
+      const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+      label.textContent = labelText;
+      label.setAttribute('x', String(px + 6));
+      label.setAttribute('y', String(py - 6));
+      label.setAttribute('fill', '#ddd');
+      label.setAttribute('font-size', '10px'); // ensure CSS unit
+      label.setAttribute('text-anchor', 'start');
+      label.setAttribute('dominant-baseline', 'alphabetic');
+      label.setAttribute('paint-order', 'stroke');
+      label.setAttribute('stroke', '#000');
+      label.setAttribute('stroke-width', '2');
+      label.setAttribute('stroke-opacity', '0.6');
+      g.appendChild(label);
 
-        const tipText = point.label || `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-        [circ, label].forEach(el => {
-          el.style.cursor = 'default';
-          el.addEventListener('mouseenter', e => {
-            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-          });
-          el.addEventListener('mousemove', e => {
-            if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-          });
-          el.addEventListener('mouseleave', () => {
-            if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
-          });
+      // defer bbox measure to ensure it's rendered
+      requestAnimationFrame(() => {
+        let bbox = label.getBBox();
+        // fallback if getBBox fails or returns zero (some browsers/layouts)
+        if (!bbox.width || !bbox.height) {
+          const fs = 10; // px
+          const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+          bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
+        }
+
+        const padX = 3;
+        const padY = 2;
+
+        const bg = document.createElementNS(svgNS, 'rect');
+        bg.setAttribute('x', String(bbox.x - padX));
+        bg.setAttribute('y', String(bbox.y - padY));
+        bg.setAttribute('width', String(bbox.width + padX * 2));
+        bg.setAttribute('height', String(bbox.height + padY * 2));
+        bg.setAttribute('rx', '2');
+        bg.setAttribute('ry', '2');
+        bg.setAttribute('fill', '#000');           // avoid rgba() in SVG attribute
+        bg.setAttribute('fill-opacity', '0.6');    // use separate opacity
+        bg.setAttribute('pointer-events', 'none');
+
+        g.insertBefore(bg, label);
+      });
+
+      const tipText = point.label || labelText;
+      [circ, label].forEach(el => {
+        el.style.cursor = 'default';
+        el.addEventListener('mouseenter', e => {
+          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
         });
+        el.addEventListener('mousemove', e => {
+          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
+        });
+        el.addEventListener('mouseleave', () => {
+          if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+        });
+      });
     }
   }
   return svg;
@@ -1746,7 +1930,7 @@ function wirePixelProbe() {
     document.body.appendChild(probe)
   }
 
-  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '—')
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
   const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
@@ -1806,8 +1990,8 @@ function wirePixelProbe() {
    * Query the backend for pixel values under the cursor and update the probe.
    *
    * Requests current values from active rasters (A and/or B) using `fetchPixelVal`,
-   * updates the `.pixel-probe` tooltip with results, and—if both values are
-   * finite—records the coordinate in `state.lastPixelPoint` for plotting on
+   * updates the `.pixel-probe` tooltip with results, and-if both values are
+   * finite-records the coordinate in `state.lastPixelPoint` for plotting on
    * the scatterplot. Handles throttling, aborting prior requests, and tooltip
    * placement relative to the mouse.
    *
@@ -1853,8 +2037,8 @@ function wirePixelProbe() {
 
     const lines = [
       `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '—' : String(valA)}` : null,
-      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '—' : String(valB)}` : null,
+      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '-' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '-' : String(valB)}` : null,
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
@@ -1903,7 +2087,6 @@ function wirePixelProbe() {
     queryAndRender(latlng, clientX, clientY)
   }
 
-  // drain any pending request after abort/rate-limit
   const drainTimer = setInterval(() => {
     if (!pending) return
     if (inFlight) return
@@ -1929,7 +2112,7 @@ function wirePixelProbe() {
   const overlay = document.getElementById('statsOverlay')
   if (overlay) {
     overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
-    overlay.addEventListener('mouseleave', () => { /* will show again on next mousemove */ })
+    overlay.addEventListener('mouseleave', () => { })
   }
 
   map._pixelProbeTeardown = () => {
@@ -1942,19 +2125,87 @@ function wirePixelProbe() {
   }
 }
 
+/**
+ * Initializes and manages a bivariate palette picker dropdown UI element.
+ *
+ * This function creates (if necessary) and populates a <select> element used to switch
+ * between registered bivariate palettes defined in `state.bivariatePalette`.
+ * It also wires up automatic application of the selected palette and provides
+ * a manual refresh hook if palettes are added dynamically.
+ *
+ * Behavior summary:
+ * - Ensures a <select> element with the given ID exists (default: 'bivariatePaletteSelect').
+ * - Populates it with sorted keys from `state.bivariatePalette`.
+ * - Automatically applies the currently selected palette to active axes (A and B).
+ * - Supports palettes defined as functions, objects with `.cmap`, or objects containing `{A, B}`.
+ * - Exposes a refresh method `state.refreshBivariatePalettePicker()` to rebuild the dropdown and reapply.
+ *
+ * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
+ * @returns {void}
+ */
+function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+  const ensureSelect = () => {
+    let sel = document.getElementById(selectId);
+    if (!sel) {
+      sel = document.createElement('select');
+      sel.id = selectId;
+      const container = document.getElementById('bivariatePaletteContainer') || document.body;
+      container.appendChild(sel);
+    }
+    return sel;
+  };
+
+  const getKeys = () => Object.keys(state.bivariatePalette || {}).sort();
+
+  const refreshOptions = (sel) => {
+    const cur = sel.value;
+    sel.innerHTML = '';
+    getKeys().forEach(key => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = key;
+      sel.appendChild(opt);
+    });
+    if (getKeys().length) {
+      sel.value = getKeys().includes(cur) ? cur : getKeys()[0];
+    }
+  };
+
+  const applySelected = (key) => {
+    const pal = state.bivariatePalette?.[key];
+    if (!pal) return;
+    if (typeof pal === 'function') {
+      applyBivariateColormapToAB(pal);
+      return;
+    }
+    if (typeof pal.cmap === 'function') {
+      applyBivariateColormapToAB(pal.cmap);
+      return;
+    }
+    if (pal.A && pal.B) {
+      applyBivariatePalette(pal);
+      return;
+    }
+  };
+
+  const sel = ensureSelect();
+  refreshOptions(sel);
+  applySelected(sel.value);
+
+  sel.addEventListener('change', () => applySelected(sel.value));
+
+  // expose a manual refresh if palettes are added later
+  state.refreshBivariatePalettePicker = () => {
+    refreshOptions(sel);
+    applySelected(sel.value);
+  };
+}
 
 /**
  * App entrypoint.
  */
 ;(async function main() {
-
-  // Orange vs turquoise axis
-  document.getElementById('layerACminInput').value = '#000000'
-  document.getElementById('layerACmedInput').value = '#ff8000'
-  document.getElementById('layerACmaxInput').value = '#ffcc00'
-  document.getElementById('layerBCminInput').value = '#000000'
-  document.getElementById('layerBCmedInput').value = '#00b3b3'
-  document.getElementById('layerBCmaxInput').value = '#00ffff'
+  applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()
@@ -1965,6 +2216,7 @@ function wirePixelProbe() {
   wireAutoStyleFromHistogram()
   wirePercentiles()
   wirePixelProbe()
+  wireBivariatePalettePicker()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

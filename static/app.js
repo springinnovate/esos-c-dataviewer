@@ -317,6 +317,7 @@ const state = {
       strength: 1.0
     })
   },
+  uploadedLayer: null,
 }
 
 /**
@@ -2201,6 +2202,88 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
   };
 }
 
+function addGeoJSON(fc) {
+  if (state.uploadedLayer) {
+    state.map.removeLayer(state.uploadedLayer);
+    state.uploadedLayer = null;
+  }
+
+  state.uploadedLayer = L.geoJSON(fc, {
+    style: () => ({
+      color: '#0d6efd',
+      weight: 2,
+      opacity: 0.9,
+      fillColor: '#74c0fc',
+      fillOpacity: 0.25
+    }),
+    pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+      radius: 6,
+      color: '#0d6efd',
+      weight: 2,
+      fillColor: '#74c0fc',
+      fillOpacity: 0.7
+    }),
+    onEachFeature: (feature, layer) => {
+      const props = feature?.properties ?? {};
+      const rows = Object.entries(props).slice(0, 10).map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
+      if (rows) layer.bindPopup(`<table class='popup'>${rows}</table>`);
+    }
+  }).addTo(state.map);
+
+  // Fit map to features if possible
+  try {
+    const b = state.uploadedLayer.getBounds();
+    if (b && b.isValid()) map.fitBounds(b.pad(0.1));
+  } catch {}
+}
+
+function toFeatureCollection(geo) {
+  if (!geo) return null;
+
+  // Case 1: already a FeatureCollection
+  if (geo.type === 'FeatureCollection') return geo;
+
+  // Case 2: array of FeatureCollections
+  if (Array.isArray(geo)) {
+    const features = [];
+    for (const g of geo) {
+      if (g && g.type === 'FeatureCollection' && Array.isArray(g.features)) {
+        features.push(...g.features);
+      }
+    }
+    return { type: 'FeatureCollection', features };
+  }
+}
+
+function wireShapefileAOIControl() {
+  document.getElementById('shpInput').addEventListener('change', async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      alert('Select a .zip containing the shapefile.');
+      e.target.value = '';
+      return;
+    }
+
+    try {
+      const buf = await file.arrayBuffer();
+      const geo = await shp(buf); // shpjs parses the zip -> GeoJSON
+      const fc = toFeatureCollection(geo);
+      if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
+        alert('No features found.');
+        return;
+      }
+      addGeoJSON(fc);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
+    } finally {
+      e.target.value = '';
+    }
+  });
+}
+
 /**
  * App entrypoint.
  */
@@ -2217,6 +2300,7 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
   wirePercentiles()
   wirePixelProbe()
   wireBivariatePalettePicker()
+  wireShapefileAOIControl()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

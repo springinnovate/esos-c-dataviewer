@@ -658,72 +658,6 @@ async function onLayerChange(e, layerId) {
 }
 
 /**
- * Wire map click to request raster statistics for the window around the click.
- * On success, renders the overlay; on failure, shows an error message.
- */
-async function wireAreaSamplerClick() {
-  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
-  state.map.on('mousemove', (e) => {
-    state.lastMouseLatLng = e.latlng
-    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
-    state.hoverRect.setLatLngs(poly.getLatLngs())
-  })
-
-  state.map.on('mouseout', () => {
-    if (state.hoverRect && state.map.hasLayer(state.hoverRect)) state.map.removeLayer(state.hoverRect)
-  })
-  state.map.on('mouseover', () => {
-    if (state.hoverRect && !state.map.hasLayer(state.hoverRect)) state.hoverRect.addTo(state.map)
-  })
-
-  const btn = document.getElementById('overlayClose')
-  btn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    document.getElementById('statsOverlay').classList.add('hidden')
-    document.getElementById('overlayBody').innerHTML = ''
-  })
-
-  const overlay = document.getElementById('statsOverlay')
-  ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
-    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
-
-  state.map.on('click', async (evt) => {
-    const lyrA = state.availableLayers[state.activeLayerIdxA]
-    const lyrB = state.availableLayers[state.activeLayerIdxB]
-    if (!lyrA || !lyrB) return
-
-    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm)
-    _updateOutline(poly)
-    renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: null,
-    })
-
-    let scatterStats
-    try {
-      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
-    } catch (e) {
-      showOverlayError(`area sampler error: ${e.message || String(e)}`)
-      return
-    }
-    renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: scatterStats,
-    })
-  })
-}
-
-
-/**
  * POST a geometry to the rstats service and return scatter data for two rasters.
  * @param {string} rasterIdX
  * @param {string} rasterIdY
@@ -2344,6 +2278,138 @@ function wireShapefileAOIControl() {
   });
 }
 
+function wireOverlayControls() {
+
+  const btn = document.getElementById('overlayClose');
+  if (btn) {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = document.getElementById('statsOverlay');
+      const body = document.getElementById('overlayBody');
+      if (wrap) wrap.classList.add('hidden');
+      if (body) body.innerHTML = '';
+    });
+  }
+
+  const overlay = document.getElementById('statsOverlay');
+  if (overlay) {
+    ['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
+      .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()));
+  }
+}
+
+function enableWindowSampler() {
+  const map = state.map;
+  if (!map || state._areaSampler?.enabled) return;
+
+  const handlers = {};
+
+  // ensure hoverRect exists
+  if (!state.hoverRect) {
+    state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
+  } else {
+    if (!map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  }
+
+  handlers.mousemove = (e) => {
+    state.lastMouseLatLng = e.latlng;
+    const poly = squarePolygonAt(e.latlng, state.boxSizeKm);
+    state.hoverRect.setLatLngs(poly.getLatLngs());
+  };
+
+  handlers.mouseout = () => {
+    if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+  };
+
+  handlers.mouseover = () => {
+    if (state.hoverRect && !map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  };
+
+  handlers.click = async (evt) => {
+    const lyrA = state.availableLayers[state.activeLayerIdxA];
+    const lyrB = state.availableLayers[state.activeLayerIdxB];
+    if (!lyrA || !lyrB) return;
+
+    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
+    _updateOutline(poly);
+
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: null
+    });
+
+    let scatterStats;
+    try {
+      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON());
+    } catch (e) {
+      showOverlayError(`area sampler error: ${e.message || String(e)}`);
+      return;
+    }
+
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: scatterStats
+    });
+  };
+
+  map.on('mousemove', handlers.mousemove);
+  map.on('mouseout', handlers.mouseout);
+  map.on('mouseover', handlers.mouseover);
+  map.on('click', handlers.click);
+
+  state._areaSampler = { handlers, enabled: true };
+  if (map._container) {
+    map._container.classList.add('mode-window');
+    map._container.classList.remove('mode-shapefile');
+  }
+}
+
+function disableWindowSampler() {
+  const map = state.map;
+  if (!map || !state._areaSampler?.enabled) return;
+
+  const { handlers } = state._areaSampler;
+
+  map.off('mousemove', handlers.mousemove);
+  map.off('mouseout', handlers.mouseout);
+  map.off('mouseover', handlers.mouseover);
+  map.off('click', handlers.click);
+
+  if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+
+  state._areaSampler.enabled = false;
+  if (map._container) {
+    map._container.classList.remove('mode-window');
+    map._container.classList.add('mode-shapefile');
+  }
+}
+
+function setSamplingMode(mode) {
+  // normalize
+  const m = (mode || '').toLowerCase();
+  const isShape = m === 'shapefile' || m === 'shapefilemode' || m === 'shapefile-mode' || m === 'shapefile_mode' || m === 'shapefileinput' || m === 'shapefileupload' || m === 'shapefilearea' || m === 'shapefileaoi' || m === 'shapefile-aoI' || m === 'shapefile aoi' || m === 'shapefile_area' || mode === 'shapeFile';
+
+  state.sampleMode = isShape ? 'shapeFile' : 'window';
+
+  if (state.sampleMode === 'window') {
+    enableWindowSampler();
+  } else {
+    disableWindowSampler();
+  }
+
+  if (typeof window.onSamplingModeChange === 'function') window.onSamplingModeChange(state.sampleMode);
+}
+
+
 /**
  * App entrypoint.
  */
@@ -2352,7 +2418,6 @@ function wireShapefileAOIControl() {
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()
-  wireAreaSamplerClick()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()
@@ -2362,6 +2427,8 @@ function wireShapefileAOIControl() {
   wireBivariatePalettePicker('bivariatePaletteSelect')
   wireShapefileAOIControl()
   wireControlGroup()
+  wireOverlayControls()
+  setSamplingMode('window')
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

@@ -1316,7 +1316,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 
   const lerp = (a, b, t) => a + (b - a) * t;
 
-  // --- inside your render loop ---
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
       const binCount = Number(hist2d[i][j]) || 0;
@@ -1584,7 +1583,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       el.addEventListener('mouseleave', () => _hidePctTooltip?.());
     });
 
-    // store reference so it can be removed next time
     state.lastPointMarker = g;
   }
   return svg;
@@ -2393,10 +2391,7 @@ function addGeoJSONPolyToMap(fc) {
 function toFeatureCollection(geo) {
   if (!geo) return null;
 
-  // Case 1: already a FeatureCollection
   if (geo.type === 'FeatureCollection') return geo;
-
-  // Case 2: array of FeatureCollections
   if (Array.isArray(geo)) {
     const features = [];
     for (const g of geo) {
@@ -2640,7 +2635,6 @@ function setSamplingMode(mode) {
  * App entrypoint.
  */
 ;(async function main() {
-  //applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()

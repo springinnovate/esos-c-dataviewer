@@ -15,11 +15,26 @@ services:
     command:
       - --providers.docker
       - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Let's Encrypt (HTTP-01)
+      - --certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
     ports:
       - 80:80
+      - 443:443
     networks: [backend]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    labels:
+      # redirect all http->https
+      - traefik.enable=true
+      - traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)
+      - traefik.http.routers.http-catchall.entrypoints=web
+      - traefik.http.routers.http-catchall.middlewares=redirect-to-https
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
 
   geoserver:
     image: ${GEOSERVER_IMAGE}
@@ -39,8 +54,10 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.geoserver.rule=Host(`localhost`) && PathPrefix(`/geoserver`)
-      - traefik.http.routers.geoserver.entrypoints=web
+      - traefik.http.routers.geoserver.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/geoserver`)
+      - traefik.http.routers.geoserver.entrypoints=websecure
+      - traefik.http.routers.geoserver.tls=true
+      - traefik.http.routers.geoserver.tls.certresolver=le
       - traefik.http.services.geoserver.loadbalancer.server.port=8080
 
   viewer:
@@ -57,8 +74,10 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.viewer.rule=Host(`localhost`) && PathPrefix(`/viewer`)
-      - traefik.http.routers.viewer.entrypoints=web
+      - traefik.http.routers.viewer.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
+      - traefik.http.routers.viewer.entrypoints=websecure
+      - traefik.http.routers.viewer.tls=true
+      - traefik.http.routers.viewer.tls.certresolver=le
       - traefik.http.services.viewer.loadbalancer.server.port=5173
       - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
       - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker
@@ -97,8 +116,10 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.rstats.rule=Host(`localhost`) && PathPrefix(`/rstats`)
-      - traefik.http.routers.rstats.entrypoints=web
+      - traefik.http.routers.rstats.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/rstats`)
+      - traefik.http.routers.rstats.entrypoints=websecure
+      - traefik.http.routers.rstats.tls=true
+      - traefik.http.routers.rstats.tls.certresolver=le
       - traefik.http.services.rstats.loadbalancer.server.port=8000
       - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
       - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker

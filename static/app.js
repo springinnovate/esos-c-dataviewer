@@ -319,6 +319,8 @@ const state = {
   },
   sampleMode: null,
   uploadedLayer: null,
+  lastPointMarker: null,
+  probeSuppressed: false,
 }
 
 /**
@@ -1465,86 +1467,85 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
-  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-    if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
-      const px = scaleX(point.x);
-      const py = scaleY(point.y);
+  if (
+    point &&
+    Number.isFinite(point.x) && Number.isFinite(point.y) &&
+    point.x >= xMin && point.x <= xMax &&
+    point.y >= yMin && point.y <= yMax
+  ) {
+    const px = scaleX(point.x);
+    const py = scaleY(point.y);
 
-      const colA = _styleColorArrForValue(layerIdX, point.x);
-      const colB = _styleColorArrForValue(layerIdY, point.y);
-      const blended =
-        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
-      const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+    const colA = _styleColorArrForValue(layerIdX, point.x);
+    const colB = _styleColorArrForValue(layerIdY, point.y);
+    const blended =
+      blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+    const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
-      const g = document.createElementNS(svgNS, 'g');
-      svg.appendChild(g);
+    const g = document.createElementNS(svgNS, 'g');
+    svg.appendChild(g);
 
-      const circ = document.createElementNS(svgNS, 'circle');
-      circ.setAttribute('cx', String(px));
-      circ.setAttribute('cy', String(py));
-      circ.setAttribute('r', '3.5');
-      circ.setAttribute('fill', markerColor);
-      circ.setAttribute('stroke', '#000');
-      circ.setAttribute('stroke-width', '1');
-      circ.setAttribute('opacity', '0.95');
-      g.appendChild(circ);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', String(px));
+    circ.setAttribute('cy', String(py));
+    circ.setAttribute('r', '3.5');
+    circ.setAttribute('fill', markerColor);
+    circ.setAttribute('stroke', '#000');
+    circ.setAttribute('stroke-width', '1');
+    circ.setAttribute('opacity', '0.95');
+    g.appendChild(circ);
 
-      const label = document.createElementNS(svgNS, 'text');
-      const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-      label.textContent = labelText;
-      label.setAttribute('x', String(px + 6));
-      label.setAttribute('y', String(py - 6));
-      label.setAttribute('fill', '#ddd');
-      label.setAttribute('font-size', '10px'); // ensure CSS unit
-      label.setAttribute('text-anchor', 'start');
-      label.setAttribute('dominant-baseline', 'alphabetic');
-      label.setAttribute('paint-order', 'stroke');
-      label.setAttribute('stroke', '#000');
-      label.setAttribute('stroke-width', '2');
-      label.setAttribute('stroke-opacity', '0.6');
-      g.appendChild(label);
+    const label = document.createElementNS(svgNS, 'text');
+    const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+    label.textContent = labelText;
+    label.setAttribute('x', String(px + 6));
+    label.setAttribute('y', String(py - 6));
+    label.setAttribute('fill', '#ddd');
+    label.setAttribute('font-size', '10px');
+    label.setAttribute('text-anchor', 'start');
+    label.setAttribute('dominant-baseline', 'alphabetic');
+    label.setAttribute('paint-order', 'stroke');
+    label.setAttribute('stroke', '#000');
+    label.setAttribute('stroke-width', '2');
+    label.setAttribute('stroke-opacity', '0.6');
+    g.appendChild(label);
 
-      // defer bbox measure to ensure it's rendered
-      requestAnimationFrame(() => {
-        let bbox = label.getBBox();
-        // fallback if getBBox fails or returns zero (some browsers/layouts)
-        if (!bbox.width || !bbox.height) {
-          const fs = 10; // px
-          const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
-          bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
-        }
+    // measure bbox and insert background
+    requestAnimationFrame(() => {
+      let bbox = label.getBBox();
+      if (!bbox.width || !bbox.height) {
+        const fs = 10;
+        const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+        bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
+      }
 
-        const padX = 3;
-        const padY = 2;
+      const padX = 3;
+      const padY = 2;
 
-        const bg = document.createElementNS(svgNS, 'rect');
-        bg.setAttribute('x', String(bbox.x - padX));
-        bg.setAttribute('y', String(bbox.y - padY));
-        bg.setAttribute('width', String(bbox.width + padX * 2));
-        bg.setAttribute('height', String(bbox.height + padY * 2));
-        bg.setAttribute('rx', '2');
-        bg.setAttribute('ry', '2');
-        bg.setAttribute('fill', '#000');           // avoid rgba() in SVG attribute
-        bg.setAttribute('fill-opacity', '0.6');    // use separate opacity
-        bg.setAttribute('pointer-events', 'none');
+      const bg = document.createElementNS(svgNS, 'rect');
+      bg.setAttribute('x', String(bbox.x - padX));
+      bg.setAttribute('y', String(bbox.y - padY));
+      bg.setAttribute('width', String(bbox.width + padX * 2));
+      bg.setAttribute('height', String(bbox.height + padY * 2));
+      bg.setAttribute('rx', '2');
+      bg.setAttribute('ry', '2');
+      bg.setAttribute('fill', '#000');
+      bg.setAttribute('fill-opacity', '0.6');
+      bg.setAttribute('pointer-events', 'none');
 
-        g.insertBefore(bg, label);
-      });
+      g.insertBefore(bg, label);
+    });
 
-      const tipText = point.label || labelText;
-      [circ, label].forEach(el => {
-        el.style.cursor = 'default';
-        el.addEventListener('mouseenter', e => {
-          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-        });
-        el.addEventListener('mousemove', e => {
-          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-        });
-        el.addEventListener('mouseleave', () => {
-          if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
-        });
-      });
-    }
+    const tipText = point.label || labelText;
+    [circ, label].forEach(el => {
+      el.style.cursor = 'default';
+      el.addEventListener('mouseenter', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mousemove', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => _hidePctTooltip?.());
+    });
+
+    // store reference so it can be removed next time
+    state.lastPointMarker = g;
   }
   return svg;
 }
@@ -1969,13 +1970,46 @@ function wirePixelProbe() {
 
   // create probe element
   let probe = document.querySelector('.pixel-probe')
+
+  const overlay = document.querySelector('#statsOverlay');
+  const header = document.querySelector('header');
+
+  if (overlay) {
+    overlay.addEventListener('mouseenter', () => {
+      state.probeSuppressed = true;
+      probe.style.display = 'none';
+    });
+    overlay.addEventListener('mouseleave', () => {
+      state.probeSuppressed = false;
+      probe.style.display = 'block';
+    });
+  }
+
+  if (header) {
+    header.addEventListener('mouseenter', () => {
+      state.probeSuppressed = true;
+      probe.style.display = 'none';
+    });
+    header.addEventListener('mouseleave', () => {
+      state.probeSuppressed = false;
+      probe.style.display = 'block';
+    });
+  }
+
+  // then in your global mousemove logic (or Leaflet map.on('mousemove'))
+  document.addEventListener('mousemove', e => {
+    if (state.probeSuppressed) return;
+    probe.style.left = `${e.clientX + 12}px`;
+    probe.style.top = `${e.clientY + 12}px`;
+  });
+
   if (!probe) {
     probe = document.createElement('div')
     probe.className = 'pixel-probe'
     Object.assign(probe.style, {
       position: 'fixed',
-      left: '0px',
-      top: '0px',
+      left: '0',
+      top: '0',
       padding: '6px 8px',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: '11px',
@@ -2105,8 +2139,6 @@ function wirePixelProbe() {
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
-    probe.style.left = `${clientX + 12}px`
-    probe.style.top = `${clientY + 12}px`
     probe.style.display = 'block'
 
     const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
@@ -2121,6 +2153,10 @@ function wirePixelProbe() {
         renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
       }
     } else {
+      if (state.lastPointMarker && state.lastPointMarker.parentNode) {
+        state.lastPointMarker.remove();
+        state.lastPointMarker = null;
+      }
       state.lastPixelPoint = null
     }
   }
@@ -2172,7 +2208,6 @@ function wirePixelProbe() {
     pending = null
   })
 
-  const overlay = document.getElementById('statsOverlay')
   if (overlay) {
     overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
     overlay.addEventListener('mouseleave', () => { })
@@ -2350,7 +2385,6 @@ function wireShapefileAOIControl() {
 }
 
 function wireOverlayControls() {
-
   const btn = document.getElementById('overlayClose');
   if (btn) {
     btn.addEventListener('click', (e) => {

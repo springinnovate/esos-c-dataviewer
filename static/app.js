@@ -321,6 +321,7 @@ const state = {
   uploadedLayer: null,
   lastPointMarker: null,
   probeSuppressed: false,
+  pctBounds: null,
 }
 
 /**
@@ -1467,6 +1468,18 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
+  (() => {
+    if (!Array.isArray(percentiles) || !percentiles.length) return;
+    const minP = Math.min(...percentiles);
+    const maxP = Math.max(...percentiles);
+    const xmin = getQuantileX(minP);
+    const xmax = getQuantileX(maxP);
+    const ymin = getQuantileY(minP);
+    const ymax = getQuantileY(maxP);
+    if (!state) return;
+    state.pctBounds = { xmin, xmax, ymin, ymax };
+  })();
+
   if (
     point &&
     Number.isFinite(point.x) && Number.isFinite(point.y) &&
@@ -1645,9 +1658,9 @@ function wireAutoStyleFromHistogram() {
     const minEl = document.getElementById(`layer${layerId}MinInput`);
     const medEl = document.getElementById(`layer${layerId}MedInput`);
     const maxEl = document.getElementById(`layer${layerId}MaxInput`);
-    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true }))};
-    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true }))};
-    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }))};
+    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true })); }
   };
 
   btn.addEventListener('click', () => {
@@ -1656,6 +1669,19 @@ function wireAutoStyleFromHistogram() {
     const yEdges = so?.y_edges;
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
+
+    const pb = state?.pctBounds;
+    if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
+      a.min = pb.xmin;
+      a.max = pb.xmax;
+      a.med = (pb.xmin + pb.xmax) / 2;
+    }
+    if (pb && Number.isFinite(pb.ymin) && Number.isFinite(pb.ymax) && b) {
+      b.min = pb.ymin;
+      b.max = pb.ymax;
+      b.med = (pb.ymin + pb.ymax) / 2;
+    }
+
     setTriple('A', a);
     setTriple('B', b);
 

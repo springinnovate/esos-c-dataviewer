@@ -8,6 +8,81 @@
  * Docstrings use JSDoc so editors/TS can infer types.
  */
 
+const state = {
+  map: null,
+  geoserverBaseUrl: null,
+  baseStatsUrl: null,
+  wmsLayerA: null,
+  wmsLayerB: null,
+  availableLayers: null,
+  activeLayerIdxA: null,
+  activeLayerIdxB: null,
+  hoverRect: null,
+  boxSizeKm: null,
+  lastMouseLatLng: null,
+  outlineLayer: null,
+  lastStats: null,
+  didInitialCenter: false,
+  visibility: { A: true, B: true },
+  lastScatterOpts: null,
+  scatterObj: null,
+  percentiles: null,
+  lastPixelPoint: null,
+  bivariatePalette: {
+    orangeBlue: createBivariateColormap({
+      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+      lightenerColor: '#00ffff',
+      strength: 1.0
+    }),
+
+    grayWhite: createBivariateColormap({
+      baseRamp: ['#222222', '#777777', '#dddddd'],
+      lightenerColor: '#ffffff',
+      strength: 1.0
+    }),
+
+    tealMagenta: createBivariateColormap({
+      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
+      lightenerColor: '#ff66cc',
+      strength: 0.9
+    }),
+
+    greenPurple: createBivariateColormap({
+      baseRamp: ['#003300', '#66aa55', '#ccff99'],
+      lightenerColor: '#aa55ff',
+      strength: 1.0
+    }),
+
+    redCyan: createBivariateColormap({
+      baseRamp: ['#220000', '#cc3333', '#ff6666'],
+      lightenerColor: '#00ffff',
+      strength: 0.8
+    }),
+
+    indigoGold: createBivariateColormap({
+      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
+      lightenerColor: '#ffef99',
+      strength: 1.0
+    }),
+
+    brownSky: createBivariateColormap({
+      baseRamp: ['#332211', '#996633', '#ffcc66'],
+      lightenerColor: '#66ccff',
+      strength: 1.0
+    }),
+    steelRose: createBivariateColormap({
+      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
+      lightenerColor: '#f472b6',
+      strength: 1.0
+    })
+  },
+  sampleMode: null,
+  uploadedLayer: null,
+  lastPointMarker: null,
+  probeSuppressed: false,
+  pctBounds: null,
+}
+
 
 /**
  * Derives two axis definitions (A and B) from a 3×3 grid of color control values.
@@ -249,80 +324,6 @@ function applyBivariateColormapToAB(cmap) {
   setVal('layerBCmaxInput', cmap(0.0, 1.0));
 }
 
-const state = {
-  map: null,
-  geoserverBaseUrl: null,
-  baseStatsUrl: null,
-  wmsLayerA: null,
-  wmsLayerB: null,
-  availableLayers: null,
-  activeLayerIdxA: null,
-  activeLayerIdxB: null,
-  hoverRect: null,
-  boxSizeKm: null,
-  lastMouseLatLng: null,
-  outlineLayer: null,
-  lastStats: null,
-  didInitialCenter: false,
-  visibility: { A: true, B: true },
-  lastScatterOpts: null,
-  scatterObj: null,
-  percentiles: null,
-  lastPixelPoint: null,
-  bivariatePalette: {
-    orangeBlue: createBivariateColormap({
-      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
-      lightenerColor: '#00ffff',
-      strength: 1.0
-    }),
-
-    grayWhite: createBivariateColormap({
-      baseRamp: ['#222222', '#777777', '#dddddd'],
-      lightenerColor: '#ffffff',
-      strength: 1.0
-    }),
-
-    tealMagenta: createBivariateColormap({
-      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
-      lightenerColor: '#ff66cc',
-      strength: 0.9
-    }),
-
-    greenPurple: createBivariateColormap({
-      baseRamp: ['#003300', '#66aa55', '#ccff99'],
-      lightenerColor: '#aa55ff',
-      strength: 1.0
-    }),
-
-    redCyan: createBivariateColormap({
-      baseRamp: ['#220000', '#cc3333', '#ff6666'],
-      lightenerColor: '#00ffff',
-      strength: 0.8
-    }),
-
-    indigoGold: createBivariateColormap({
-      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
-      lightenerColor: '#ffef99',
-      strength: 1.0
-    }),
-
-    brownSky: createBivariateColormap({
-      baseRamp: ['#332211', '#996633', '#ffcc66'],
-      lightenerColor: '#66ccff',
-      strength: 1.0
-    }),
-    steelRose: createBivariateColormap({
-      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
-      lightenerColor: '#f472b6',
-      strength: 1.0
-    })
-  },
-  sampleMode: null,
-  uploadedLayer: null,
-  lastPointMarker: null,
-  probeSuppressed: false,
-  pctBounds: null,
-}
 
 /**
  * Set the visibility of a specified WMS layer and synchronize its checkbox state.
@@ -2328,7 +2329,7 @@ function wireBivariatePalettePicker(selectId) {
   };
 }
 
-function addGeoJSON(fc) {
+function addGeoJSONPolyToMap(fc) {
   if (state.uploadedLayer) {
     state.map.removeLayer(state.uploadedLayer);
     state.uploadedLayer = null;
@@ -2381,6 +2382,60 @@ function toFeatureCollection(geo) {
   }
 }
 
+
+function getGeoJSONCenter(geojson) {
+  const coords = [];
+
+  const extractCoords = (geom) => {
+    if (geom.type === 'Point') {
+      coords.push(geom.coordinates);
+    } else if (geom.type === 'MultiPoint' || geom.type === 'LineString') {
+      coords.push(...geom.coordinates);
+    } else if (geom.type === 'MultiLineString' || geom.type === 'Polygon') {
+      geom.coordinates.forEach(part => coords.push(...part));
+    } else if (geom.type === 'MultiPolygon') {
+      geom.coordinates.forEach(polygon => {
+        polygon.forEach(part => coords.push(...part));
+      });
+    } else if (geom.type === 'GeometryCollection') {
+      geom.geometries.forEach(extractCoords);
+    }
+  };
+
+  geojson.features.forEach(f => extractCoords(f.geometry));
+
+  if (!coords.length) return null;
+
+  const [sumX, sumY] = coords.reduce(
+    ([sx, sy], [x, y]) => [sx + x, sy + y],
+    [0, 0]
+  );
+  const center = [sumX / coords.length, sumY / coords.length];
+  return { lng: center[0], lat: center[1] };
+}
+
+function collapseToMultiPolygon(fc) {
+  const polygons = [];
+
+  fc.features.forEach(f => {
+    const geom = f.geometry;
+    if (!geom) return;
+
+    if (geom.type === 'Polygon') {
+      polygons.push(geom.coordinates);
+    } else if (geom.type === 'MultiPolygon') {
+      polygons.push(...geom.coordinates);
+    }
+  });
+
+  if (!polygons.length) return null;
+
+  return {
+    type: 'MultiPolygon',
+    coordinates: polygons
+  };
+}
+
 function wireShapefileAOIControl() {
   document.getElementById('shpInput').addEventListener('change', async e => {
     const file = e.target.files?.[0];
@@ -2394,13 +2449,31 @@ function wireShapefileAOIControl() {
 
     try {
       const buf = await file.arrayBuffer();
-      const geo = await shp(buf); // shpjs parses the zip -> GeoJSON
-      const fc = toFeatureCollection(geo);
+      const poly = await shp(buf); // shpjs parses the zip -> polyJSON
+      const fc = toFeatureCollection(poly);
       if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
         alert('No features found.');
         return;
       }
-      addGeoJSON(fc);
+      const center = getGeoJSONCenter(fc)
+      addGeoJSONPolyToMap(fc);
+      const lyrA = state.availableLayers[state.activeLayerIdxA];
+      const lyrB = state.availableLayers[state.activeLayerIdxB];
+      let scatterStats;
+      try {
+        scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, collapseToMultiPolygon(poly));
+      } catch (e) {
+        showOverlayError(`area sampler error: ${e.message || String(e)}`);
+        return;
+      }
+      renderScatterOverlay({
+        rasterX: lyrA.name,
+        rasterY: lyrB.name,
+        centerLng: center.lng,
+        centerLat: center.lat,
+        boxKm: null,
+        scatterObj: scatterStats
+      });
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');

@@ -317,6 +317,7 @@ const state = {
       strength: 1.0
     })
   },
+  sampleMode: null,
   uploadedLayer: null,
 }
 
@@ -397,8 +398,6 @@ function initMap() {
     zoomControl: false,
   })
   state.map = map
-  initMouseFollowBox()
-  wireOverlayClose()
 }
 
 /**
@@ -507,26 +506,6 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
     geometry: { type: 'Polygon', coordinates: [ringLngLat] },
     properties: { kind: 'square', halfSizeM },
   }
-}
-
-/**
- * Create and keep a rectangle that follows the mouse to show the sampling window.
- * Side effects: sets state.hoverRect and mouse listeners that update it.
- */
-function initMouseFollowBox() {
-  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
-  state.map.on('mousemove', (e) => {
-    state.lastMouseLatLng = e.latlng
-    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
-    state.hoverRect.setLatLngs(poly.getLatLngs())
-  })
-
-  state.map.on('mouseout', () => {
-    if (state.hoverRect && state.map.hasLayer(state.hoverRect)) state.map.removeLayer(state.hoverRect)
-  })
-  state.map.on('mouseover', () => {
-    if (state.hoverRect && !state.map.hasLayer(state.hoverRect)) state.hoverRect.addTo(state.map)
-  })
 }
 
 /**
@@ -683,6 +662,32 @@ async function onLayerChange(e, layerId) {
  * On success, renders the overlay; on failure, shows an error message.
  */
 async function wireAreaSamplerClick() {
+  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
+  state.map.on('mousemove', (e) => {
+    state.lastMouseLatLng = e.latlng
+    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
+    state.hoverRect.setLatLngs(poly.getLatLngs())
+  })
+
+  state.map.on('mouseout', () => {
+    if (state.hoverRect && state.map.hasLayer(state.hoverRect)) state.map.removeLayer(state.hoverRect)
+  })
+  state.map.on('mouseover', () => {
+    if (state.hoverRect && !state.map.hasLayer(state.hoverRect)) state.hoverRect.addTo(state.map)
+  })
+
+  const btn = document.getElementById('overlayClose')
+  btn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    document.getElementById('statsOverlay').classList.add('hidden')
+    document.getElementById('overlayBody').innerHTML = ''
+  })
+
+  const overlay = document.getElementById('statsOverlay')
+  ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
+    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
+
   state.map.on('click', async (evt) => {
     const lyrA = state.availableLayers[state.activeLayerIdxA]
     const lyrB = state.availableLayers[state.activeLayerIdxB]
@@ -743,24 +748,6 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
 
   if (!res.ok) throw new Error(await res.text())
   return res.json()
-}
-
-/**
- * Wire close button and event swallowing for the stats overlay.
- * Side effects: registers multiple event listeners on #statsOverlay.
- */
-function wireOverlayClose() {
-  const btn = document.getElementById('overlayClose')
-  btn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    document.getElementById('statsOverlay').classList.add('hidden')
-    document.getElementById('overlayBody').innerHTML = ''
-  })
-
-  const overlay = document.getElementById('statsOverlay')
-  ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
-    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
 }
 
 /**
@@ -1717,18 +1704,19 @@ function wireControlGroup() {
 
   const setMode = m => {
     mode = m;
-    group.setAttribute('data-mode', m);
+    group.setAttribute('data-mode', mode);
+    state.sampleMode = mode;
 
     // toggle button state
     buttons.forEach(b => {
-      const sel = b.getAttribute('data-mode') === m;
+      const sel = b.getAttribute('data-mode') === mode;
       b.classList.toggle('is-selected', sel);
       b.setAttribute('aria-pressed', String(sel));
     });
 
     // section visuals and enable/disable
-    const on = m === 'window' ? 'window' : 'shapefile';
-    const off = m === 'window' ? 'shapefile' : 'window';
+    const on = mode === 'window' ? 'window' : 'shapefile';
+    const off = mode === 'window' ? 'shapefile' : 'window';
 
     sections[on].classList.add('is-active');
     sections[on].classList.remove('is-inactive');
@@ -1739,7 +1727,7 @@ function wireControlGroup() {
     inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
 
     // optional: notify app state
-    if (window.state) window.state.samplingMode = m; // 'window' | 'shapefile'
+    if (window.state) window.state.samplingMode = mode; // 'window' | 'shapefile'
     if (typeof window.onSamplingModeChange === 'function') window.onSamplingModeChange(m);
   };
 
@@ -2360,7 +2348,7 @@ function wireShapefileAOIControl() {
  * App entrypoint.
  */
 ;(async function main() {
-  applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
+  //applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()

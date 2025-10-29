@@ -1160,6 +1160,16 @@ function clearScatterOverlay() {
 });
 
 
+/**
+ * Converts an RGB color value to HSL.
+ * @param {number} r - Red component (0–255).
+ * @param {number} g - Green component (0–255).
+ * @param {number} b - Blue component (0–255).
+ * @returns {number[]} Array containing [h, s, l]:
+ *   - h: hue (0–1)
+ *   - s: saturation (0–1)
+ *   - l: lightness (0–1)
+ */
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -1178,6 +1188,16 @@ function rgbToHsl(r, g, b) {
   return [h, s, l];
 }
 
+/**
+ * Converts an HSL color value to RGB.
+ * @param {number} h - Hue (0–1).
+ * @param {number} s - Saturation (0–1).
+ * @param {number} l - Lightness (0–1).
+ * @returns {number[]} Array containing [r, g, b]:
+ *   - r: red (0–255)
+ *   - g: green (0–255)
+ *   - b: blue (0–255)
+ */
 function hslToRgb(h, s, l) {
   const hue2rgb = (p, q, t) => {
     if (t < 0) t += 1;
@@ -1199,7 +1219,13 @@ function hslToRgb(h, s, l) {
   return [r * 255, g * 255, b * 255];
 }
 
-
+/**
+ * Computes a smoothed, normalized density weight from histogram counts.
+ * @param {number} binCount - Count value for the bin.
+ * @param {number} maxCount2d - Maximum count across all bins.
+ * @returns {number} Normalized weight in the range [0, 1],
+ *   using a smoothstep and gamma correction for visual scaling.
+ */
 function densityWeight(binCount, maxCount2d) {
   if (!maxCount2d || binCount <= 0) return 0;
   const w = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]

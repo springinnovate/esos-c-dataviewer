@@ -1661,8 +1661,8 @@ function wireControlGroup() {
     inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
 
     // optional: notify app state
-    if (window.state) window.state.samplingMode = mode; // 'window' | 'shapefile'
-    if (typeof window.onSamplingModeChange === 'function') window.onSamplingModeChange(m);
+    state.samplingMode = mode; // 'window' | 'shapefile'
+    setSamplingMode(mode)
   };
 
   // wire segmented control
@@ -2395,18 +2395,12 @@ function disableWindowSampler() {
 
 function setSamplingMode(mode) {
   // normalize
-  const m = (mode || '').toLowerCase();
-  const isShape = m === 'shapefile' || m === 'shapefilemode' || m === 'shapefile-mode' || m === 'shapefile_mode' || m === 'shapefileinput' || m === 'shapefileupload' || m === 'shapefilearea' || m === 'shapefileaoi' || m === 'shapefile-aoI' || m === 'shapefile aoi' || m === 'shapefile_area' || mode === 'shapeFile';
-
-  state.sampleMode = isShape ? 'shapeFile' : 'window';
-
+  state.sampleMode = mode.toLowerCase()
   if (state.sampleMode === 'window') {
     enableWindowSampler();
   } else {
     disableWindowSampler();
   }
-
-  if (typeof window.onSamplingModeChange === 'function') window.onSamplingModeChange(state.sampleMode);
 }
 
 

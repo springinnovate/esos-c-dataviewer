@@ -51,11 +51,11 @@
                 <input id='layer{{ layer_id }}MaxInput' type='number' step='any' />
                 <input id='layer{{ layer_id }}CmaxInput' type='color' />
               </div>
-            </div>
-            <div class='tool-section'>
-              <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-              <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
-              <input id='percentiles' type='text' value='5 50 95' />
+              <div class='tool-section'>
+                <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+                <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+                <input id='percentiles' type='text' value='5 50 95' />
+              </div>
             </div>
           </details>
           {% endfor %}

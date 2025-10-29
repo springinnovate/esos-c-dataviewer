@@ -52,6 +52,11 @@
                 <input id='layer{{ layer_id }}CmaxInput' type='color' />
               </div>
             </div>
+            <div class='tool-section'>
+              <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+              <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+              <input id='percentiles' type='text' value='5 50 95' />
+            </div>
           </details>
           {% endfor %}
           <div class='palette-control'>
@@ -59,20 +64,30 @@
           </div>
           <button id='applyAutoStyleBtn' class='btn small'>Auto from Histogram</button>
         </div>
+        <div class='controls-bar'>
+          <div class='control-group tools' data-mode='window'>
+            <div class='tool-toggle' role='radiogroup' aria-label='Sampling mode'>
+              <button type='button' class='mode-btn is-selected' data-mode='window' aria-pressed='true'>Window</button>
+              <button type='button' class='mode-btn' data-mode='shapefile' aria-pressed='false'>Shapefile</button>
+            </div>
 
-        <div class='control-group tools'>
-          <div class='window-size'>
-            <label>Window Size</label>
-            <input id='windowSize' type='range' min='0' max='100' step='1' />
-            <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
+            <div class='tool-section' data-section='window'>
+              <label class='tool-label'>Histogram Sampling Box</label>
+              <p class='tool-description'>A square window of this size (in kilometers) follows your mouse to compute scatterplot statistics.</p>
+              <div class='window-size'>
+                <label for='windowSize'>Size (km)</label>
+                <input id='windowSize' type='range' min='0' max='100' step='1' />
+                <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
+              </div>
+            </div>
+
+            <div class='tool-section' data-section='shapefile'>
+              <label class='tool-label' for='shpInput'>Upload Area of Interest (.zip shapefile)</label>
+              <p class='tool-description'>If uploaded, the shapefile defines the area for histogram and scatterplot stats, overriding the moving window.</p>
+              <input id='shpInput' type='file' accept='.zip' />
+              <div class='shp-filename' aria-live='polite'></div>
+            </div>
           </div>
-
-          <label class='upload'>
-            Upload <input id='shpInput' type='file' accept='.zip' />
-          </label>
-          <label class='percentiles'>
-            Percentiles <input id='percentiles' type='text' />
-          </label>
         </div>
       </div>
     </header>

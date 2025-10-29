@@ -1685,20 +1685,89 @@ function wirePercentiles() {
     }
   }
 
-  percentilesInput.addEventListener('input', () => {
+  function handlePercentileInput() {
     const raw = percentilesInput.value
-    const nums = raw
-      .split(/[,\s]+/)
+    state.percentiles = raw.split(/[,\s]+/)
       .map(s => parseInt(s.trim(), 10))
       .filter(n => Number.isFinite(n))
       .sort((a, b) => a - b)
-
-    state.percentiles = nums
-
-    // throttle to next frame to avoid redraw per keystroke burst
     if (raf) cancelAnimationFrame(raf)
     raf = requestAnimationFrame(rerender)
-  })
+  }
+  percentilesInput.addEventListener('input', handlePercentileInput)
+  // trigger default value
+  handlePercentileInput()
+}
+
+function wireControlGroup() {
+  const group = document.querySelector('.control-group.tools');
+  const buttons = Array.from(group.querySelectorAll('.mode-btn'));
+  const sections = {
+    window: group.querySelector("[data-section='window']"),
+    shapefile: group.querySelector("[data-section='shapefile']")
+  };
+  const inputs = {
+    window: [group.querySelector('#windowSize'), group.querySelector('#windowSizeNumber')],
+    shapefile: [group.querySelector('#shpInput')]
+  };
+  const shpInput = inputs.shapefile[0];
+  const shpFileName = group.querySelector('.shp-filename');
+
+  let mode = group.getAttribute('data-mode') || 'window';
+
+  const setMode = m => {
+    mode = m;
+    group.setAttribute('data-mode', m);
+
+    // toggle button state
+    buttons.forEach(b => {
+      const sel = b.getAttribute('data-mode') === m;
+      b.classList.toggle('is-selected', sel);
+      b.setAttribute('aria-pressed', String(sel));
+    });
+
+    // section visuals and enable/disable
+    const on = m === 'window' ? 'window' : 'shapefile';
+    const off = m === 'window' ? 'shapefile' : 'window';
+
+    sections[on].classList.add('is-active');
+    sections[on].classList.remove('is-inactive');
+    sections[off].classList.add('is-inactive');
+    sections[off].classList.remove('is-active');
+
+    inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
+    inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
+
+    // optional: notify app state
+    if (window.state) window.state.samplingMode = m; // 'window' | 'shapefile'
+    if (typeof window.onSamplingModeChange === 'function') window.onSamplingModeChange(m);
+  };
+
+  // wire segmented control
+  buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+
+  // when a shapefile is chosen, switch to shapefile mode but allow switching back
+  shpInput.addEventListener('change', () => {
+    const f = shpInput.files && shpInput.files[0];
+    shpFileName.textContent = f ? f.name : '';
+    if (f) setMode('shapefile');
+  });
+
+  // keep number/range in sync (optional)
+  const range = group.querySelector('#windowSize');
+  const num = group.querySelector('#windowSizeNumber');
+  if (range && num) {
+    const sync = src => {
+      if (src === range) num.value = range.value;
+      else range.value = num.value;
+      if (typeof window.onWindowSizeChange === 'function') window.onWindowSizeChange(Number(range.value));
+    };
+    range.addEventListener('input', () => sync(range));
+    num.addEventListener('input', () => sync(num));
+  }
+
+  // init
+  setMode(mode);
 }
 
 /**
@@ -2304,6 +2373,7 @@ function wireShapefileAOIControl() {
   wirePixelProbe()
   wireBivariatePalettePicker('bivariatePaletteSelect')
   wireShapefileAOIControl()
+  wireControlGroup()
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

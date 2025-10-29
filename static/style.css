@@ -171,6 +171,37 @@ input.num::-webkit-outer-spin-button {
   flex: 1;
 }
 
+.tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.tool-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.tool-description {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+  padding-left: 2px;
+}
+
+.tools input[type='text'],
+.tools input[type='file'] {
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
 .layer-group {
   display: flex;
   flex-direction: column;
@@ -437,3 +468,73 @@ input.num::-webkit-outer-spin-button {
 .leaflet-layer.blend-screen { mix-blend-mode: plus-lighter; }
 .leaflet-layer.blend-base   { mix-blend-mode: normal; }
 .leaflet-container { background: transparent; }
+
+/* Sampling mode toggle — additive styles scoped to .control-group.tools.
+   Paste BELOW your existing CSS. Does not overwrite your global rules. */
+
+.control-group.tools .tool-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  align-self: flex-start;
+  gap: 0;
+}
+
+.control-group.tools .mode-btn {
+  appearance: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 0;
+  cursor: pointer;
+}
+.control-group.tools .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.control-group.tools .mode-btn.is-selected {
+  background: var(--brand);
+  color: #081015;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.15);
+}
+
+/* Non-destructive highlight for sections; keeps your base .tool-section rules */
+.control-group.tools [data-section] {
+  position: relative;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.control-group.tools [data-section].is-active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(93,211,255,0.12) inset;
+}
+
+.control-group.tools [data-section].is-inactive {
+  opacity: 0.55;
+  filter: grayscale(0.2);
+}
+.control-group.tools [data-section].is-inactive::after {
+  content: 'Inactive';
+  position: absolute;
+  top: 8px; right: 8px;
+  font-size: 11px;
+  color: #003546;
+  background: linear-gradient(180deg, #c7f3ff, #86e3ff);
+  border: 1px solid #5ecff4;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* Disable interactions inside inactive section */
+.control-group.tools [data-section].is-inactive *:where(input, select, button) {
+  pointer-events: none;
+}
+
+/* Optional filename readout under shapefile input */
+.control-group.tools .shp-filename {
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 4px;
+  min-height: 1.25em;
+}

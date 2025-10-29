@@ -1058,7 +1058,7 @@ function renderScatterOverlay(opts) {
     r: s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
-    window_mask_pixels: parseInt(s.window_mask_pixels) ?? null,
+    pixels_sampled: parseInt(s.pixels_sampled) ?? null,
     valid_pixels: parseInt(s.valid_pixels) ?? null,
     coverage_ratio: s.coverage_ratio ?? null,
   }
@@ -1080,8 +1080,7 @@ function renderScatterOverlay(opts) {
             <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
             <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
             <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels, 0) : '-'}</div>
-            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels, 0) : '-'}</div>
+            <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
             <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
         </div>
       </div>
@@ -1139,10 +1138,70 @@ function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 }
 
+function clearScatterOverlay() {
+  const overlay = document.getElementById('statsOverlay');
+  const body = document.getElementById('overlayBody');
+  const plot = document.getElementById('scatterPlot');
+
+  if (overlay) overlay.classList.add('hidden');
+  if (body) body.innerHTML = '';
+  if (plot) plot.innerHTML = '';
+  delete state.scatterObj;
+  delete state.lastScatterOpts;
+}
+
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
 });
+
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+function hslToRgb(h, s, l) {
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [r * 255, g * 255, b * 255];
+}
+
+
+function densityWeight(binCount, maxCount2d) {
+  if (!maxCount2d || binCount <= 0) return 0;
+  const w = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]
+  const smooth = w * w * (3 - 2 * w); // smoothstep
+  return Math.pow(smooth, 1.2); // gamma
+}
 
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.
@@ -1225,37 +1284,49 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
   const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
 
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  // --- inside your render loop ---
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
       const binCount = Number(hist2d[i][j]) || 0;
-      if (binCount <= 0) continue;
+      const t = densityWeight(binCount, maxCount2d);
+      if (t <= 0) continue;
 
       const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
       const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
 
-      // midpoint values for color sampling
       const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
       const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
 
-      // colors from current UI styles for A (x) and B (y)
       const colA = _styleColorArrForValue(layerIdX, xMid);
       const colB = _styleColorArrForValue(layerIdY, yMid);
-
-      // blend
       const blended =
         blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
 
       const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(x0));
-      rect.setAttribute('y', String(y1));
-      rect.setAttribute('width', String(x1 - x0));
-      rect.setAttribute('height', String(y0 - y1));
+      const shrink = -0.05+0.5*(1-t); // fraction of each bin to inset by default make it a little bigger
+      const dx = x1 - x0;
+      const dy = y0 - y1;
+      const insetX = dx * shrink * 0.5;
+      const insetY = dy * shrink * 0.5;
 
-      const t = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]
-      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
+      rect.setAttribute('x', String(x0 + insetX));
+      rect.setAttribute('y', String(y1 + insetY));
+      rect.setAttribute('width', String(dx * (1 - shrink)));
+      rect.setAttribute('height', String(dy * (1 - shrink)));
+      let [h, s, l] = rgbToHsl(...blended);
+      const sMin = 0.08;
+      const sOut = lerp(sMin, s, t);
+      const lAnchor = 0.28;
+      const lOut = lerp(lAnchor, l, 0.25 + 0.75 * t);
+      const [r2, g2, b2] = hslToRgb(h, sOut, lOut);
+      rect.setAttribute('fill', `rgb(${r2|0},${g2|0},${b2|0})`);
+      rect.setAttribute('stroke', 'rgba(0,0,0,0.7)');
+      rect.setAttribute('stroke-opacity', (0.15 * Math.pow(t, 0.7)).toFixed(3));
+      rect.setAttribute('vector-effect', 'non-scaling-stroke');
+      rect.setAttribute('stroke-width', '0.3');
 
-      rect.setAttribute('fill', `rgb(${blended[0]},${blended[1]},${blended[2]})`);
-      rect.setAttribute('fill-opacity', alpha.toFixed(3));
       svg.appendChild(rect);
     }
   }
@@ -2390,6 +2461,7 @@ function disableWindowSampler() {
   if (map._container) {
     map._container.classList.remove('mode-window');
     map._container.classList.add('mode-shapefile');
+    if (state.outlineLayer) {map.removeLayer(state.outlineLayer)};
   }
 }
 
@@ -2401,6 +2473,7 @@ function setSamplingMode(mode) {
   } else {
     disableWindowSampler();
   }
+  clearScatterOverlay()
 }
 
 

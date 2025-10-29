@@ -114,7 +114,7 @@ class ScatterOut(BaseModel):
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
-        window_mask_pixels (Optional[int]): Number of pixels included in the window mask, or None if not applicable.
+        pixels_sampled (Optional[int]): Number of pixels included in the window mask, or None if not applicable.
         valid_pixels (Optional[int]): Number of valid (non-null) paired pixels, or None if not available.
         coverage_ratio (Optional[float]): Ratio of valid pixels to total mask pixels, or None if not available.
         geometry (dict): GeoJSON-like geometry defining the analysis window.
@@ -133,7 +133,7 @@ class ScatterOut(BaseModel):
     pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
-    window_mask_pixels: Optional[int] = None
+    pixels_sampled: Optional[int] = None
     valid_pixels: Optional[int] = None
     coverage_ratio: Optional[float] = None
     geometry: dict
@@ -597,7 +597,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 raster_id_x=scatter_request.raster_id_x,
                 raster_id_y=scatter_request.raster_id_y,
                 n_pairs=0,
-                window_mask_pixels=int(np.count_nonzero(x_mask_nparray)),
+                pixels_sampled=int(np.count_nonzero(x_mask_nparray)),
                 valid_pixels=0,
                 coverage_ratio=0.0,
                 geometry=scatter_request.geometry,
@@ -685,7 +685,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             intercept=intercept_val,
             hist1d_x=hist1d_x_counts_nparray,
             hist1d_y=hist1d_y_counts_nparray,
-            window_mask_pixels=total_mask_pixels_int,
+            pixels_sampled=total_mask_pixels_int,
             valid_pixels=valid_pixels_int,
             coverage_ratio=(
                 float(valid_pixels_int / total_mask_pixels_int)

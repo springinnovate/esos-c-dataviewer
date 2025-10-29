@@ -9,56 +9,88 @@
     <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
     <script src='https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js'></script>
     <script src='https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js'></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
     <link rel='stylesheet' href='static/style.css' />
   </head>
   <body>
     <header>
       <div class='brand'>ESSOSC Viewer</div>
-      <div class='controls'>
-        <div class='win-size'>
-          <label for='windowSize'>Window Size (km)</label>
-          <input id='windowSize' type='range' min='0' max='100' step='1' />
-          <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
-        </div>
-        <div class='selectors'>
+      <div class='controls-bar'>
+        <div class='control-group layers'>
           {% for layer_id in ['A', 'B'] %}
-          <div class='layer-control'>
-            <label for='layerSelect{{ layer_id }}'>Layer {{ layer_id }}</label>
-            <div class='layer-inputs'>
-              <select id='layerSelect{{ layer_id }}'></select>
-              <label class='vis-label'>
-                <input id='layerVisible{{ layer_id }}' type='checkbox' checked />
-                <span>Show</span>
-              </label>
-            </div>
+          <div class='layer-group'>
+            <label>Layer {{ layer_id }}</label>
+            <select id='layerSelect{{ layer_id }}'></select>
+            <label class='vis-label'>
+              <input id='layerVisible{{ layer_id }}' type='checkbox' checked />
+              <span>Show</span>
+            </label>
           </div>
           {% endfor %}
+          <button id='flipLayersBtn' class='btn small'>Swap A - B</button>
+          <button id='bothLayersOnBtn' class='btn small'>Both on</button>
+          <div class='layer-group'>
+            <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+            <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+            <input id='percentiles' type='text' value='5 50 95' />
+          </div>
         </div>
-        <div class='flip-col'>
-          <button id='flipLayersBtn' class='btn'>Swap A - B</button>
-          <button id='bothLayersOnBtn' class='btn'>Both on</button>
-          <div class='rule'></div>
-          <button id='applyAutoStyleBtn' class='btn'>Set Min/Med/Max from Histogram</button>
-          <div class='rule'></div>
-          <select id='bivariatePaletteSelect'></select>
-          <div class='rule'></div>
-          <label>Percentiles <input id='percentiles' type='text'/></label>
 
-        </div>
-        <div class='style-panels'>
+        <div class='control-group style'>
           {% for layer_id in ['A', 'B'] %}
-          <div class='style-panel'>
+          <details class='style-panel'>
             <summary>Style {{ layer_id }}</summary>
             <div class='style-grid'>
-              <label>Min <input id='layer{{ layer_id }}MinInput' type='number' step='any' /></label>
-              <label>Med <input id='layer{{ layer_id }}MedInput' type='number' step='any' /></label>
-              <label>Max <input id='layer{{ layer_id }}MaxInput' type='number' step='any' /></label>
-              <label>Color min <input id='layer{{ layer_id }}CminInput' type='color'/></label>
-              <label>Color med <input id='layer{{ layer_id }}CmedInput' type='color'/></label>
-              <label>Color max <input id='layer{{ layer_id }}CmaxInput' type='color'/></label>
+              <div class='style-row'>
+                <label>Min</label>
+                <input id='layer{{ layer_id }}MinInput' type='number' step='any' />
+                <input id='layer{{ layer_id }}CminInput' type='color' />
+              </div>
+              <div class='style-row'>
+                <label>Med</label>
+                <input id='layer{{ layer_id }}MedInput' type='number' step='any' />
+                <input id='layer{{ layer_id }}CmedInput' type='color' />
+              </div>
+              <div class='style-row'>
+                <label>Max</label>
+                <input id='layer{{ layer_id }}MaxInput' type='number' step='any' />
+                <input id='layer{{ layer_id }}CmaxInput' type='color' />
+              </div>
+            </div>
+          </details>
+          {% endfor %}
+          <div class='palette-control'>
+            <label>Palette <select id='bivariatePaletteSelect'></select></label>
+          </div>
+          <label for='applyAutoStyleBtn'>
+            Sets Layer A and B color thresholds to the histogram's min and max percentile values.
+          </label>
+          <button class='btn small' id='applyAutoStyleBtn'>Apply Percentile Range</button>
+        </div>
+        <div class='controls-bar'>
+          <div class='control-group tools' data-mode='window'>
+            <div class='tool-toggle' role='radiogroup' aria-label='Sampling mode'>
+              <button type='button' class='mode-btn is-selected' data-mode='window' aria-pressed='true'>Window</button>
+              <button type='button' class='mode-btn' data-mode='shapefile' aria-pressed='false'>Shapefile</button>
+            </div>
+
+            <div class='tool-section' data-section='window'>
+              <label class='tool-label'>Histogram Sampling Box</label>
+              <p class='tool-description'>A square window of this size (in kilometers) follows your mouse to compute scatterplot statistics.</p>
+              <div class='window-size'>
+                <label for='windowSize'>Size (km)</label>
+                <input id='windowSize' type='range' min='0' max='100' step='1' />
+                <input id='windowSizeNumber' class='num' type='number' min='1' max='1000' step='1' value='200' />
+              </div>
+            </div>
+
+            <div class='tool-section' data-section='shapefile'>
+              <label class='tool-label' for='shpInput'>Upload Area of Interest (.zip shapefile)</label>
+              <p class='tool-description'>If uploaded, the shapefile defines the area for histogram and scatterplot stats, overriding the moving window.</p>
+              <input id='shpInput' type='file' accept='.zip' />
+              <div class='shp-filename' aria-live='polite'></div>
             </div>
           </div>
-          {% endfor %}
         </div>
       </div>
     </header>

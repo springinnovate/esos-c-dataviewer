@@ -8,6 +8,81 @@
  * Docstrings use JSDoc so editors/TS can infer types.
  */
 
+const state = {
+  map: null,
+  geoserverBaseUrl: null,
+  baseStatsUrl: null,
+  wmsLayerA: null,
+  wmsLayerB: null,
+  availableLayers: null,
+  activeLayerIdxA: null,
+  activeLayerIdxB: null,
+  hoverRect: null,
+  boxSizeKm: null,
+  lastMouseLatLng: null,
+  outlineLayer: null,
+  lastStats: null,
+  didInitialCenter: false,
+  visibility: { A: true, B: true },
+  lastScatterOpts: null,
+  scatterObj: null,
+  percentiles: null,
+  lastPixelPoint: null,
+  bivariatePalette: {
+    orangeBlue: createBivariateColormap({
+      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
+      lightenerColor: '#00ffff',
+      strength: 1.0
+    }),
+
+    grayWhite: createBivariateColormap({
+      baseRamp: ['#222222', '#777777', '#dddddd'],
+      lightenerColor: '#ffffff',
+      strength: 1.0
+    }),
+
+    tealMagenta: createBivariateColormap({
+      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
+      lightenerColor: '#ff66cc',
+      strength: 0.9
+    }),
+
+    greenPurple: createBivariateColormap({
+      baseRamp: ['#003300', '#66aa55', '#ccff99'],
+      lightenerColor: '#aa55ff',
+      strength: 1.0
+    }),
+
+    redCyan: createBivariateColormap({
+      baseRamp: ['#220000', '#cc3333', '#ff6666'],
+      lightenerColor: '#00ffff',
+      strength: 0.8
+    }),
+
+    indigoGold: createBivariateColormap({
+      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
+      lightenerColor: '#ffef99',
+      strength: 1.0
+    }),
+
+    brownSky: createBivariateColormap({
+      baseRamp: ['#332211', '#996633', '#ffcc66'],
+      lightenerColor: '#66ccff',
+      strength: 1.0
+    }),
+    steelRose: createBivariateColormap({
+      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
+      lightenerColor: '#f472b6',
+      strength: 1.0
+    })
+  },
+  sampleMode: null,
+  uploadedLayer: null,
+  lastPointMarker: null,
+  probeSuppressed: false,
+  pctBounds: null,
+}
+
 
 /**
  * Derives two axis definitions (A and B) from a 3×3 grid of color control values.
@@ -249,75 +324,6 @@ function applyBivariateColormapToAB(cmap) {
   setVal('layerBCmaxInput', cmap(0.0, 1.0));
 }
 
-const state = {
-  map: null,
-  geoserverBaseUrl: null,
-  baseStatsUrl: null,
-  wmsLayerA: null,
-  wmsLayerB: null,
-  availableLayers: null,
-  activeLayerIdxA: null,
-  activeLayerIdxB: null,
-  hoverRect: null,
-  boxSizeKm: null,
-  lastMouseLatLng: null,
-  outlineLayer: null,
-  lastStats: null,
-  didInitialCenter: false,
-  visibility: { A: true, B: true },
-  lastScatterOpts: null,
-  scatterObj: null,
-  percentiles: null,
-  lastPixelPoint: null,
-  bivariatePalette: {
-    orangeBlue: createBivariateColormap({
-      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
-      lightenerColor: '#00ffff',
-      strength: 1.0
-    }),
-
-    grayWhite: createBivariateColormap({
-      baseRamp: ['#222222', '#777777', '#dddddd'],
-      lightenerColor: '#ffffff',
-      strength: 1.0
-    }),
-
-    tealMagenta: createBivariateColormap({
-      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
-      lightenerColor: '#ff66cc',
-      strength: 0.9
-    }),
-
-    greenPurple: createBivariateColormap({
-      baseRamp: ['#003300', '#66aa55', '#ccff99'],
-      lightenerColor: '#aa55ff',
-      strength: 1.0
-    }),
-
-    redCyan: createBivariateColormap({
-      baseRamp: ['#220000', '#cc3333', '#ff6666'],
-      lightenerColor: '#00ffff',
-      strength: 0.8
-    }),
-
-    indigoGold: createBivariateColormap({
-      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
-      lightenerColor: '#ffef99',
-      strength: 1.0
-    }),
-
-    brownSky: createBivariateColormap({
-      baseRamp: ['#332211', '#996633', '#ffcc66'],
-      lightenerColor: '#66ccff',
-      strength: 1.0
-    }),
-    steelRose: createBivariateColormap({
-      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
-      lightenerColor: '#f472b6',
-      strength: 1.0
-    })
-  },
-}
 
 /**
  * Set the visibility of a specified WMS layer and synchronize its checkbox state.
@@ -396,8 +402,6 @@ function initMap() {
     zoomControl: false,
   })
   state.map = map
-  initMouseFollowBox()
-  wireOverlayClose()
 }
 
 /**
@@ -506,26 +510,6 @@ function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
     geometry: { type: 'Polygon', coordinates: [ringLngLat] },
     properties: { kind: 'square', halfSizeM },
   }
-}
-
-/**
- * Create and keep a rectangle that follows the mouse to show the sampling window.
- * Side effects: sets state.hoverRect and mouse listeners that update it.
- */
-function initMouseFollowBox() {
-  state.hoverRect = squarePolygonAt(state.map.getCenter(), state.boxSizeKm).addTo(state.map)
-  state.map.on('mousemove', (e) => {
-    state.lastMouseLatLng = e.latlng
-    const poly = squarePolygonAt(e.latlng, state.boxSizeKm)
-    state.hoverRect.setLatLngs(poly.getLatLngs())
-  })
-
-  state.map.on('mouseout', () => {
-    if (state.hoverRect && state.map.hasLayer(state.hoverRect)) state.map.removeLayer(state.hoverRect)
-  })
-  state.map.on('mouseover', () => {
-    if (state.hoverRect && !state.map.hasLayer(state.hoverRect)) state.hoverRect.addTo(state.map)
-  })
 }
 
 /**
@@ -678,46 +662,6 @@ async function onLayerChange(e, layerId) {
 }
 
 /**
- * Wire map click to request raster statistics for the window around the click.
- * On success, renders the overlay; on failure, shows an error message.
- */
-async function wireAreaSamplerClick() {
-  state.map.on('click', async (evt) => {
-    const lyrA = state.availableLayers[state.activeLayerIdxA]
-    const lyrB = state.availableLayers[state.activeLayerIdxB]
-    if (!lyrA || !lyrB) return
-
-    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm)
-    _updateOutline(poly)
-    renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: null,
-    })
-
-    let scatterStats
-    try {
-      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON())
-    } catch (e) {
-      showOverlayError(`area sampler error: ${e.message || String(e)}`)
-      return
-    }
-    renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: scatterStats,
-    })
-  })
-}
-
-
-/**
  * POST a geometry to the rstats service and return scatter data for two rasters.
  * @param {string} rasterIdX
  * @param {string} rasterIdY
@@ -742,24 +686,6 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
 
   if (!res.ok) throw new Error(await res.text())
   return res.json()
-}
-
-/**
- * Wire close button and event swallowing for the stats overlay.
- * Side effects: registers multiple event listeners on #statsOverlay.
- */
-function wireOverlayClose() {
-  const btn = document.getElementById('overlayClose')
-  btn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    document.getElementById('statsOverlay').classList.add('hidden')
-    document.getElementById('overlayBody').innerHTML = ''
-  })
-
-  const overlay = document.getElementById('statsOverlay')
-  ;['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
-    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()))
 }
 
 /**
@@ -1136,7 +1062,7 @@ function renderScatterOverlay(opts) {
     r: s.pearson_r ?? null,
     slope: s.slope ?? null,
     intercept: s.intercept ?? null,
-    window_mask_pixels: parseInt(s.window_mask_pixels) ?? null,
+    pixels_sampled: parseInt(s.pixels_sampled) ?? null,
     valid_pixels: parseInt(s.valid_pixels) ?? null,
     coverage_ratio: s.coverage_ratio ?? null,
   }
@@ -1158,8 +1084,7 @@ function renderScatterOverlay(opts) {
             <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
             <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
             <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-            <div class='label'>window_mask_pixels</div><div class='value' data-stat='window_mask_pixels'>${hasData ? fmt(stats.window_mask_pixels, 0) : '-'}</div>
-            <div class='label'>valid_pixels</div><div class='value' data-stat='valid_pixels'>${hasData ? fmt(stats.valid_pixels, 0) : '-'}</div>
+            <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
             <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
         </div>
       </div>
@@ -1217,10 +1142,96 @@ function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 }
 
+function clearScatterOverlay() {
+  const overlay = document.getElementById('statsOverlay');
+  const body = document.getElementById('overlayBody');
+  const plot = document.getElementById('scatterPlot');
+
+  if (overlay) overlay.classList.add('hidden');
+  if (body) body.innerHTML = '';
+  if (plot) plot.innerHTML = '';
+  delete state.scatterObj;
+  delete state.lastScatterOpts;
+}
+
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
 });
+
+
+/**
+ * Converts an RGB color value to HSL.
+ * @param {number} r - Red component (0–255).
+ * @param {number} g - Green component (0–255).
+ * @param {number} b - Blue component (0–255).
+ * @returns {number[]} Array containing [h, s, l]:
+ *   - h: hue (0–1)
+ *   - s: saturation (0–1)
+ *   - l: lightness (0–1)
+ */
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+/**
+ * Converts an HSL color value to RGB.
+ * @param {number} h - Hue (0–1).
+ * @param {number} s - Saturation (0–1).
+ * @param {number} l - Lightness (0–1).
+ * @returns {number[]} Array containing [r, g, b]:
+ *   - r: red (0–255)
+ *   - g: green (0–255)
+ *   - b: blue (0–255)
+ */
+function hslToRgb(h, s, l) {
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [r * 255, g * 255, b * 255];
+}
+
+/**
+ * Computes a smoothed, normalized density weight from histogram counts.
+ * @param {number} binCount - Count value for the bin.
+ * @param {number} maxCount2d - Maximum count across all bins.
+ * @returns {number} Normalized weight in the range [0, 1],
+ *   using a smoothstep and gamma correction for visual scaling.
+ */
+function densityWeight(binCount, maxCount2d) {
+  if (!maxCount2d || binCount <= 0) return 0;
+  const w = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]
+  const smooth = w * w * (3 - 2 * w); // smoothstep
+  return Math.pow(smooth, 1.2); // gamma
+}
 
 /**
  * Build a simple 2D scatter/heatmap SVG from histogram2d data.
@@ -1236,7 +1247,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const h = opts.height ?? 300;
   const pad = opts.pad ?? 40;
   const mSize = opts.marginalSize ?? 48;
-  const percentileColor = opts.percentileColor ?? '#60a5fa';
+  const percentileColor = opts.percentileColor ?? '#eeeeee';
   const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
   const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
   const blendMode = opts.blend || 'plus-lighter';
@@ -1303,37 +1314,48 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
   const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
 
+  const lerp = (a, b, t) => a + (b - a) * t;
+
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < ny; j++) {
       const binCount = Number(hist2d[i][j]) || 0;
-      if (binCount <= 0) continue;
+      const t = densityWeight(binCount, maxCount2d);
+      if (t <= 0) continue;
 
       const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
       const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
 
-      // midpoint values for color sampling
       const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
       const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
 
-      // colors from current UI styles for A (x) and B (y)
       const colA = _styleColorArrForValue(layerIdX, xMid);
       const colB = _styleColorArrForValue(layerIdY, yMid);
-
-      // blend
       const blended =
         blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
 
       const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', String(x0));
-      rect.setAttribute('y', String(y1));
-      rect.setAttribute('width', String(x1 - x0));
-      rect.setAttribute('height', String(y0 - y1));
+      const shrink = -0.05+0.5*(1-t); // fraction of each bin to inset by default make it a little bigger
+      const dx = x1 - x0;
+      const dy = y0 - y1;
+      const insetX = dx * shrink * 0.5;
+      const insetY = dy * shrink * 0.5;
 
-      const t = Math.log1p(binCount) / Math.log1p(maxCount2d); // [0,1]
-      const alpha = 0.05 + 0.95 * Math.pow(t, 1.2);
+      rect.setAttribute('x', String(x0 + insetX));
+      rect.setAttribute('y', String(y1 + insetY));
+      rect.setAttribute('width', String(dx * (1 - shrink)));
+      rect.setAttribute('height', String(dy * (1 - shrink)));
+      let [h, s, l] = rgbToHsl(...blended);
+      const sMin = 0.08;
+      const sOut = lerp(sMin, s, t);
+      const lAnchor = 0.28;
+      const lOut = lerp(lAnchor, l, 0.25 + 0.75 * t);
+      const [r2, g2, b2] = hslToRgb(h, sOut, lOut);
+      rect.setAttribute('fill', `rgb(${r2|0},${g2|0},${b2|0})`);
+      rect.setAttribute('stroke', 'rgba(0,0,0,0.7)');
+      rect.setAttribute('stroke-opacity', (0.15 * Math.pow(t, 0.7)).toFixed(3));
+      rect.setAttribute('vector-effect', 'non-scaling-stroke');
+      rect.setAttribute('stroke-width', '0.3');
 
-      rect.setAttribute('fill', `rgb(${blended[0]},${blended[1]},${blended[2]})`);
-      rect.setAttribute('fill-opacity', alpha.toFixed(3));
       svg.appendChild(rect);
     }
   }
@@ -1456,7 +1478,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   for (const p of percentiles) {
     const xv = getQuantileX(p), x = scaleX(xv);
     const gx = mkLine(x, pad, x, plotY1, percentileColor);
-    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.9');
+    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.5');
     svg.appendChild(gx);
     const lx = mkText(pctLabel(p, xv), x, pad - 6, 'middle');
     lx.setAttribute('fill', percentileColor); svg.appendChild(lx);
@@ -1465,93 +1487,103 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   for (const p of percentiles) {
     const yv = getQuantileY(p), y = scaleY(yv);
     const gy = mkLine(plotX0, y, pad + innerW + mSize, y, percentileColor);
-    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.9');
+    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.5');
     svg.appendChild(gy);
     const ly = mkText(pctLabel(p, yv), pad + innerW + mSize + 4, y + 3, 'start');
     ly.setAttribute('fill', percentileColor); svg.appendChild(ly);
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
-  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-    if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
-      const px = scaleX(point.x);
-      const py = scaleY(point.y);
+  (() => {
+    if (!Array.isArray(percentiles) || !percentiles.length) return;
+    const minP = Math.min(...percentiles);
+    const maxP = Math.max(...percentiles);
+    const xmin = getQuantileX(minP);
+    const xmax = getQuantileX(maxP);
+    const ymin = getQuantileY(minP);
+    const ymax = getQuantileY(maxP);
+    if (!state) return;
+    state.pctBounds = { xmin, xmax, ymin, ymax };
+  })();
 
-      const colA = _styleColorArrForValue(layerIdX, point.x);
-      const colB = _styleColorArrForValue(layerIdY, point.y);
-      const blended =
-        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
-      const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+  if (
+    point &&
+    Number.isFinite(point.x) && Number.isFinite(point.y) &&
+    point.x >= xMin && point.x <= xMax &&
+    point.y >= yMin && point.y <= yMax
+  ) {
+    const px = scaleX(point.x);
+    const py = scaleY(point.y);
 
-      const g = document.createElementNS(svgNS, 'g');
-      svg.appendChild(g);
+    const colA = _styleColorArrForValue(layerIdX, point.x);
+    const colB = _styleColorArrForValue(layerIdY, point.y);
+    const blended =
+      blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+    const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
-      const circ = document.createElementNS(svgNS, 'circle');
-      circ.setAttribute('cx', String(px));
-      circ.setAttribute('cy', String(py));
-      circ.setAttribute('r', '3.5');
-      circ.setAttribute('fill', markerColor);
-      circ.setAttribute('stroke', '#000');
-      circ.setAttribute('stroke-width', '1');
-      circ.setAttribute('opacity', '0.95');
-      g.appendChild(circ);
+    const g = document.createElementNS(svgNS, 'g');
+    svg.appendChild(g);
 
-      const label = document.createElementNS(svgNS, 'text');
-      const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-      label.textContent = labelText;
-      label.setAttribute('x', String(px + 6));
-      label.setAttribute('y', String(py - 6));
-      label.setAttribute('fill', '#ddd');
-      label.setAttribute('font-size', '10px'); // ensure CSS unit
-      label.setAttribute('text-anchor', 'start');
-      label.setAttribute('dominant-baseline', 'alphabetic');
-      label.setAttribute('paint-order', 'stroke');
-      label.setAttribute('stroke', '#000');
-      label.setAttribute('stroke-width', '2');
-      label.setAttribute('stroke-opacity', '0.6');
-      g.appendChild(label);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', String(px));
+    circ.setAttribute('cy', String(py));
+    circ.setAttribute('r', '3.5');
+    circ.setAttribute('fill', markerColor);
+    circ.setAttribute('stroke', '#000');
+    circ.setAttribute('stroke-width', '1');
+    circ.setAttribute('opacity', '0.95');
+    g.appendChild(circ);
 
-      // defer bbox measure to ensure it's rendered
-      requestAnimationFrame(() => {
-        let bbox = label.getBBox();
-        // fallback if getBBox fails or returns zero (some browsers/layouts)
-        if (!bbox.width || !bbox.height) {
-          const fs = 10; // px
-          const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
-          bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
-        }
+    const label = document.createElementNS(svgNS, 'text');
+    const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+    label.textContent = labelText;
+    label.setAttribute('x', String(px + 6));
+    label.setAttribute('y', String(py - 6));
+    label.setAttribute('fill', '#ddd');
+    label.setAttribute('font-size', '10px');
+    label.setAttribute('text-anchor', 'start');
+    label.setAttribute('dominant-baseline', 'alphabetic');
+    label.setAttribute('paint-order', 'stroke');
+    label.setAttribute('stroke', '#000');
+    label.setAttribute('stroke-width', '2');
+    label.setAttribute('stroke-opacity', '0.6');
+    g.appendChild(label);
 
-        const padX = 3;
-        const padY = 2;
+    // measure bbox and insert background
+    requestAnimationFrame(() => {
+      let bbox = label.getBBox();
+      if (!bbox.width || !bbox.height) {
+        const fs = 10;
+        const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+        bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
+      }
 
-        const bg = document.createElementNS(svgNS, 'rect');
-        bg.setAttribute('x', String(bbox.x - padX));
-        bg.setAttribute('y', String(bbox.y - padY));
-        bg.setAttribute('width', String(bbox.width + padX * 2));
-        bg.setAttribute('height', String(bbox.height + padY * 2));
-        bg.setAttribute('rx', '2');
-        bg.setAttribute('ry', '2');
-        bg.setAttribute('fill', '#000');           // avoid rgba() in SVG attribute
-        bg.setAttribute('fill-opacity', '0.6');    // use separate opacity
-        bg.setAttribute('pointer-events', 'none');
+      const padX = 3;
+      const padY = 2;
 
-        g.insertBefore(bg, label);
-      });
+      const bg = document.createElementNS(svgNS, 'rect');
+      bg.setAttribute('x', String(bbox.x - padX));
+      bg.setAttribute('y', String(bbox.y - padY));
+      bg.setAttribute('width', String(bbox.width + padX * 2));
+      bg.setAttribute('height', String(bbox.height + padY * 2));
+      bg.setAttribute('rx', '2');
+      bg.setAttribute('ry', '2');
+      bg.setAttribute('fill', '#000');
+      bg.setAttribute('fill-opacity', '0.6');
+      bg.setAttribute('pointer-events', 'none');
 
-      const tipText = point.label || labelText;
-      [circ, label].forEach(el => {
-        el.style.cursor = 'default';
-        el.addEventListener('mouseenter', e => {
-          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-        });
-        el.addEventListener('mousemove', e => {
-          if (typeof _showPctTooltip === 'function') _showPctTooltip(tipText, e.clientX, e.clientY);
-        });
-        el.addEventListener('mouseleave', () => {
-          if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
-        });
-      });
-    }
+      g.insertBefore(bg, label);
+    });
+
+    const tipText = point.label || labelText;
+    [circ, label].forEach(el => {
+      el.style.cursor = 'default';
+      el.addEventListener('mouseenter', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mousemove', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => _hidePctTooltip?.());
+    });
+
+    state.lastPointMarker = g;
   }
   return svg;
 }
@@ -1651,9 +1683,9 @@ function wireAutoStyleFromHistogram() {
     const minEl = document.getElementById(`layer${layerId}MinInput`);
     const medEl = document.getElementById(`layer${layerId}MedInput`);
     const maxEl = document.getElementById(`layer${layerId}MaxInput`);
-    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true }))};
-    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true }))};
-    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }))};
+    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true })); }
   };
 
   btn.addEventListener('click', () => {
@@ -1662,6 +1694,19 @@ function wireAutoStyleFromHistogram() {
     const yEdges = so?.y_edges;
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
+
+    const pb = state?.pctBounds;
+    if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
+      a.min = pb.xmin;
+      a.max = pb.xmax;
+      a.med = (pb.xmin + pb.xmax) / 2;
+    }
+    if (pb && Number.isFinite(pb.ymin) && Number.isFinite(pb.ymax) && b) {
+      b.min = pb.ymin;
+      b.max = pb.ymax;
+      b.med = (pb.ymin + pb.ymax) / 2;
+    }
+
     setTriple('A', a);
     setTriple('B', b);
 
@@ -1684,20 +1729,90 @@ function wirePercentiles() {
     }
   }
 
-  percentilesInput.addEventListener('input', () => {
+  function handlePercentileInput() {
     const raw = percentilesInput.value
-    const nums = raw
-      .split(/[,\s]+/)
+    state.percentiles = raw.split(/[,\s]+/)
       .map(s => parseInt(s.trim(), 10))
       .filter(n => Number.isFinite(n))
       .sort((a, b) => a - b)
-
-    state.percentiles = nums
-
-    // throttle to next frame to avoid redraw per keystroke burst
     if (raf) cancelAnimationFrame(raf)
     raf = requestAnimationFrame(rerender)
-  })
+  }
+  percentilesInput.addEventListener('input', handlePercentileInput)
+  // trigger default value
+  handlePercentileInput()
+}
+
+function wireControlGroup() {
+  const group = document.querySelector('.control-group.tools');
+  const buttons = Array.from(group.querySelectorAll('.mode-btn'));
+  const sections = {
+    window: group.querySelector("[data-section='window']"),
+    shapefile: group.querySelector("[data-section='shapefile']")
+  };
+  const inputs = {
+    window: [group.querySelector('#windowSize'), group.querySelector('#windowSizeNumber')],
+    shapefile: [group.querySelector('#shpInput')]
+  };
+  const shpInput = inputs.shapefile[0];
+  const shpFileName = group.querySelector('.shp-filename');
+
+  let mode = group.getAttribute('data-mode') || 'window';
+
+  const setMode = m => {
+    mode = m;
+    group.setAttribute('data-mode', mode);
+    state.sampleMode = mode;
+
+    // toggle button state
+    buttons.forEach(b => {
+      const sel = b.getAttribute('data-mode') === mode;
+      b.classList.toggle('is-selected', sel);
+      b.setAttribute('aria-pressed', String(sel));
+    });
+
+    // section visuals and enable/disable
+    const on = mode === 'window' ? 'window' : 'shapefile';
+    const off = mode === 'window' ? 'shapefile' : 'window';
+
+    sections[on].classList.add('is-active');
+    sections[on].classList.remove('is-inactive');
+    sections[off].classList.add('is-inactive');
+    sections[off].classList.remove('is-active');
+
+    inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
+    inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
+
+    // optional: notify app state
+    state.samplingMode = mode; // 'window' | 'shapefile'
+    setSamplingMode(mode)
+  };
+
+  // wire segmented control
+  buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+
+  // when a shapefile is chosen, switch to shapefile mode but allow switching back
+  shpInput.addEventListener('change', () => {
+    const f = shpInput.files && shpInput.files[0];
+    shpFileName.textContent = f ? f.name : '';
+    if (f) setMode('shapefile');
+  });
+
+  // keep number/range in sync (optional)
+  const range = group.querySelector('#windowSize');
+  const num = group.querySelector('#windowSizeNumber');
+  if (range && num) {
+    const sync = src => {
+      if (src === range) num.value = range.value;
+      else range.value = num.value;
+      if (typeof window.onWindowSizeChange === 'function') window.onWindowSizeChange(Number(range.value));
+    };
+    range.addEventListener('input', () => sync(range));
+    num.addEventListener('input', () => sync(num));
+  }
+
+  // init
+  setMode(mode);
 }
 
 /**
@@ -1906,13 +2021,46 @@ function wirePixelProbe() {
 
   // create probe element
   let probe = document.querySelector('.pixel-probe')
+
+  const overlay = document.querySelector('#statsOverlay');
+  const header = document.querySelector('header');
+
+  if (overlay) {
+    overlay.addEventListener('mouseenter', () => {
+      state.probeSuppressed = true;
+      probe.style.display = 'none';
+    });
+    overlay.addEventListener('mouseleave', () => {
+      state.probeSuppressed = false;
+      probe.style.display = 'block';
+    });
+  }
+
+  if (header) {
+    header.addEventListener('mouseenter', () => {
+      state.probeSuppressed = true;
+      probe.style.display = 'none';
+    });
+    header.addEventListener('mouseleave', () => {
+      state.probeSuppressed = false;
+      probe.style.display = 'block';
+    });
+  }
+
+  // then in your global mousemove logic (or Leaflet map.on('mousemove'))
+  document.addEventListener('mousemove', e => {
+    if (state.probeSuppressed) return;
+    probe.style.left = `${e.clientX + 12}px`;
+    probe.style.top = `${e.clientY + 12}px`;
+  });
+
   if (!probe) {
     probe = document.createElement('div')
     probe.className = 'pixel-probe'
     Object.assign(probe.style, {
       position: 'fixed',
-      left: '0px',
-      top: '0px',
+      left: '0',
+      top: '0',
       padding: '6px 8px',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: '11px',
@@ -2042,8 +2190,6 @@ function wirePixelProbe() {
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
-    probe.style.left = `${clientX + 12}px`
-    probe.style.top = `${clientY + 12}px`
     probe.style.display = 'block'
 
     const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
@@ -2058,6 +2204,10 @@ function wirePixelProbe() {
         renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
       }
     } else {
+      if (state.lastPointMarker && state.lastPointMarker.parentNode) {
+        state.lastPointMarker.remove();
+        state.lastPointMarker = null;
+      }
       state.lastPixelPoint = null
     }
   }
@@ -2109,7 +2259,6 @@ function wirePixelProbe() {
     pending = null
   })
 
-  const overlay = document.getElementById('statsOverlay')
   if (overlay) {
     overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
     overlay.addEventListener('mouseleave', () => { })
@@ -2143,7 +2292,7 @@ function wirePixelProbe() {
  * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
  * @returns {void}
  */
-function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+function wireBivariatePalettePicker(selectId) {
   const ensureSelect = () => {
     let sel = document.getElementById(selectId);
     if (!sel) {
@@ -2190,6 +2339,9 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
 
   const sel = ensureSelect();
   refreshOptions(sel);
+  if (sel.querySelector('option[value="orangeBlue"]')) {
+      sel.value = 'orangeBlue';
+  }
   applySelected(sel.value);
 
   sel.addEventListener('change', () => applySelected(sel.value));
@@ -2201,22 +2353,302 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
   };
 }
 
+function addGeoJSONPolyToMap(fc) {
+  if (state.uploadedLayer) {
+    state.map.removeLayer(state.uploadedLayer);
+    state.uploadedLayer = null;
+  }
+
+  state.uploadedLayer = L.geoJSON(fc, {
+    style: () => ({
+      color: '#0d6efd',
+      weight: 2,
+      opacity: 0.9,
+      fillColor: '#74c0fc',
+      fillOpacity: 0.25
+    }),
+    pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+      radius: 6,
+      color: '#0d6efd',
+      weight: 2,
+      fillColor: '#74c0fc',
+      fillOpacity: 0.7
+    }),
+    onEachFeature: (feature, layer) => {
+      const props = feature?.properties ?? {};
+      const rows = Object.entries(props).slice(0, 10).map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
+      if (rows) layer.bindPopup(`<table class='popup'>${rows}</table>`);
+    }
+  }).addTo(state.map);
+
+  // Fit map to features if possible
+  try {
+    const b = state.uploadedLayer.getBounds();
+    if (b && b.isValid()) map.fitBounds(b.pad(0.1));
+  } catch {}
+}
+
+function toFeatureCollection(geo) {
+  if (!geo) return null;
+
+  if (geo.type === 'FeatureCollection') return geo;
+  if (Array.isArray(geo)) {
+    const features = [];
+    for (const g of geo) {
+      if (g && g.type === 'FeatureCollection' && Array.isArray(g.features)) {
+        features.push(...g.features);
+      }
+    }
+    return { type: 'FeatureCollection', features };
+  }
+}
+
+
+function getGeoJSONCenter(geojson) {
+  const coords = [];
+
+  const extractCoords = (geom) => {
+    if (geom.type === 'Point') {
+      coords.push(geom.coordinates);
+    } else if (geom.type === 'MultiPoint' || geom.type === 'LineString') {
+      coords.push(...geom.coordinates);
+    } else if (geom.type === 'MultiLineString' || geom.type === 'Polygon') {
+      geom.coordinates.forEach(part => coords.push(...part));
+    } else if (geom.type === 'MultiPolygon') {
+      geom.coordinates.forEach(polygon => {
+        polygon.forEach(part => coords.push(...part));
+      });
+    } else if (geom.type === 'GeometryCollection') {
+      geom.geometries.forEach(extractCoords);
+    }
+  };
+
+  geojson.features.forEach(f => extractCoords(f.geometry));
+
+  if (!coords.length) return null;
+
+  const [sumX, sumY] = coords.reduce(
+    ([sx, sy], [x, y]) => [sx + x, sy + y],
+    [0, 0]
+  );
+  const center = [sumX / coords.length, sumY / coords.length];
+  return { lng: center[0], lat: center[1] };
+}
+
+function collapseToMultiPolygon(fc) {
+  const polygons = [];
+
+  fc.features.forEach(f => {
+    const geom = f.geometry;
+    if (!geom) return;
+
+    if (geom.type === 'Polygon') {
+      polygons.push(geom.coordinates);
+    } else if (geom.type === 'MultiPolygon') {
+      polygons.push(...geom.coordinates);
+    }
+  });
+
+  if (!polygons.length) return null;
+
+  return {
+    type: 'MultiPolygon',
+    coordinates: polygons
+  };
+}
+
+function wireShapefileAOIControl() {
+  document.getElementById('shpInput').addEventListener('change', async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      alert('Select a .zip containing the shapefile.');
+      e.target.value = '';
+      return;
+    }
+
+    try {
+      const buf = await file.arrayBuffer();
+      const poly = await shp(buf); // shpjs parses the zip -> polyJSON
+      const fc = toFeatureCollection(poly);
+      if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
+        alert('No features found.');
+        return;
+      }
+      const center = getGeoJSONCenter(fc)
+      addGeoJSONPolyToMap(fc);
+      const lyrA = state.availableLayers[state.activeLayerIdxA];
+      const lyrB = state.availableLayers[state.activeLayerIdxB];
+      let scatterStats;
+      try {
+        scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, collapseToMultiPolygon(poly));
+      } catch (e) {
+        showOverlayError(`area sampler error: ${e.message || String(e)}`);
+        return;
+      }
+      renderScatterOverlay({
+        rasterX: lyrA.name,
+        rasterY: lyrB.name,
+        centerLng: center.lng,
+        centerLat: center.lat,
+        boxKm: null,
+        scatterObj: scatterStats
+      });
+    } catch (err) {
+      console.error(err);
+      alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
+    } finally {
+      e.target.value = '';
+    }
+  });
+}
+
+function wireOverlayControls() {
+  const btn = document.getElementById('overlayClose');
+  if (btn) {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = document.getElementById('statsOverlay');
+      const body = document.getElementById('overlayBody');
+      if (wrap) wrap.classList.add('hidden');
+      if (body) body.innerHTML = '';
+    });
+  }
+
+  const overlay = document.getElementById('statsOverlay');
+  if (overlay) {
+    ['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
+      .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()));
+  }
+}
+
+function enableWindowSampler() {
+  const map = state.map;
+  if (!map || state._areaSampler?.enabled) return;
+
+  const handlers = {};
+
+  // ensure hoverRect exists
+  if (!state.hoverRect) {
+    state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
+  } else {
+    if (!map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  }
+
+  handlers.mousemove = (e) => {
+    state.lastMouseLatLng = e.latlng;
+    const poly = squarePolygonAt(e.latlng, state.boxSizeKm);
+    state.hoverRect.setLatLngs(poly.getLatLngs());
+  };
+
+  handlers.mouseout = () => {
+    if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+  };
+
+  handlers.mouseover = () => {
+    if (state.hoverRect && !map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  };
+
+  handlers.click = async (evt) => {
+    const lyrA = state.availableLayers[state.activeLayerIdxA];
+    const lyrB = state.availableLayers[state.activeLayerIdxB];
+    if (!lyrA || !lyrB) return;
+
+    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
+    _updateOutline(poly);
+
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: null
+    });
+
+    let scatterStats;
+    try {
+      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON());
+    } catch (e) {
+      showOverlayError(`area sampler error: ${e.message || String(e)}`);
+      return;
+    }
+
+    renderScatterOverlay({
+      rasterX: lyrA.name,
+      rasterY: lyrB.name,
+      centerLng: evt.latlng.lng,
+      centerLat: evt.latlng.lat,
+      boxKm: state.boxSizeKm,
+      scatterObj: scatterStats
+    });
+  };
+
+  map.on('mousemove', handlers.mousemove);
+  map.on('mouseout', handlers.mouseout);
+  map.on('mouseover', handlers.mouseover);
+  map.on('click', handlers.click);
+
+  state._areaSampler = { handlers, enabled: true };
+  if (map._container) {
+    map._container.classList.add('mode-window');
+    map._container.classList.remove('mode-shapefile');
+  }
+}
+
+function disableWindowSampler() {
+  const map = state.map;
+  if (!map || !state._areaSampler?.enabled) return;
+
+  const { handlers } = state._areaSampler;
+
+  map.off('mousemove', handlers.mousemove);
+  map.off('mouseout', handlers.mouseout);
+  map.off('mouseover', handlers.mouseover);
+  map.off('click', handlers.click);
+
+  if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+
+  state._areaSampler.enabled = false;
+  if (map._container) {
+    map._container.classList.remove('mode-window');
+    map._container.classList.add('mode-shapefile');
+    if (state.outlineLayer) {map.removeLayer(state.outlineLayer)};
+  }
+}
+
+function setSamplingMode(mode) {
+  // normalize
+  state.sampleMode = mode.toLowerCase()
+  if (state.sampleMode === 'window') {
+    enableWindowSampler();
+  } else {
+    disableWindowSampler();
+  }
+  clearScatterOverlay()
+}
+
+
 /**
  * App entrypoint.
  */
 ;(async function main() {
-  applyBivariateColormapToAB(state.bivariatePalette['orangeBlue'])
   initMap()
   wireSquareSamplerControls()
   wireLayerFlipper()
-  wireAreaSamplerClick()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()
   wireAutoStyleFromHistogram()
   wirePercentiles()
   wirePixelProbe()
-  wireBivariatePalettePicker()
+  wireBivariatePalettePicker('bivariatePaletteSelect')
+  wireShapefileAOIControl()
+  wireControlGroup()
+  wireOverlayControls()
+  setSamplingMode('window')
 
   const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url

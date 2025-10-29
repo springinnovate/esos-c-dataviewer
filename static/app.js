@@ -1451,7 +1451,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   for (const p of percentiles) {
     const xv = getQuantileX(p), x = scaleX(xv);
     const gx = mkLine(x, pad, x, plotY1, percentileColor);
-    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.9');
+    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.5');
     svg.appendChild(gx);
     const lx = mkText(pctLabel(p, xv), x, pad - 6, 'middle');
     lx.setAttribute('fill', percentileColor); svg.appendChild(lx);
@@ -1460,7 +1460,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   for (const p of percentiles) {
     const yv = getQuantileY(p), y = scaleY(yv);
     const gy = mkLine(plotX0, y, pad + innerW + mSize, y, percentileColor);
-    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.9');
+    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.5');
     svg.appendChild(gy);
     const ly = mkText(pctLabel(p, yv), pad + innerW + mSize + 4, y + 3, 'start');
     ly.setAttribute('fill', percentileColor); svg.appendChild(ly);

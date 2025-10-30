@@ -1079,7 +1079,12 @@ function renderScatterOverlay(opts) {
 
     <div class='overlay-content'>
       <div>
-        <div class='muted' style='margin-bottom:6px;'>Summary</div>
+        <div id='scatterPlot' class='plot-holder'>
+          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+        </div>
+      </div>
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
           <div class='stats-grid'>
             <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
             <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
@@ -1087,12 +1092,6 @@ function renderScatterOverlay(opts) {
             <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
             <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
             <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-        </div>
-      </div>
-
-      <div>
-        <div id='scatterPlot' class='plot-holder'>
-          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
         </div>
       </div>
     </div>

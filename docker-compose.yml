@@ -29,9 +29,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_letsencrypt:/letsencrypt
     labels:
-      # redirect all http->https
       - traefik.enable=true
-      - traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)
+      # redirect all http->https in deploy, but not for localhost / 127.0.0.1
+      - traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`) && !Host(`localhost`) && !Host(`127.0.0.1`)
       - traefik.http.routers.http-catchall.entrypoints=web
       - traefik.http.routers.http-catchall.middlewares=redirect-to-https
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
@@ -54,10 +54,17 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
+
+      # deploy (HTTPS)
       - traefik.http.routers.geoserver.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/geoserver`)
       - traefik.http.routers.geoserver.entrypoints=websecure
       - traefik.http.routers.geoserver.tls=true
       - traefik.http.routers.geoserver.tls.certresolver=le
+
+      # local (HTTP)
+      - traefik.http.routers.geoserver-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/geoserver`)
+      - traefik.http.routers.geoserver-local.entrypoints=web
+
       - traefik.http.services.geoserver.loadbalancer.server.port=8080
 
   viewer:
@@ -74,13 +81,22 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
+
+      # deploy (HTTPS)
       - traefik.http.routers.viewer.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer.entrypoints=websecure
       - traefik.http.routers.viewer.tls=true
       - traefik.http.routers.viewer.tls.certresolver=le
+
+      # local (HTTP)
+      - traefik.http.routers.viewer-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer`)
+      - traefik.http.routers.viewer-local.entrypoints=web
+
+      # shared service + middleware
       - traefik.http.services.viewer.loadbalancer.server.port=5173
       - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
       - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker
+      - traefik.http.routers.viewer-local.middlewares=viewer-stripprefix@docker
 
   geoserver-init:
     build:
@@ -116,10 +132,19 @@ services:
     networks: [backend]
     labels:
       - traefik.enable=true
+
+      # deploy (HTTPS)
       - traefik.http.routers.rstats.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/rstats`)
       - traefik.http.routers.rstats.entrypoints=websecure
       - traefik.http.routers.rstats.tls=true
       - traefik.http.routers.rstats.tls.certresolver=le
+
+      # local (HTTP)
+      - traefik.http.routers.rstats-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/rstats`)
+      - traefik.http.routers.rstats-local.entrypoints=web
+
+      # shared service + middleware
       - traefik.http.services.rstats.loadbalancer.server.port=8000
       - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
       - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker
+      - traefik.http.routers.rstats-local.middlewares=rstats-stripprefix@docker

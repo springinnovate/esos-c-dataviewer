@@ -81,6 +81,7 @@ const state = {
   lastPointMarker: null,
   probeSuppressed: false,
   pctBounds: null,
+  lastFeatureCollection: null,
 }
 
 
@@ -1759,19 +1760,16 @@ function wireControlGroup() {
 
   let mode = group.getAttribute('data-mode') || 'window';
 
-  const setMode = m => {
-    mode = m;
+  const setMode = mode => {
     group.setAttribute('data-mode', mode);
     state.sampleMode = mode;
 
-    // toggle button state
     buttons.forEach(b => {
       const sel = b.getAttribute('data-mode') === mode;
       b.classList.toggle('is-selected', sel);
       b.setAttribute('aria-pressed', String(sel));
     });
 
-    // section visuals and enable/disable
     const on = mode === 'window' ? 'window' : 'shapefile';
     const off = mode === 'window' ? 'shapefile' : 'window';
 
@@ -1780,11 +1778,17 @@ function wireControlGroup() {
     sections[off].classList.add('is-inactive');
     sections[off].classList.remove('is-active');
 
+    if (mode == 'window' && state.uploadedLayer) {
+      state.map.removeLayer(state.uploadedLayer);
+      state.uploadedLayer = null;
+    } else if (mode == 'shapefile' && state.lastFeatureCollection) {
+      setAOIAndRenderOverlay(state.lastFeatureCollection);
+    }
+
     inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
     inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
 
-    // optional: notify app state
-    state.samplingMode = mode; // 'window' | 'shapefile'
+    state.samplingMode = mode;
     setSamplingMode(mode)
   };
 
@@ -2457,52 +2461,95 @@ function collapseToMultiPolygon(fc) {
   };
 }
 
+/**
+ * Attach change-listener to the shapefile input, parse the uploaded .zip into a
+ * GeoJSON FeatureCollection, and delegate rendering to `setAOIAndRenderOverlay`.
+ */
 function wireShapefileAOIControl() {
-  document.getElementById('shpInput').addEventListener('change', async e => {
-    const file = e.target.files?.[0];
+  const inputEl = document.getElementById('shpInput');
+  if (!inputEl) return;
+
+  inputEl.addEventListener('change', async evt => {
+    const file = evt.target.files?.[0];
     if (!file) return;
 
     if (!file.name.toLowerCase().endsWith('.zip')) {
       alert('Select a .zip containing the shapefile.');
-      e.target.value = '';
+      evt.target.value = '';
       return;
     }
 
     try {
-      const buf = await file.arrayBuffer();
-      const poly = await shp(buf); // shpjs parses the zip -> polyJSON
-      const fc = toFeatureCollection(poly);
-      if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
-        alert('No features found.');
-        return;
-      }
-      const center = getGeoJSONCenter(fc)
-      addGeoJSONPolyToMap(fc);
-      const lyrA = state.availableLayers[state.activeLayerIdxA];
-      const lyrB = state.availableLayers[state.activeLayerIdxB];
-      let scatterStats;
-      try {
-        scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, collapseToMultiPolygon(poly));
-      } catch (e) {
-        showOverlayError(`area sampler error: ${e.message || String(e)}`);
-        return;
-      }
-      renderScatterOverlay({
-        rasterX: lyrA.name,
-        rasterY: lyrB.name,
-        centerLng: center.lng,
-        centerLat: center.lat,
-        boxKm: null,
-        scatterObj: scatterStats
-      });
+      const zipArrayBuffer = await file.arrayBuffer();
+      const polyJSON = await shp(zipArrayBuffer); // shpjs parses the zip -> GeoJSON-like
+      const featureCollection = toFeatureCollection(polyJSON);
+      state.lastFeatureCollection = featureCollection;
+
+      await setAOIAndRenderOverlay(featureCollection);
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
     } finally {
-      e.target.value = '';
+      evt.target.value = '';
     }
   });
 }
+
+/**
+ * Given a GeoJSON FeatureCollection, set it as the current AOI on the map and
+ * render the scatter overlay for the currently active X/Y rasters.
+ *
+ * Steps:
+ * 1) Validate the FeatureCollection.
+ * 2) Compute AOI center and add the polygon(s) to the map.
+ * 3) Request scatter stats for the active raster pair over the AOI geometry.
+ * 4) Render the scatter overlay centered on the AOI.
+ *
+ * Throws if the input is invalid or if sampling fails.
+ *
+ * @param {GeoJSON.FeatureCollection} featureCollection - A valid GeoJSON FeatureCollection with at least one feature.
+ * @returns {Promise<void>}
+ */
+async function setAOIAndRenderOverlay(featureCollection) {
+  if (
+    !featureCollection ||
+    !Array.isArray(featureCollection.features) ||
+    featureCollection.features.length === 0
+  ) {
+    alert('No features found.');
+    throw new Error('Empty or invalid FeatureCollection');
+  }
+
+  const centerLngLat = getGeoJSONCenter(featureCollection);
+  addGeoJSONPolyToMap(featureCollection);
+
+  const layerX = state.availableLayers[state.activeLayerIdxA];
+  const layerY = state.availableLayers[state.activeLayerIdxB];
+
+  let scatterStats;
+  try {
+    // If your existing helper expects a MultiPolygon geometry, adapt here:
+    // Prefer reusing your own collapse helper if available.
+    const aoiGeometry = typeof collapseToMultiPolygon === 'function'
+      ? collapseToMultiPolygon(featureCollection)
+      : featureCollection;
+
+    scatterStats = await fetchScatterStats(layerX.name, layerY.name, aoiGeometry);
+  } catch (err) {
+    showOverlayError(`area sampler error: ${err.message || String(err)}`);
+    throw err;
+  }
+
+  renderScatterOverlay({
+    rasterX: layerX.name,
+    rasterY: layerY.name,
+    centerLng: centerLngLat.lng,
+    centerLat: centerLngLat.lat,
+    boxKm: null,
+    scatterObj: scatterStats
+  });
+}
+
 
 function wireOverlayControls() {
   const btn = document.getElementById('overlayClose');

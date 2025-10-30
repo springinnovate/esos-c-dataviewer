@@ -2518,8 +2518,6 @@ async function setAOIAndRenderOverlay(featureCollection) {
 
   let scatterStats;
   try {
-    // If your existing helper expects a MultiPolygon geometry, adapt here:
-    // Prefer reusing your own collapse helper if available.
     const aoiGeometry = typeof collapseToMultiPolygon === 'function'
       ? collapseToMultiPolygon(featureCollection)
       : featureCollection;

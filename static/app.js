@@ -2667,6 +2667,63 @@ function setSamplingMode(mode) {
   clearScatterOverlay()
 }
 
+/**
+ * Initializes a collapsible top bar in the application header.
+ *
+ * This function binds click and resize event listeners to allow users
+ * to toggle the visibility of the top bar section (`#topbarContent`)
+ * using a button (`#headerToggle`). When expanded, the content smoothly
+ * transitions to its full height; when collapsed, it animates closed.
+ *
+ * Behavior:
+ * - Clicking the toggle button alternates between expanded and collapsed states.
+ * - The header element gets the class `is-collapsed` when hidden.
+ * - The button text and `aria-expanded` attribute are updated accordingly.
+ * - On window resize, the expanded height readjusts to the content’s actual height.
+ *
+ * Requirements:
+ * - The DOM must contain:
+ *   - a `<header>` element,
+ *   - a container with `id='topbarContent'`,
+ *   - a toggle button with `id='headerToggle'`.
+ *
+ * Returns:
+ *   void
+ */
+function wireCollapsibleTopBar() {
+  const header = document.querySelector('header');
+  const content = document.getElementById('topbarContent');
+  const toggle = document.getElementById('headerToggle');
+
+  if (!header || !content || !toggle) return;
+
+  const setExpanded = (expanded) => {
+    if (expanded) {
+      content.style.maxHeight = content.scrollHeight + 'px';
+      header.classList.remove('is-collapsed');
+      toggle.setAttribute('aria-expanded', 'true');
+      toggle.textContent = '▲ Hide Control Panel';
+    } else {
+      content.style.maxHeight = '0px';
+      header.classList.add('is-collapsed');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = '▼ Show Control Panel';
+    }
+  };
+
+  const onResize = () => {
+    if (toggle.getAttribute('aria-expanded') === 'true') {
+      content.style.maxHeight = content.scrollHeight + 'px';
+    }
+  };
+
+  setExpanded(true);
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    setExpanded(!expanded);
+  });
+  window.addEventListener('resize', onResize);
+}
 
 /**
  * App entrypoint.
@@ -2685,6 +2742,7 @@ function setSamplingMode(mode) {
   wireShapefileAOIControl()
   wireControlGroup()
   wireOverlayControls()
+  wireCollapsibleTopBar()
   setSamplingMode('window')
 
   const cfg = await loadConfig()

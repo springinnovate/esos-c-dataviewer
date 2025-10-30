@@ -521,3 +521,45 @@ input.num::-webkit-outer-spin-button {
   padding-top: 4px;
   min-height: 1.25em;
 }
+
+
+/* collapsible top bar */
+header {
+  position: relative;
+}
+
+.topbar-content {
+  overflow: hidden;
+  transition: max-height 220ms ease, opacity 200ms ease, transform 200ms ease;
+  will-change: max-height, opacity, transform;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.collapse-footer {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.collapse-toggle {
+  background: var(--brand);
+  color: #081015;
+  font-weight: 600;
+  border: 1px solid var(--brand-hover);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.collapse-toggle:hover {
+  background: var(--brand-hover);
+}
+
+header.is-collapsed .topbar-content {
+  max-height: 0 !important;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}

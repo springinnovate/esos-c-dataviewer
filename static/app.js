@@ -1756,8 +1756,6 @@ function wireControlGroup() {
     shapefile: [group.querySelector('#shpInput')]
   };
   const shpInput = inputs.shapefile[0];
-  const shpFileName = group.querySelector('.shp-filename');
-
   let mode = group.getAttribute('data-mode') || 'window';
 
   const setMode = mode => {
@@ -1792,13 +1790,9 @@ function wireControlGroup() {
     setSamplingMode(mode)
   };
 
-  // wire segmented control
   buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-
-  // when a shapefile is chosen, switch to shapefile mode but allow switching back
   shpInput.addEventListener('change', () => {
     const f = shpInput.files && shpInput.files[0];
-    shpFileName.textContent = f ? f.name : '';
     if (f) setMode('shapefile');
   });
 
@@ -2481,10 +2475,9 @@ function wireShapefileAOIControl() {
 
     try {
       const zipArrayBuffer = await file.arrayBuffer();
-      const polyJSON = await shp(zipArrayBuffer); // shpjs parses the zip -> GeoJSON-like
+      const polyJSON = await shp(zipArrayBuffer);
       const featureCollection = toFeatureCollection(polyJSON);
       state.lastFeatureCollection = featureCollection;
-
       await setAOIAndRenderOverlay(featureCollection);
     } catch (err) {
       console.error(err);

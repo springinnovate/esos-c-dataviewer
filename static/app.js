@@ -2540,7 +2540,14 @@ async function setAOIAndRenderOverlay(featureCollection) {
   });
 }
 
-
+/**
+ * Wires event listeners to the overlay controls, handling close actions
+ * and preventing map interaction when overlay elements are active.
+ *
+ * - Closes the overlay when the close button (#overlayClose) is clicked.
+ * - Clears the overlay body content.
+ * - Stops propagation of pointer and mouse events from the overlay to the map.
+ */
 function wireOverlayControls() {
   const btn = document.getElementById('overlayClose');
   if (btn) {
@@ -2561,13 +2568,24 @@ function wireOverlayControls() {
   }
 }
 
+/**
+ * Enables the map window sampling mode, allowing users to sample raster data
+ * from a square window centered on the cursor.
+ *
+ * - Displays a moving sampling square (hoverRect) as the cursor moves over the map.
+ * - On click, requests scatterplot statistics from the backend for the current window.
+ * - Renders the resulting scatterplot overlay for the selected layers.
+ * - Attaches event listeners for mousemove, mouseover, mouseout, and click events.
+ *
+ * Requirements:
+ * - `state.map` must be initialized.
+ * - `state.availableLayers` must contain valid layer references.
+ */
 function enableWindowSampler() {
   const map = state.map;
   if (!map || state._areaSampler?.enabled) return;
 
   const handlers = {};
-
-  // ensure hoverRect exists
   if (!state.hoverRect) {
     state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
   } else {
@@ -2635,6 +2653,14 @@ function enableWindowSampler() {
   }
 }
 
+/**
+ * Disables the map window sampling mode and removes related UI elements and handlers.
+ *
+ * - Detaches all event listeners registered by `enableWindowSampler()`.
+ * - Removes the hover rectangle from the map.
+ * - Restores map CSS class state to non-window sampling mode.
+ * - Removes any active outline layers from the map.
+ */
 function disableWindowSampler() {
   const map = state.map;
   if (!map || !state._areaSampler?.enabled) return;
@@ -2656,8 +2682,16 @@ function disableWindowSampler() {
   }
 }
 
+/**
+ * Sets the active sampling mode for the map interaction.
+ *
+ * - Accepts 'window' or 'shapefile' as mode arguments (case-insensitive).
+ * - Enables or disables the window sampling handlers accordingly.
+ * - Clears any existing scatter overlay from the view.
+ *
+ * @param {string} mode - Sampling mode name ('window' or 'shapefile').
+ */
 function setSamplingMode(mode) {
-  // normalize
   state.sampleMode = mode.toLowerCase()
   if (state.sampleMode === 'window') {
     enableWindowSampler();

@@ -81,6 +81,7 @@ const state = {
   lastPointMarker: null,
   probeSuppressed: false,
   pctBounds: null,
+  lastFeatureCollection: null,
 }
 
 
@@ -1078,7 +1079,12 @@ function renderScatterOverlay(opts) {
 
     <div class='overlay-content'>
       <div>
-        <div class='muted' style='margin-bottom:6px;'>Summary</div>
+        <div id='scatterPlot' class='plot-holder'>
+          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+        </div>
+      </div>
+      <div>
+        <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
           <div class='stats-grid'>
             <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
             <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
@@ -1086,12 +1092,6 @@ function renderScatterOverlay(opts) {
             <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
             <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
             <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-        </div>
-      </div>
-
-      <div>
-        <div id='scatterPlot' class='plot-holder'>
-          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
         </div>
       </div>
     </div>
@@ -1755,23 +1755,18 @@ function wireControlGroup() {
     shapefile: [group.querySelector('#shpInput')]
   };
   const shpInput = inputs.shapefile[0];
-  const shpFileName = group.querySelector('.shp-filename');
-
   let mode = group.getAttribute('data-mode') || 'window';
 
-  const setMode = m => {
-    mode = m;
+  const setMode = mode => {
     group.setAttribute('data-mode', mode);
     state.sampleMode = mode;
 
-    // toggle button state
     buttons.forEach(b => {
       const sel = b.getAttribute('data-mode') === mode;
       b.classList.toggle('is-selected', sel);
       b.setAttribute('aria-pressed', String(sel));
     });
 
-    // section visuals and enable/disable
     const on = mode === 'window' ? 'window' : 'shapefile';
     const off = mode === 'window' ? 'shapefile' : 'window';
 
@@ -1780,21 +1775,23 @@ function wireControlGroup() {
     sections[off].classList.add('is-inactive');
     sections[off].classList.remove('is-active');
 
+    if (mode == 'window' && state.uploadedLayer) {
+      state.map.removeLayer(state.uploadedLayer);
+      state.uploadedLayer = null;
+    } else if (mode == 'shapefile' && state.lastFeatureCollection) {
+      setAOIAndRenderOverlay(state.lastFeatureCollection);
+    }
+
     inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
     inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
 
-    // optional: notify app state
-    state.samplingMode = mode; // 'window' | 'shapefile'
+    state.samplingMode = mode;
     setSamplingMode(mode)
   };
 
-  // wire segmented control
   buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-
-  // when a shapefile is chosen, switch to shapefile mode but allow switching back
   shpInput.addEventListener('change', () => {
     const f = shpInput.files && shpInput.files[0];
-    shpFileName.textContent = f ? f.name : '';
     if (f) setMode('shapefile');
   });
 
@@ -2457,53 +2454,98 @@ function collapseToMultiPolygon(fc) {
   };
 }
 
+/**
+ * Attach change-listener to the shapefile input, parse the uploaded .zip into a
+ * GeoJSON FeatureCollection, and delegate rendering to `setAOIAndRenderOverlay`.
+ */
 function wireShapefileAOIControl() {
-  document.getElementById('shpInput').addEventListener('change', async e => {
-    const file = e.target.files?.[0];
+  const inputEl = document.getElementById('shpInput');
+  if (!inputEl) return;
+
+  inputEl.addEventListener('change', async evt => {
+    const file = evt.target.files?.[0];
     if (!file) return;
 
     if (!file.name.toLowerCase().endsWith('.zip')) {
       alert('Select a .zip containing the shapefile.');
-      e.target.value = '';
+      evt.target.value = '';
       return;
     }
 
     try {
-      const buf = await file.arrayBuffer();
-      const poly = await shp(buf); // shpjs parses the zip -> polyJSON
-      const fc = toFeatureCollection(poly);
-      if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
-        alert('No features found.');
-        return;
-      }
-      const center = getGeoJSONCenter(fc)
-      addGeoJSONPolyToMap(fc);
-      const lyrA = state.availableLayers[state.activeLayerIdxA];
-      const lyrB = state.availableLayers[state.activeLayerIdxB];
-      let scatterStats;
-      try {
-        scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, collapseToMultiPolygon(poly));
-      } catch (e) {
-        showOverlayError(`area sampler error: ${e.message || String(e)}`);
-        return;
-      }
-      renderScatterOverlay({
-        rasterX: lyrA.name,
-        rasterY: lyrB.name,
-        centerLng: center.lng,
-        centerLat: center.lat,
-        boxKm: null,
-        scatterObj: scatterStats
-      });
+      const zipArrayBuffer = await file.arrayBuffer();
+      const polyJSON = await shp(zipArrayBuffer);
+      const featureCollection = toFeatureCollection(polyJSON);
+      state.lastFeatureCollection = featureCollection;
+      await setAOIAndRenderOverlay(featureCollection);
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
-    } finally {
-      e.target.value = '';
     }
   });
 }
 
+/**
+ * Given a GeoJSON FeatureCollection, set it as the current AOI on the map and
+ * render the scatter overlay for the currently active X/Y rasters.
+ *
+ * Steps:
+ * 1) Validate the FeatureCollection.
+ * 2) Compute AOI center and add the polygon(s) to the map.
+ * 3) Request scatter stats for the active raster pair over the AOI geometry.
+ * 4) Render the scatter overlay centered on the AOI.
+ *
+ * Throws if the input is invalid or if sampling fails.
+ *
+ * @param {GeoJSON.FeatureCollection} featureCollection - A valid GeoJSON FeatureCollection with at least one feature.
+ * @returns {Promise<void>}
+ */
+async function setAOIAndRenderOverlay(featureCollection) {
+  if (
+    !featureCollection ||
+    !Array.isArray(featureCollection.features) ||
+    featureCollection.features.length === 0
+  ) {
+    alert('No features found.');
+    throw new Error('Empty or invalid FeatureCollection');
+  }
+
+  const centerLngLat = getGeoJSONCenter(featureCollection);
+  addGeoJSONPolyToMap(featureCollection);
+
+  const layerX = state.availableLayers[state.activeLayerIdxA];
+  const layerY = state.availableLayers[state.activeLayerIdxB];
+
+  let scatterStats;
+  try {
+    const aoiGeometry = typeof collapseToMultiPolygon === 'function'
+      ? collapseToMultiPolygon(featureCollection)
+      : featureCollection;
+
+    scatterStats = await fetchScatterStats(layerX.name, layerY.name, aoiGeometry);
+  } catch (err) {
+    showOverlayError(`area sampler error: ${err.message || String(err)}`);
+    throw err;
+  }
+
+  renderScatterOverlay({
+    rasterX: layerX.name,
+    rasterY: layerY.name,
+    centerLng: centerLngLat.lng,
+    centerLat: centerLngLat.lat,
+    boxKm: null,
+    scatterObj: scatterStats
+  });
+}
+
+/**
+ * Wires event listeners to the overlay controls, handling close actions
+ * and preventing map interaction when overlay elements are active.
+ *
+ * - Closes the overlay when the close button (#overlayClose) is clicked.
+ * - Clears the overlay body content.
+ * - Stops propagation of pointer and mouse events from the overlay to the map.
+ */
 function wireOverlayControls() {
   const btn = document.getElementById('overlayClose');
   if (btn) {
@@ -2524,13 +2566,24 @@ function wireOverlayControls() {
   }
 }
 
+/**
+ * Enables the map window sampling mode, allowing users to sample raster data
+ * from a square window centered on the cursor.
+ *
+ * - Displays a moving sampling square (hoverRect) as the cursor moves over the map.
+ * - On click, requests scatterplot statistics from the backend for the current window.
+ * - Renders the resulting scatterplot overlay for the selected layers.
+ * - Attaches event listeners for mousemove, mouseover, mouseout, and click events.
+ *
+ * Requirements:
+ * - `state.map` must be initialized.
+ * - `state.availableLayers` must contain valid layer references.
+ */
 function enableWindowSampler() {
   const map = state.map;
   if (!map || state._areaSampler?.enabled) return;
 
   const handlers = {};
-
-  // ensure hoverRect exists
   if (!state.hoverRect) {
     state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
   } else {
@@ -2598,6 +2651,14 @@ function enableWindowSampler() {
   }
 }
 
+/**
+ * Disables the map window sampling mode and removes related UI elements and handlers.
+ *
+ * - Detaches all event listeners registered by `enableWindowSampler()`.
+ * - Removes the hover rectangle from the map.
+ * - Restores map CSS class state to non-window sampling mode.
+ * - Removes any active outline layers from the map.
+ */
 function disableWindowSampler() {
   const map = state.map;
   if (!map || !state._areaSampler?.enabled) return;
@@ -2619,8 +2680,16 @@ function disableWindowSampler() {
   }
 }
 
+/**
+ * Sets the active sampling mode for the map interaction.
+ *
+ * - Accepts 'window' or 'shapefile' as mode arguments (case-insensitive).
+ * - Enables or disables the window sampling handlers accordingly.
+ * - Clears any existing scatter overlay from the view.
+ *
+ * @param {string} mode - Sampling mode name ('window' or 'shapefile').
+ */
 function setSamplingMode(mode) {
-  // normalize
   state.sampleMode = mode.toLowerCase()
   if (state.sampleMode === 'window') {
     enableWindowSampler();
@@ -2630,6 +2699,63 @@ function setSamplingMode(mode) {
   clearScatterOverlay()
 }
 
+/**
+ * Initializes a collapsible top bar in the application header.
+ *
+ * This function binds click and resize event listeners to allow users
+ * to toggle the visibility of the top bar section (`#topbarContent`)
+ * using a button (`#headerToggle`). When expanded, the content smoothly
+ * transitions to its full height; when collapsed, it animates closed.
+ *
+ * Behavior:
+ * - Clicking the toggle button alternates between expanded and collapsed states.
+ * - The header element gets the class `is-collapsed` when hidden.
+ * - The button text and `aria-expanded` attribute are updated accordingly.
+ * - On window resize, the expanded height readjusts to the content’s actual height.
+ *
+ * Requirements:
+ * - The DOM must contain:
+ *   - a `<header>` element,
+ *   - a container with `id='topbarContent'`,
+ *   - a toggle button with `id='headerToggle'`.
+ *
+ * Returns:
+ *   void
+ */
+function wireCollapsibleTopBar() {
+  const header = document.querySelector('header');
+  const content = document.getElementById('topbarContent');
+  const toggle = document.getElementById('headerToggle');
+
+  if (!header || !content || !toggle) return;
+
+  const setExpanded = (expanded) => {
+    if (expanded) {
+      content.style.maxHeight = content.scrollHeight + 'px';
+      header.classList.remove('is-collapsed');
+      toggle.setAttribute('aria-expanded', 'true');
+      toggle.textContent = '▲ Hide Control Panel';
+    } else {
+      content.style.maxHeight = '0px';
+      header.classList.add('is-collapsed');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = '▼ Show Control Panel';
+    }
+  };
+
+  const onResize = () => {
+    if (toggle.getAttribute('aria-expanded') === 'true') {
+      content.style.maxHeight = content.scrollHeight + 'px';
+    }
+  };
+
+  setExpanded(true);
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    setExpanded(!expanded);
+  });
+  window.addEventListener('resize', onResize);
+}
 
 /**
  * App entrypoint.
@@ -2648,6 +2774,7 @@ function setSamplingMode(mode) {
   wireShapefileAOIControl()
   wireControlGroup()
   wireOverlayControls()
+  wireCollapsibleTopBar()
   setSamplingMode('window')
 
   const cfg = await loadConfig()

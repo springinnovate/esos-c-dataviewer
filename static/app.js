@@ -2489,8 +2489,6 @@ function wireShapefileAOIControl() {
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
-    } finally {
-      evt.target.value = '';
     }
   });
 }

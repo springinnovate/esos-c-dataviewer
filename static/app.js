@@ -1165,6 +1165,22 @@ function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 }
 
+/**
+ * Renders a highlighted scatterplot point and label on the SVG overlay.
+ *
+ * Checks whether the given point falls within the current scatterplot bounds,
+ * computes its scaled screen coordinates, determines a blended marker color
+ * based on the active layer styles and blend mode, and draws a labeled circle
+ * on the scatter SVG. The label includes a dark semi-transparent background
+ * rectangle and displays the point's numeric coordinates. Hovering over the
+ * marker or label shows a tooltip with the coordinate text.
+ *
+ * @param {{x: number, y: number, label?: string}} point - The point to render, containing numeric x/y values and optional label text.
+ * @param {string} layerIdX - The layer ID used for the x-axis (used to determine color mapping).
+ * @param {string} layerIdY - The layer ID used for the y-axis (used to determine color mapping).
+ *
+ * @returns {void}
+ */
 function renderScatterPoint(point, layerIdX, layerIdY) {
   if (!state.scatterBounds) {
     return;

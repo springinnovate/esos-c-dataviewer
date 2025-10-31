@@ -26,7 +26,7 @@ const state = {
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
-  percentiles: null,
+  percentiles: "5 50 90",
   scatterBounds: null,
   lastPixelPoint: null,
   bivariatePalette: {
@@ -86,6 +86,7 @@ const state = {
   scatterSvg: null,
   pointCircle: null,
   pointBackground: null,
+  pointGroup: null,
 }
 
 
@@ -1017,10 +1018,10 @@ function enableAltWheelSlider() {
   }
 
   const onKeyDown = (e) => {
-    if (e.altKey && state?.map) state.map.scrollWheelZoom.disable()
+    if (e.altKey && state.map) state.map.scrollWheelZoom.disable()
   }
   const onKeyUp = () => {
-    if (state?.map) state.map.scrollWheelZoom.enable()
+    if (state.map) state.map.scrollWheelZoom.enable()
   }
 
   const onWheel = (e) => {
@@ -1074,7 +1075,7 @@ function renderScatterOverlay(opts) {
 
   // check to see if we've rendered this before
   const newRenderKey = JSON.stringify({
-    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj
+    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj, percentiles: state.percentiles
   });
 
   if (state.lastRenderKey === newRenderKey) {
@@ -1082,38 +1083,40 @@ function renderScatterOverlay(opts) {
   }
   state.lastRenderKey = newRenderKey;
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
-  body.innerHTML = `
-    <div class='overlay-header'>
-      <div>
-        <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
+  if (!body.innerHTML) {
+    body.innerHTML = `
+      <div class='overlay-header'>
+        <div>
+          <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
+          <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
+        </div>
       </div>
-    </div>
 
-    <div class='overlay-content'>
-      <div>
-        <div id='scatterPlot' class='plot-holder'>
-          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+      <div class='overlay-content'>
+        <div>
+          <div id='scatterPlot' class='plot-holder'>
+            ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+          </div>
+        </div>
+        <div class='layer-group'>
+          <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+          <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+          <input id='percentiles' type='text' value="${(state.percentiles)}"/>
+        </div>
+        <div>
+          <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
+            <div class='stats-grid'>
+              <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
+              <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
+              <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
+              <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
+              <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
+              <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
+          </div>
         </div>
       </div>
-      <div class='layer-group'>
-        <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-        <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
-        <input id='percentiles' type='text' value='5 50 95' />
-      </div>
-      <div>
-        <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
-          <div class='stats-grid'>
-            <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
-            <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
-            <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
-            <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-            <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
-            <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-        </div>
-      </div>
-    </div>
-   `
+     `
+  }
   const plotEl = document.getElementById('scatterPlot');
   overlay.classList.remove('hidden');
   if (!visA && !visB) {
@@ -1158,9 +1161,7 @@ function renderScatterOverlay(opts) {
     plotEl.appendChild(svg);
     state.scatterSvg = svg;
   }
-  if (!state.scatterObj) {
-    wirePercentiles()
-  }
+  wirePercentiles()
   state.scatterObj = scatterObj;
 }
 
@@ -1188,9 +1189,6 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
     const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
     const svgNS = 'http://www.w3.org/2000/svg'
-
-    state.scatterSvg
-
     let circ, label, pointGroup
     if (!state.pointGroup) {
       pointGroup = document.createElementNS(svgNS, 'g');
@@ -1280,14 +1278,15 @@ function clearScatterOverlay() {
   if (plot) plot.innerHTML = '';
   delete state.scatterObj;
   delete state.lastScatterOpts;
-  //delete state.scatterSvg;
-/*  delete state.pointCircle;
-  delete pointBackground;*/
+  delete state.pointGroup;
+  delete state.lastRenderKey;
 }
 
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
+  if (el) el.addEventListener('change', () =>
+    renderScatterOverlay(
+      { ...state.lastScatterOpts, scatterObj: state.scatterObj }));
 });
 
 
@@ -1742,13 +1741,13 @@ function wireAutoStyleFromHistogram() {
   };
 
   btn.addEventListener('click', () => {
-    const so = state?.scatterObj;
+    const so = state.scatterObj;
     const xEdges = so?.x_edges;
     const yEdges = so?.y_edges;
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
 
-    const pb = state?.pctBounds;
+    const pb = state.pctBounds;
     if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
       a.min = pb.xmin;
       a.max = pb.xmax;
@@ -1763,9 +1762,9 @@ function wireAutoStyleFromHistogram() {
     setTriple('A', a);
     setTriple('B', b);
 
-    if (typeof renderScatterOverlay === 'function') {
-      renderScatterOverlay(state?.lastScatterOpts);
-    }
+    const previousOptions = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
+    clearScatterOverlay();
+    renderScatterOverlay(previousOptions)
   });
 }
 
@@ -1776,7 +1775,7 @@ function wirePercentiles() {
   let raf = null
   const rerender = () => {
     // ensure we pass a scatterObj so it renders immediately (1D or 2D as appropriate)
-    if (state?.lastScatterOpts && state?.scatterObj) {
+    if (state.lastScatterOpts && state.scatterObj) {
       const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj }
       renderScatterOverlay(opts)
     }
@@ -2129,7 +2128,7 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
-  const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
+  const layerName = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
   let inFlight = null
@@ -2249,7 +2248,7 @@ function wirePixelProbe() {
         label: `${nameA}: ${valA} • ${nameB}: ${valB}`
       }
       // if scatter is visible, refresh to draw marker
-      if (state?.lastScatterOpts && state?.scatterObj) {
+      if (state.lastScatterOpts && state.scatterObj) {
         //renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
         renderScatterPoint(state.lastPixelPoint, 'A', 'B');
       }
@@ -2658,6 +2657,7 @@ function enableWindowSampler() {
   };
 
   handlers.click = async (evt) => {
+    clearScatterOverlay();
     const lyrA = state.availableLayers[state.activeLayerIdxA];
     const lyrB = state.availableLayers[state.activeLayerIdxB];
     if (!lyrA || !lyrB) return;

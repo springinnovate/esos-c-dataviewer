@@ -563,7 +563,3 @@ header.is-collapsed .topbar-content {
   transform: translateY(-4px);
   pointer-events: none;
 }
-
-.leaflet-container {
-  z-index: 0;
-}

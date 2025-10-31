@@ -1280,8 +1280,9 @@ function clearScatterOverlay() {
   if (plot) plot.innerHTML = '';
   delete state.scatterObj;
   delete state.lastScatterOpts;
-  delete state.scatterSvg;
-  delete state.pointCircle;
+  //delete state.scatterSvg;
+/*  delete state.pointCircle;
+  delete pointBackground;*/
 }
 
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {

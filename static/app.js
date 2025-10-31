@@ -581,20 +581,32 @@ function wireSquareSamplerControls() {
  * Reads state.availableLayers and updates the DOM.
  */
 function populateLayerSelects() {
-  const fill = (selEl) => {
-    selEl.innerHTML = ''
-    state.availableLayers.forEach((lyr, idx) => {
-      const opt = document.createElement('option')
-      opt.value = idx.toString()
-      opt.textContent = lyr.name
-      selEl.appendChild(opt)
-    })
-  }
-  ;['A', 'B'].forEach(layerId => {
-    const sel = document.getElementById(`layerSelect${layerId}`)
-    fill(sel)
-    sel.addEventListener('change', e => onLayerChange(e, layerId))
-  })
+  const fill = (sel) => {
+    sel.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.textContent = 'Click here to choose a layer';
+    placeholder.value = '';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    sel.appendChild(placeholder);
+    state.availableLayers.forEach((lyr, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = lyr.name;
+      sel.appendChild(opt);
+    });
+  };
+
+  ['A', 'B'].forEach(layerId => {
+    const sel = document.getElementById(`layerSelect${layerId}`);
+    fill(sel);
+    const def = sel.dataset.default;
+    const idx = /^\d+$/.test(def) ? parseInt(def, 10)
+      : state.availableLayers.findIndex(l => l.id === def || l.name === def);
+    sel.value = String(idx);
+    sel.addEventListener('change', e => onLayerChange(e, layerId));
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 }
 
 /**
@@ -2851,15 +2863,6 @@ function wireCollapsibleTopBar() {
 
   ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   populateLayerSelects()
-  ;['A', 'B'].forEach((layerId, idx) => {
-    const sel = document.getElementById(`layerSelect${layerId}`)
-    if (state.availableLayers.length > idx) {
-      sel.value = String(idx)
-      sel.dispatchEvent(new Event('change', { bubbles: true }))
-    }
-  })
-
-  // rounding the displayed number down so it fits
   const numInput = document.getElementById('windowSizeNumber');
   numInput.addEventListener('change', () => {
     numInput.value = parseFloat(numInput.value).toFixed(1);

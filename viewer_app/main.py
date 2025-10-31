@@ -25,12 +25,12 @@ Functions:
 """
 
 from pathlib import Path
+from typing import Optional
 import logging
 import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Request
-from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import yaml
@@ -89,17 +89,14 @@ def _collect_layers(config: dict) -> list:
     return layers
 
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    """Render the main viewer page.
-
-    Args:
-        request (Request): Incoming HTTP request.
-
-    Returns:
-        TemplateResponse: Rendered HTML response for the index page.
-    """
-    return templates.TemplateResponse("index.html", {"request": request})
+@app.get("/")
+async def index(
+    request: Request, layerA: Optional[str] = None, layerB: Optional[str] = None
+):
+    initial_layers = {"A": layerA or "", "B": layerB or ""}
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "initial_layers": initial_layers}
+    )
 
 
 @app.get("/api/config")

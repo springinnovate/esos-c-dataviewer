@@ -20,18 +20,16 @@
           <div class='control-group layers'>
             {% for layer_id in ['A', 'B'] %}
             <div class='layer-group'>
-              <label>Layer {{ layer_id }}</label>
-              <select id='layerSelect{{ layer_id }}'></select>
+              <label class='layer-label'>Select a layer to display ({{ layer_id }})</label>
+              <select id='layerSelect{{ layer_id }}' data-default='{{ initial_layers.get(layer_id, '') }}'>
+              </select>
               <label class='vis-label'>
                 <input id='layerVisible{{ layer_id }}' type='checkbox' checked />
                 <span>Show</span>
               </label>
             </div>
             {% endfor %}
-            <button id='flipLayersBtn' class='btn small'>Swap A - B</button>
-            <button id='bothLayersOnBtn' class='btn small'>Both on</button>
           </div>
-
           <div class='control-group style'>
             {% for layer_id in ['A', 'B'] %}
             <details class='style-panel'>

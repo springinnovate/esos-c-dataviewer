@@ -87,7 +87,8 @@ const state = {
   pointCircle: null,
   pointBackground: null,
   pointGroup: null,
-}
+  lastHasData: null,
+ }
 
 
 /**
@@ -1087,7 +1088,10 @@ function renderScatterOverlay(opts) {
 
   // check to see if we've rendered this before
   const newRenderKey = JSON.stringify({
-    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj, percentiles: state.percentiles
+    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj,
+    visA,
+    visB,
+    percentiles: state.percentiles,
   });
 
   if (state.lastRenderKey === newRenderKey) {
@@ -1095,7 +1099,8 @@ function renderScatterOverlay(opts) {
   }
   state.lastRenderKey = newRenderKey;
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
-  if (!body.innerHTML) {
+
+  if (!body.innerHTML || state.lastHasData !== hasData) {
     body.innerHTML = `
       <div class='overlay-header'>
         <div>
@@ -1129,6 +1134,7 @@ function renderScatterOverlay(opts) {
       </div>
      `
   }
+  state.lastHasData = hasData;
   const plotEl = document.getElementById('scatterPlot');
   overlay.classList.remove('hidden');
   if (!visA && !visB) {
@@ -1142,18 +1148,19 @@ function renderScatterOverlay(opts) {
   }
   plotEl.innerHTML = '';
   const has2D =
-    !!scatterObj &&
+    !!scatterObj && visA && visB &&
     Array.isArray(scatterObj.hist2d) &&
     Array.isArray(scatterObj.x_edges) &&
     Array.isArray(scatterObj.y_edges);
 
   const has1DX =
-    Array.isArray(scatterObj.hist1d_x) && Array.isArray(scatterObj.x_edges);
+    visA && Array.isArray(scatterObj.hist1d_x) && Array.isArray(scatterObj.x_edges);
   const has1DY =
-    Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
+    visB && Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
 
+  let svg = null;
   if (has2D) {
-    const svg = buildScatterSVG(
+    svg = buildScatterSVG(
       scatterObj.x_edges,
       scatterObj.y_edges,
       scatterObj.hist2d,
@@ -1170,9 +1177,15 @@ function renderScatterOverlay(opts) {
         axisLabelY: rasterY
       }
     );
-    plotEl.appendChild(svg);
-    state.scatterSvg = svg;
+  } else {
+    if (has1DX) {
+      svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A')
+    } else if (has1DY) {
+      svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B')
+    }
   }
+  plotEl.appendChild(svg);
+  state.scatterSvg = svg;
   wirePercentiles()
   state.scatterObj = scatterObj;
 }
@@ -1409,8 +1422,8 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
   const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
   const blendMode = opts.blend || 'plus-lighter';
-  const layerIdX = opts.layerIdX || 'A'; // which layer colors the top histogram
-  const layerIdY = opts.layerIdY || 'B'; // which layer colors the right histogram
+  const layerIdX = opts.layerIdX || 'A';
+  const layerIdY = opts.layerIdY || 'B';
   const point = opts.point || null
   const axisLabelX = opts.axisLabelX || '';
   const axisLabelY = opts.axisLabelY || '';
@@ -1667,6 +1680,174 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   }
   return svg;
 }
+
+/**
+ * Builds an SVG histogram visualization for a single raster layer.
+ *
+ * This function renders a 1D histogram from the provided bin edges and counts,
+ * using layer-specific colors for each bar. It also draws percentile guide lines
+ * and labels (if available in `state.percentiles`) with interactive hover
+ * tooltips. The resulting `<svg>` element is returned and can be inserted into
+ * the DOM.
+ *
+ * The function also exposes scaling functions and bounds to `state` for reuse:
+ *   - `state.scaleX`: maps data values to pixel X coordinates.
+ *   - `state.hist1dBounds`: the [min, max] value range of the histogram.
+ *   - `state.pctBounds1d`: percentile bounds if percentiles were rendered.
+ *
+ * @param {number[]} edges - Array of histogram bin edges (length = N + 1).
+ * @param {number[]} hist - Array of histogram bin counts (length = N).
+ * @param {string} layerId - Identifier of the raster layer, used for color mapping.
+ * @returns {SVGElement} The constructed histogram `<svg>` element.
+ */
+function buildHistogramSVG(edges, hist, layerId) {
+  const w = 480;
+  const h = 160;
+  const pad = 36;
+  const axisColor = '#666';
+  const percentileColor = '#eeeeee';
+  const percentileDecimals = 2;
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+
+  const xMin = Math.min(...edges);
+  const xMax = Math.max(...edges);
+  const innerW = Math.max(1, w - pad * 2);
+  const innerH = Math.max(1, h - pad * 2);
+
+  const plotX0 = pad;
+  const plotY0 = pad;
+  const plotX1 = pad + innerW;
+  const plotY1 = pad + innerH;
+
+  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
+  const scaleH = c => {
+    const maxC = Math.max(1, ...hist.map(v => Number.isFinite(v) ? v : 0));
+    return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
+  };
+
+  state.scaleX = scaleX;
+  state.hist1dBounds = [xMin, xMax];
+
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
+    return l;
+  };
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text');
+    t.textContent = txt;
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
+    t.setAttribute('text-anchor', anchor);
+    return t;
+  };
+
+  // axes
+  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
+  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
+  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+
+  // bars
+  for (let i = 0; i < hist.length; i++) {
+    const c = Number(hist[i]) || 0;
+    const x0 = scaleX(edges[i]);
+    const x1 = scaleX(edges[i + 1]);
+    const barW = Math.max(1, x1 - x0);
+    const hPix = scaleH(c);
+    const mid = (edges[i] + edges[i + 1]) / 2;
+    const fill = _styleColorForValue(layerId, mid);
+
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(x0));
+    rect.setAttribute('y', String(plotY1 - hPix));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', fill);
+    rect.setAttribute('fill-opacity', '0.85');
+    svg.appendChild(rect);
+  }
+
+  // percentiles (reads from state.percentiles if available)
+  const percentilesRaw = Array.isArray(state.percentiles) ? state.percentiles : [];
+  const parsePercent = p => {
+    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
+    if (typeof p === 'string') {
+      const s = p.trim(); if (!s) return null;
+      const num = parseFloat(s); if (!Number.isFinite(num)) return null;
+      return (s.endsWith('%') || num > 1) ? num / 100 : num;
+    }
+    return null;
+  };
+  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b);
+
+  const total = hist.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  const getQuantile = q => {
+    if (total <= 0) return xMin;
+    const target = q * total;
+    let cum = 0;
+    for (let i = 0; i < hist.length; i++) {
+      const c = Number.isFinite(hist[i]) ? hist[i] : 0;
+      const next = cum + c;
+      if (target <= next) {
+        const e0 = edges[i], e1 = edges[i + 1];
+        const f = c > 0 ? (target - cum) / c : 0;
+        return e0 + f * (e1 - e0);
+      }
+      cum = next;
+    }
+    return xMax;
+  };
+
+  const attachPctHover = (guideEl, lblEl, text) => {
+    [guideEl, lblEl].forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('mouseenter', e => {
+        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+      });
+      el.addEventListener('mousemove', e => {
+        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+      });
+      el.addEventListener('mouseleave', () => {
+        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
+        if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+      });
+    });
+  };
+
+  for (const p of percentiles) {
+    const xv = getQuantile(p);
+    const x = scaleX(xv);
+    const gx = mkLine(x, plotY0, x, plotY1, percentileColor);
+    gx.setAttribute('stroke-dasharray', '4,3');
+    gx.setAttribute('opacity', '0.5');
+    svg.appendChild(gx);
+
+    const label = `${Math.round(p * 100)}% (${xv.toFixed(percentileDecimals)})`;
+    const lx = mkText(label, x, plotY0 - 6, 'middle');
+    lx.setAttribute('fill', percentileColor);
+    svg.appendChild(lx);
+    attachPctHover(gx, lx, `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`);
+  }
+
+  if (percentiles.length) {
+    const minP = Math.min(...percentiles);
+    const maxP = Math.max(...percentiles);
+    const xmin = getQuantile(minP);
+    const xmax = getQuantile(maxP);
+    state.pctBounds1d = { xmin, xmax };
+  }
+
+  return svg;
+}
+
 
 /**
  * Prevent Leaflet map zooming when the Alt key is held during scroll.
@@ -2685,16 +2866,23 @@ function enableWindowSampler() {
 
   handlers.click = async (evt) => {
     clearScatterOverlay();
-    const lyrA = state.availableLayers[state.activeLayerIdxA];
-    const lyrB = state.availableLayers[state.activeLayerIdxB];
-    if (!lyrA || !lyrB) return;
+    let lyrA = state.availableLayers[state.activeLayerIdxA];
+    let lyrB = state.availableLayers[state.activeLayerIdxB];
+
+    const visA = document.getElementById('layerVisibleA');
+    const visB = document.getElementById('layerVisibleB');
+
+    // turn off the layers if any of the layers are shown 'off'
+    if (visA && !visA.checked) lyrA = null;
+    if (visB && !visB.checked) lyrB = null;
 
     const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
     _updateOutline(poly);
 
+    if (!lyrA && !lyrB) return;
     renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
+      rasterX: lyrA?.name,
+      rasterY: lyrB?.name,
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,
@@ -2703,15 +2891,15 @@ function enableWindowSampler() {
 
     let scatterStats;
     try {
-      scatterStats = await fetchScatterStats(lyrA.name, lyrB.name, poly.toGeoJSON());
+      scatterStats = await fetchScatterStats(lyrA?.name ?? null, lyrB?.name ?? null, poly.toGeoJSON());
     } catch (e) {
       showOverlayError(`area sampler error: ${e.message || String(e)}`);
       return;
     }
 
     renderScatterOverlay({
-      rasterX: lyrA.name,
-      rasterY: lyrB.name,
+      rasterX: lyrA?.name,
+      rasterY: lyrB?.name,
       centerLng: evt.latlng.lng,
       centerLat: evt.latlng.lat,
       boxKm: state.boxSizeKm,

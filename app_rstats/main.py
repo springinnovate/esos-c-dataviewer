@@ -85,8 +85,8 @@ class RasterMinMaxOut(BaseModel):
 
 
 class GeometryScatterIn(BaseModel):
-    raster_id_x: str
-    raster_id_y: str
+    raster_id_x: Optional[str]
+    raster_id_y: Optional[str]
     geometry: dict
     from_crs: str
     histogram_bins: int
@@ -120,8 +120,8 @@ class ScatterOut(BaseModel):
         geometry (dict): GeoJSON-like geometry defining the analysis window.
     """
 
-    raster_id_x: str
-    raster_id_y: str
+    raster_id_x: Optional[str]
+    raster_id_y: Optional[str]
     n_pairs: int
     x: Optional[List[float]] = None
     y: Optional[List[float]] = None
@@ -457,244 +457,204 @@ def _safe_window_for_geom(dataset, geometry):
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
         logger.debug("Opening rasters")
-        x_ds, x_nodata_val = _open_raster(scatter_request.raster_id_x)
-        y_ds, y_nodata_val = _open_raster(scatter_request.raster_id_y)
+        x_ds, x_nodata_val = (
+            _open_raster(scatter_request.raster_id_x)
+            if scatter_request.raster_id_x
+            else (None, None)
+        )
+        y_ds, y_nodata_val = (
+            _open_raster(scatter_request.raster_id_y)
+            if scatter_request.raster_id_y
+            else (None, None)
+        )
 
         logger.debug("Shaping geometry")
         geom_in_shape = shape(scatter_request.geometry)
 
-        if scatter_request.from_crs != x_ds.crs.to_string():
-            logger.debug("Reprojecting geometry to X raster CRS")
+        reference_ds = x_ds or y_ds
+        if scatter_request.from_crs != reference_ds.crs.to_string():
+            logger.debug("Reprojecting geometry to reference raster CRS")
             transformer_obj = Transformer.from_crs(
-                scatter_request.from_crs, x_ds.crs, always_xy=True
+                scatter_request.from_crs, reference_ds.crs, always_xy=True
             )
-            geom_x_shape = shp_transform(
+            geom_ref_shape = shp_transform(
                 lambda x, y, z=None: transformer_obj.transform(x, y),
                 geom_in_shape,
             )
         else:
-            geom_x_shape = geom_in_shape
+            geom_ref_shape = geom_in_shape
 
-        logger.debug("Building window on X grid")
-        x_win_obj = _safe_window_for_geom(x_ds, geom_x_shape)
+        def read_masked_array(ds, nodata_val, geom_shape):
+            win = _safe_window_for_geom(ds, geom_shape)
+            data = ds.read(1, window=win, boundless=True, masked=False).astype(
+                "float64", copy=False
+            )
+            affine = ds.window_transform(win)
+            mask = geometry_mask(
+                [mapping(geom_shape)],
+                transform=affine,
+                invert=True,
+                out_shape=data.shape,
+                all_touched=bool(scatter_request.all_touched),
+            )
+            if nodata_val is not None:
+                data = np.where(np.isclose(data, nodata_val), np.nan, data)
+            return np.where(mask, data, np.nan), affine, mask
 
-        logger.debug("Reading x raster data")
-        x_data_nparray = x_ds.read(
-            1, window=x_win_obj, boundless=True, masked=False
-        )
-        if x_data_nparray.size == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Empty read window (geometry outside raster_x).",
+        x_arr, x_affine, mask = (None, None, None)
+        if x_ds:
+            x_arr, x_affine, mask = read_masked_array(
+                x_ds, x_nodata_val, geom_ref_shape
             )
 
-        logger.debug("Computing transform for X window")
-        x_win_affine = x_ds.window_transform(x_win_obj)
-
-        logger.debug("Building geometry mask")
-        x_mask_nparray = geometry_mask(
-            [mapping(geom_x_shape)],
-            transform=x_win_affine,
-            invert=True,
-            out_shape=x_data_nparray.shape,
-            all_touched=bool(scatter_request.all_touched),
-        )
-
-        logger.debug("Applying nodata mask for X")
-        x_arr_nparray = x_data_nparray.astype("float64", copy=False)
-        if x_nodata_val is not None:
-            x_arr_nparray = np.where(
-                np.isclose(x_arr_nparray, x_nodata_val), np.nan, x_arr_nparray
+        y_arr, y_on_xgrid_masked = (None, None)
+        if y_ds and x_ds:
+            logger.debug("Transforming bounds and reprojecting Y to X grid")
+            ul = x_affine * (0, 0)
+            lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
+            minx, maxx = sorted([ul[0], lr[0]])
+            miny, maxy = sorted([ul[1], lr[1]])
+            minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
+                x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
             )
-        x_arr_nparray = np.where(x_mask_nparray, x_arr_nparray, np.nan)
-
-        logger.debug("Computing Y window on its own grid")
-
-        logger.debug("Reprojecting X window extent into Y CRS")
-        upper_left_xy = x_win_affine * (0, 0)
-        lower_right_xy = x_win_affine * (
-            x_data_nparray.shape[1],
-            x_data_nparray.shape[0],
-        )
-
-        min_x_in_xcrs, max_x_in_xcrs = sorted(
-            [upper_left_xy[0], lower_right_xy[0]]
-        )
-        min_y_in_xcrs, max_y_in_xcrs = sorted(
-            [upper_left_xy[1], lower_right_xy[1]]
-        )
-
-        logger.debug("Transforming X bounds into Y CRS")
-        min_x_in_ycrs, min_y_in_ycrs, max_x_in_ycrs, max_y_in_ycrs = (
-            transform_bounds(
-                x_ds.crs,
-                y_ds.crs,
-                min_x_in_xcrs,
-                min_y_in_xcrs,
-                max_x_in_xcrs,
-                max_y_in_xcrs,
-                densify_pts=0,
+            y_win = from_bounds(
+                minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
             )
-        )
+            y_win = (
+                y_win.round_offsets()
+                .round_lengths()
+                .intersection(Window(0, 0, y_ds.width, y_ds.height))
+            )
+            y_src = y_ds.read(1, window=y_win, masked=False).astype(
+                "float64", copy=False
+            )
+            y_affine = y_ds.window_transform(y_win)
+            y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
+            reproject(
+                source=y_src,
+                destination=y_on_xgrid,
+                src_transform=y_affine,
+                src_crs=y_ds.crs,
+                src_nodata=y_nodata_val,
+                dst_transform=x_affine,
+                dst_crs=x_ds.crs,
+                dst_nodata=np.nan,
+                resampling=Resampling.nearest,
+                num_threads=0,
+            )
+            y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
 
-        logger.debug("Building Y read window")
-        y_win_candidate_obj = from_bounds(  # _win_obj = Window candidate
-            min_x_in_ycrs,
-            min_y_in_ycrs,
-            max_x_in_ycrs,
-            max_y_in_ycrs,
-            transform=y_ds.transform,
-        )
-        y_win_obj = (
-            y_win_candidate_obj.round_offsets()
-            .round_lengths()
-            .intersection(Window(0, 0, y_ds.width, y_ds.height))
-        )
+        elif y_ds:
+            y_arr, y_affine, mask = read_masked_array(
+                y_ds, y_nodata_val, geom_ref_shape
+            )
 
-        logger.debug("Reading Y source data")
-        y_src_nparray = y_ds.read(1, window=y_win_obj, masked=False).astype(
-            "float64", copy=False
-        )
-        y_win_affine = y_ds.window_transform(
-            y_win_obj
-        )  # _affine = Affine transform
+        x_vals = x_arr[np.isfinite(x_arr)] if x_arr is not None else None
+        y_vals = y_arr[np.isfinite(y_arr)] if y_arr is not None else None
 
-        logger.debug("Allocating destination array for reprojected Y on X grid")
-        y_on_xgrid_nparray = np.full(
-            x_data_nparray.shape, np.nan, dtype="float64"
-        )  # _nparray = np.ndarray
+        if x_arr is not None and y_on_xgrid_masked is not None:
+            finite_mask = np.isfinite(x_arr) & np.isfinite(y_on_xgrid_masked)
+            x_vals = x_arr[finite_mask]
+            y_vals = y_on_xgrid_masked[finite_mask]
+        elif x_arr is not None:
+            x_vals = x_arr[np.isfinite(x_arr)]
+        elif y_arr is not None:
+            y_vals = y_arr[np.isfinite(y_arr)]
 
-        logger.debug("Reprojecting Y data onto X grid")
-        reproject(
-            source=y_src_nparray,
-            destination=y_on_xgrid_nparray,
-            src_transform=y_win_affine,
-            src_crs=y_ds.crs,
-            src_nodata=y_nodata_val if y_nodata_val is not None else None,
-            dst_transform=x_win_affine,
-            dst_crs=x_ds.crs,
-            dst_nodata=np.nan,
-            resampling=Resampling.nearest,
-            num_threads=0,
-        )
-        logger.debug("Applying same polygon mask to Y array")
-        y_on_xgrid_masked_nparray = np.where(
-            x_mask_nparray, y_on_xgrid_nparray, np.nan
-        )
-
-        logger.debug("Extracting finite paired values")
-        finite_mask_nparray = np.isfinite(x_arr_nparray) & np.isfinite(
-            y_on_xgrid_masked_nparray
-        )
-        x_vals_nparray = x_arr_nparray[finite_mask_nparray]
-        y_vals_nparray = y_on_xgrid_masked_nparray[finite_mask_nparray]
-        n_pairs_int = int(x_vals_nparray.size)
-        logger.debug(f"Found {n_pairs_int} finite pairs")
-
-        if n_pairs_int == 0:
-            logger.debug("No valid pairs found; returning empty ScatterOut")
+        x_plot, y_plot = None, None
+        n_pairs = len(x_vals) if x_vals is not None else len(y_vals)
+        if n_pairs == 0:
             return ScatterOut(
                 raster_id_x=scatter_request.raster_id_x,
                 raster_id_y=scatter_request.raster_id_y,
                 n_pairs=0,
-                pixels_sampled=int(np.count_nonzero(x_mask_nparray)),
+                pixels_sampled=(
+                    int(np.count_nonzero(mask)) if mask is not None else 0
+                ),
                 valid_pixels=0,
                 coverage_ratio=0.0,
                 geometry=scatter_request.geometry,
             )
 
-        logger.debug("Downsampling data if needed")
-        if n_pairs_int > scatter_request.max_points:
-            rng_obj = np.random.default_rng(0)
-            idx_nparray = rng_obj.choice(
-                n_pairs_int, size=scatter_request.max_points, replace=False
+        if n_pairs > scatter_request.max_points:
+            idx = np.random.default_rng(0).choice(
+                n_pairs, size=scatter_request.max_points, replace=False
             )
-            x_plot_nparray = x_vals_nparray[idx_nparray]
-            y_plot_nparray = y_vals_nparray[idx_nparray]
+            if x_vals is not None:
+                x_plot = x_vals[idx]
+            if y_vals is not None:
+                y_plot = y_vals[idx]
         else:
-            x_plot_nparray = x_vals_nparray
-            y_plot_nparray = y_vals_nparray
+            x_plot = x_vals
+            y_plot = y_vals
 
-        logger.debug("Computing correlation and linear fit")
-        if n_pairs_int > 1:
-            x_std_val, y_std_val = np.std(x_vals_nparray), np.std(
-                y_vals_nparray
+        hist2d, x_edges, y_edges = None, None, None
+        hist1d_x, hist1d_y = None, None
+
+        if x_vals is not None:
+            hist1d_x, x_edges = np.histogram(
+                x_vals, bins=scatter_request.histogram_bins
             )
-            if x_std_val == 0 or y_std_val == 0:
-                pearson_r_val = None
-            else:
-                corr_val = np.corrcoef(x_vals_nparray, y_vals_nparray)[0, 1]
-                pearson_r_val = (
-                    float(corr_val) if np.isfinite(corr_val) else None
-                )
-        else:
-            pearson_r_val = None
-
-        if n_pairs_int > 1:
-            design_mtx_nparray = np.vstack(
-                [x_vals_nparray, np.ones_like(x_vals_nparray)]
-            ).T
-            slope_val, intercept_val = np.linalg.lstsq(
-                design_mtx_nparray, y_vals_nparray, rcond=None
-            )[
-                0
-            ]  # renamed: slope/intercept -> slope_val/intercept_val
-            slope_val = float(slope_val)
-            intercept_val = float(intercept_val)
-        else:
-            slope_val = None
-            intercept_val = None
-
-        logger.debug("Computing 2D histogram")
-        # existing 2D histogram
-        hist2d_counts_nparray, x_edges_nparray, y_edges_nparray = (
-            np.histogram2d(
-                x_vals_nparray,
-                y_vals_nparray,
-                bins=scatter_request.histogram_bins,
+            hist1d_x = hist1d_x.astype("int64")
+            x_plot = x_plot.astype("float64")
+        if y_vals is not None:
+            hist1d_y, y_edges = np.histogram(
+                y_vals, bins=scatter_request.histogram_bins
             )
-        )
+            hist1d_y = hist1d_y.astype("int64")
+            y_plot = y_plot.astype("float64")
+        if x_vals is not None and y_vals is not None:
+            hist2d, x_edges, y_edges = np.histogram2d(
+                x_vals, y_vals, bins=scatter_request.histogram_bins
+            )
+            hist2d = hist2d.astype("int64")
 
-        # add matching 1D histograms for X and Y using same edges
-        hist1d_x_counts_nparray, _ = np.histogram(
-            x_vals_nparray, bins=x_edges_nparray
-        )
-        hist1d_y_counts_nparray, _ = np.histogram(
-            y_vals_nparray, bins=y_edges_nparray
-        )
+        pearson_r = None
+        slope = None
+        intercept = None
+        if x_vals is not None and y_vals is not None and n_pairs > 1:
+            x_std, y_std = np.std(x_vals), np.std(y_vals)
+            if x_std != 0 and y_std != 0:
+                corr = np.corrcoef(x_vals, y_vals)[0, 1]
+                pearson_r = float(corr) if np.isfinite(corr) else None
+                design = np.vstack([x_vals, np.ones_like(x_vals)]).T
+                slope, intercept = np.linalg.lstsq(design, y_vals, rcond=None)[
+                    0
+                ]
+                slope = float(slope)
+                intercept = float(intercept)
 
-        # ensure consistent dtype
-        hist2d_counts_nparray = hist2d_counts_nparray.astype("int64")
-        hist1d_x_counts_nparray = hist1d_x_counts_nparray.astype("int64")
-        hist1d_y_counts_nparray = hist1d_y_counts_nparray.astype("int64")
-        total_mask_pixels_int = int(np.count_nonzero(x_mask_nparray))
-        valid_pixels_int = int(n_pairs_int)
-
-        logger.debug("Assembling ScatterOut response")
+        total_mask_pixels = (
+            int(np.count_nonzero(mask)) if mask is not None else 0
+        )
+        valid_pixels = n_pairs
+        logger.debug(f"this is the scatter requets: {scatter_request}")
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
-            n_pairs=n_pairs_int,
-            x=x_plot_nparray.astype("float64").tolist(),
-            y=y_plot_nparray.astype("float64").tolist(),
-            hist2d=hist2d_counts_nparray.tolist(),
-            x_edges=x_edges_nparray.astype("float64").tolist(),
-            y_edges=y_edges_nparray.astype("float64").tolist(),
-            pearson_r=pearson_r_val,
-            slope=slope_val,
-            intercept=intercept_val,
-            hist1d_x=hist1d_x_counts_nparray,
-            hist1d_y=hist1d_y_counts_nparray,
-            pixels_sampled=total_mask_pixels_int,
-            valid_pixels=valid_pixels_int,
+            n_pairs=n_pairs,
+            x=x_plot.tolist() if x_plot is not None else None,
+            y=y_plot.tolist() if y_plot is not None else None,
+            hist2d=hist2d.tolist() if hist2d is not None else None,
+            x_edges=x_edges.tolist() if x_edges is not None else None,
+            y_edges=y_edges.tolist() if y_edges is not None else None,
+            hist1d_x=hist1d_x.tolist() if hist1d_x is not None else None,
+            hist1d_y=hist1d_y.tolist() if hist1d_y is not None else None,
+            pearson_r=pearson_r,
+            slope=slope,
+            intercept=intercept,
+            pixels_sampled=total_mask_pixels,
+            valid_pixels=valid_pixels,
             coverage_ratio=(
-                float(valid_pixels_int / total_mask_pixels_int)
-                if total_mask_pixels_int
+                float(valid_pixels / total_mask_pixels)
+                if total_mask_pixels
                 else 0.0
             ),
             geometry=scatter_request.geometry,
         )
+
     except HTTPException:
+        logger.exception("scatter stats failed")
         raise
     except Exception as e:
         logger.exception("scatter stats failed")

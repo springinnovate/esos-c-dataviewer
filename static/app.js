@@ -1681,6 +1681,25 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   return svg;
 }
 
+/**
+ * Builds an SVG histogram visualization for a single raster layer.
+ *
+ * This function renders a 1D histogram from the provided bin edges and counts,
+ * using layer-specific colors for each bar. It also draws percentile guide lines
+ * and labels (if available in `state.percentiles`) with interactive hover
+ * tooltips. The resulting `<svg>` element is returned and can be inserted into
+ * the DOM.
+ *
+ * The function also exposes scaling functions and bounds to `state` for reuse:
+ *   - `state.scaleX`: maps data values to pixel X coordinates.
+ *   - `state.hist1dBounds`: the [min, max] value range of the histogram.
+ *   - `state.pctBounds1d`: percentile bounds if percentiles were rendered.
+ *
+ * @param {number[]} edges - Array of histogram bin edges (length = N + 1).
+ * @param {number[]} hist - Array of histogram bin counts (length = N).
+ * @param {string} layerId - Identifier of the raster layer, used for color mapping.
+ * @returns {SVGElement} The constructed histogram `<svg>` element.
+ */
 function buildHistogramSVG(edges, hist, layerId) {
   const w = 480;
   const h = 160;

@@ -87,7 +87,8 @@ const state = {
   pointCircle: null,
   pointBackground: null,
   pointGroup: null,
-}
+  lastHasData: null,
+ }
 
 
 /**
@@ -1098,7 +1099,8 @@ function renderScatterOverlay(opts) {
   }
   state.lastRenderKey = newRenderKey;
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
-  if (!body.innerHTML) {
+
+  if (!body.innerHTML || state.lastHasData !== hasData) {
     body.innerHTML = `
       <div class='overlay-header'>
         <div>
@@ -1132,6 +1134,7 @@ function renderScatterOverlay(opts) {
       </div>
      `
   }
+  state.lastHasData = hasData;
   const plotEl = document.getElementById('scatterPlot');
   overlay.classList.remove('hidden');
   if (!visA && !visB) {

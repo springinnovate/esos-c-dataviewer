@@ -609,7 +609,6 @@ function populateLayerSelects() {
   });
 }
 
-
 /**
  * Add a WMS layer to the map for the given qualified layer name and slot.
  * Replaces any existing layer in that slot. Slot 'A' is above 'B', className

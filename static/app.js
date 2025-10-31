@@ -1729,7 +1729,6 @@ function buildHistogramSVG(edges, hist, layerId) {
     return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
   };
 
-  // expose for callers that reuse scaling
   state.scaleX = scaleX;
   state.hist1dBounds = [xMin, xMax];
 

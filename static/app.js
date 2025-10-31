@@ -2864,15 +2864,6 @@ function wireCollapsibleTopBar() {
 
   ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   populateLayerSelects()
-/*  ;['A', 'B'].forEach((layerId, idx) => {
-    const sel = document.getElementById(`layerSelect${layerId}`)
-    const newVal = String(idx)
-    if (sel.value !== newVal) {
-      sel.value = newVal
-      sel.dispatchEvent(new Event('change', { bubbles: true }))
-    }
-  })*/
-  // rounding the displayed number down so it fits
   const numInput = document.getElementById('windowSizeNumber');
   numInput.addEventListener('change', () => {
     numInput.value = parseFloat(numInput.value).toFixed(1);

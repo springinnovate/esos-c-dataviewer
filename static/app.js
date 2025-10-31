@@ -2265,7 +2265,6 @@ function wirePixelProbe() {
       }
       // if scatter is visible, refresh to draw marker
       if (state.lastScatterOpts && state.scatterObj) {
-        //renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
         renderScatterPoint(state.lastPixelPoint, 'A', 'B');
       }
     } else {

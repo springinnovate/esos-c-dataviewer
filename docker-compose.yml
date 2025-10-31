@@ -109,6 +109,8 @@ services:
         condition: service_healthy
     networks: [backend]
     restart: 'no'
+    environment:
+      - GEOSERVER_INIT_PROCESS_FILES=${GEOSERVER_INIT_PROCESS_FILES}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
       - ./layers.yml:/app/layers.yml:ro

@@ -26,7 +26,8 @@ const state = {
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
-  percentiles: null,
+  percentiles: "5 50 90",
+  scatterBounds: null,
   lastPixelPoint: null,
   bivariatePalette: {
     orangeBlue: createBivariateColormap({
@@ -82,6 +83,10 @@ const state = {
   probeSuppressed: false,
   pctBounds: null,
   lastFeatureCollection: null,
+  scatterSvg: null,
+  pointCircle: null,
+  pointBackground: null,
+  pointGroup: null,
 }
 
 
@@ -1013,10 +1018,10 @@ function enableAltWheelSlider() {
   }
 
   const onKeyDown = (e) => {
-    if (e.altKey && state?.map) state.map.scrollWheelZoom.disable()
+    if (e.altKey && state.map) state.map.scrollWheelZoom.disable()
   }
   const onKeyUp = () => {
-    if (state?.map) state.map.scrollWheelZoom.enable()
+    if (state.map) state.map.scrollWheelZoom.enable()
   }
 
   const onWheel = (e) => {
@@ -1068,34 +1073,50 @@ function renderScatterOverlay(opts) {
     coverage_ratio: s.coverage_ratio ?? null,
   }
 
-  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
-  body.innerHTML = `
-    <div class='overlay-header'>
-      <div>
-        <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-        <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
-      </div>
-    </div>
+  // check to see if we've rendered this before
+  const newRenderKey = JSON.stringify({
+    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj, percentiles: state.percentiles
+  });
 
-    <div class='overlay-content'>
-      <div>
-        <div id='scatterPlot' class='plot-holder'>
-          ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+  if (state.lastRenderKey === newRenderKey) {
+    return;
+  }
+  state.lastRenderKey = newRenderKey;
+  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
+  if (!body.innerHTML) {
+    body.innerHTML = `
+      <div class='overlay-header'>
+        <div>
+          <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
+          <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
         </div>
       </div>
-      <div>
-        <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
-          <div class='stats-grid'>
-            <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
-            <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
-            <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
-            <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-            <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
-            <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
+
+      <div class='overlay-content'>
+        <div>
+          <div id='scatterPlot' class='plot-holder'>
+            ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+          </div>
+        </div>
+        <div class='layer-group'>
+          <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+          <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+          <input id='percentiles' type='text' value="${(state.percentiles)}"/>
+        </div>
+        <div>
+          <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
+            <div class='stats-grid'>
+              <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
+              <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
+              <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
+              <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
+              <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
+              <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
+          </div>
         </div>
       </div>
-    </div>
-   `
+     `
+  }
   const plotEl = document.getElementById('scatterPlot');
   overlay.classList.remove('hidden');
   if (!visA && !visB) {
@@ -1138,8 +1159,129 @@ function renderScatterOverlay(opts) {
       }
     );
     plotEl.appendChild(svg);
+    state.scatterSvg = svg;
   }
+  wirePercentiles()
   state.scatterObj = scatterObj;
+}
+
+/**
+ * Renders a highlighted scatterplot point and label on the SVG overlay.
+ *
+ * Checks whether the given point falls within the current scatterplot bounds,
+ * computes its scaled screen coordinates, determines a blended marker color
+ * based on the active layer styles and blend mode, and draws a labeled circle
+ * on the scatter SVG. The label includes a dark semi-transparent background
+ * rectangle and displays the point's numeric coordinates. Hovering over the
+ * marker or label shows a tooltip with the coordinate text.
+ *
+ * @param {{x: number, y: number, label?: string}} point - The point to render, containing numeric x/y values and optional label text.
+ * @param {string} layerIdX - The layer ID used for the x-axis (used to determine color mapping).
+ * @param {string} layerIdY - The layer ID used for the y-axis (used to determine color mapping).
+ *
+ * @returns {void}
+ */
+function renderScatterPoint(point, layerIdX, layerIdY) {
+  if (!state.scatterBounds) {
+    return;
+  }
+  let xMin, yMin, xMax, yMax;
+  [xMin, yMin, xMax, yMax] = state.scatterBounds;
+
+  if (
+    point &&
+    Number.isFinite(point.x) && Number.isFinite(point.y) &&
+    point.x >= xMin && point.x <= xMax &&
+    point.y >= yMin && point.y <= yMax
+  ) {
+    const px = state.scaleX(point.x);
+    const py = state.scaleY(point.y);
+
+    const colA = _styleColorArrForValue(layerIdX, point.x);
+    const colB = _styleColorArrForValue(layerIdY, point.y);
+    const blendMode = state.lastScatterOpts.blendMode;
+    const blended =
+      blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+    const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
+
+    const svgNS = 'http://www.w3.org/2000/svg'
+    let circ, label, pointGroup
+    if (!state.pointGroup) {
+      pointGroup = document.createElementNS(svgNS, 'g');
+      state.scatterSvg.append(pointGroup);
+      circ = document.createElementNS(svgNS, 'circle');
+      label = document.createElementNS(svgNS, 'text');
+      state.pointCircle = [circ, label];
+    } else {
+      [circ, label] = state.pointCircle;
+      pointGroup = state.pointGroup;
+    }
+
+    circ.setAttribute('cx', String(px));
+    circ.setAttribute('cy', String(py));
+    circ.setAttribute('r', '3.5');
+    circ.setAttribute('fill', markerColor);
+    circ.setAttribute('stroke', '#000');
+    circ.setAttribute('stroke-width', '1');
+    circ.setAttribute('opacity', '0.95');
+    pointGroup.appendChild(circ);
+
+    const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
+    label.textContent = labelText;
+    label.setAttribute('x', String(px + 6));
+    label.setAttribute('y', String(py - 6));
+    label.setAttribute('fill', '#ddd');
+    label.setAttribute('font-size', '10px');
+    label.setAttribute('text-anchor', 'start');
+    label.setAttribute('dominant-baseline', 'alphabetic');
+    label.setAttribute('paint-order', 'stroke');
+    label.setAttribute('stroke', '#000');
+    label.setAttribute('stroke-width', '2');
+    label.setAttribute('stroke-opacity', '0.6');
+    pointGroup.appendChild(label);
+
+    // measure bbox and insert background
+    requestAnimationFrame(() => {
+      let bbox = label.getBBox();
+      if (!bbox.width || !bbox.height) {
+        const fs = 10;
+        const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+        bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
+      }
+
+      const padX = 3;
+      const padY = 2;
+
+      let bg;
+      if (!state.pointBackground) {
+        bg = document.createElementNS(svgNS, 'rect');
+        state.pointBackground = bg;
+      } else {
+        bg = state.pointBackground;
+      }
+      bg.setAttribute('x', String(bbox.x - padX));
+      bg.setAttribute('y', String(bbox.y - padY));
+      bg.setAttribute('width', String(bbox.width + padX * 2));
+      bg.setAttribute('height', String(bbox.height + padY * 2));
+      bg.setAttribute('rx', '2');
+      bg.setAttribute('ry', '2');
+      bg.setAttribute('fill', '#000');
+      bg.setAttribute('fill-opacity', '0.6');
+      bg.setAttribute('pointer-events', 'none');
+
+      pointGroup.insertBefore(bg, label);
+    });
+
+    const tipText = point.label || labelText;
+    [circ, label].forEach(el => {
+      el.style.cursor = 'default';
+      el.addEventListener('mouseenter', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mousemove', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => _hidePctTooltip?.());
+    });
+
+    state.pointGroup = pointGroup;
+  }
 }
 
 function clearScatterOverlay() {
@@ -1152,11 +1294,15 @@ function clearScatterOverlay() {
   if (plot) plot.innerHTML = '';
   delete state.scatterObj;
   delete state.lastScatterOpts;
+  delete state.pointGroup;
+  delete state.lastRenderKey;
 }
 
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('change', () => renderScatterOverlay(state.lastScatterOpts));
+  if (el) el.addEventListener('change', () =>
+    renderScatterOverlay(
+      { ...state.lastScatterOpts, scatterObj: state.scatterObj }));
 });
 
 
@@ -1274,6 +1420,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 
   const xMin = Math.min(...xEdges), xMax = Math.max(...xEdges);
   const yMin = Math.min(...yEdges), yMax = Math.max(...yEdges);
+  state.scatterBounds = [xMin, yMin, xMax, yMax];
   const nx = hist2d.length, ny = hist2d[0].length;
 
   const xCounts = new Array(nx).fill(0);
@@ -1313,6 +1460,9 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const plotX1 = pad + innerW, plotY1 = pad + mSize + innerH;
   const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
   const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
+
+  state.scaleX = scaleX;
+  state.scaleY = scaleY;
 
   const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -1494,96 +1644,14 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
   }
 
-  (() => {
-    if (!Array.isArray(percentiles) || !percentiles.length) return;
+  if (Array.isArray(percentiles) && percentiles.length) {
     const minP = Math.min(...percentiles);
     const maxP = Math.max(...percentiles);
     const xmin = getQuantileX(minP);
     const xmax = getQuantileX(maxP);
     const ymin = getQuantileY(minP);
     const ymax = getQuantileY(maxP);
-    if (!state) return;
     state.pctBounds = { xmin, xmax, ymin, ymax };
-  })();
-
-  if (
-    point &&
-    Number.isFinite(point.x) && Number.isFinite(point.y) &&
-    point.x >= xMin && point.x <= xMax &&
-    point.y >= yMin && point.y <= yMax
-  ) {
-    const px = scaleX(point.x);
-    const py = scaleY(point.y);
-
-    const colA = _styleColorArrForValue(layerIdX, point.x);
-    const colB = _styleColorArrForValue(layerIdY, point.y);
-    const blended =
-      blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
-    const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
-
-    const g = document.createElementNS(svgNS, 'g');
-    svg.appendChild(g);
-
-    const circ = document.createElementNS(svgNS, 'circle');
-    circ.setAttribute('cx', String(px));
-    circ.setAttribute('cy', String(py));
-    circ.setAttribute('r', '3.5');
-    circ.setAttribute('fill', markerColor);
-    circ.setAttribute('stroke', '#000');
-    circ.setAttribute('stroke-width', '1');
-    circ.setAttribute('opacity', '0.95');
-    g.appendChild(circ);
-
-    const label = document.createElementNS(svgNS, 'text');
-    const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
-    label.textContent = labelText;
-    label.setAttribute('x', String(px + 6));
-    label.setAttribute('y', String(py - 6));
-    label.setAttribute('fill', '#ddd');
-    label.setAttribute('font-size', '10px');
-    label.setAttribute('text-anchor', 'start');
-    label.setAttribute('dominant-baseline', 'alphabetic');
-    label.setAttribute('paint-order', 'stroke');
-    label.setAttribute('stroke', '#000');
-    label.setAttribute('stroke-width', '2');
-    label.setAttribute('stroke-opacity', '0.6');
-    g.appendChild(label);
-
-    // measure bbox and insert background
-    requestAnimationFrame(() => {
-      let bbox = label.getBBox();
-      if (!bbox.width || !bbox.height) {
-        const fs = 10;
-        const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
-        bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
-      }
-
-      const padX = 3;
-      const padY = 2;
-
-      const bg = document.createElementNS(svgNS, 'rect');
-      bg.setAttribute('x', String(bbox.x - padX));
-      bg.setAttribute('y', String(bbox.y - padY));
-      bg.setAttribute('width', String(bbox.width + padX * 2));
-      bg.setAttribute('height', String(bbox.height + padY * 2));
-      bg.setAttribute('rx', '2');
-      bg.setAttribute('ry', '2');
-      bg.setAttribute('fill', '#000');
-      bg.setAttribute('fill-opacity', '0.6');
-      bg.setAttribute('pointer-events', 'none');
-
-      g.insertBefore(bg, label);
-    });
-
-    const tipText = point.label || labelText;
-    [circ, label].forEach(el => {
-      el.style.cursor = 'default';
-      el.addEventListener('mouseenter', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mousemove', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mouseleave', () => _hidePctTooltip?.());
-    });
-
-    state.lastPointMarker = g;
   }
   return svg;
 }
@@ -1689,13 +1757,13 @@ function wireAutoStyleFromHistogram() {
   };
 
   btn.addEventListener('click', () => {
-    const so = state?.scatterObj;
+    const so = state.scatterObj;
     const xEdges = so?.x_edges;
     const yEdges = so?.y_edges;
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
 
-    const pb = state?.pctBounds;
+    const pb = state.pctBounds;
     if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
       a.min = pb.xmin;
       a.max = pb.xmax;
@@ -1710,9 +1778,9 @@ function wireAutoStyleFromHistogram() {
     setTriple('A', a);
     setTriple('B', b);
 
-    if (typeof renderScatterOverlay === 'function') {
-      renderScatterOverlay(state?.lastScatterOpts);
-    }
+    const previousOptions = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
+    clearScatterOverlay();
+    renderScatterOverlay(previousOptions)
   });
 }
 
@@ -1723,7 +1791,7 @@ function wirePercentiles() {
   let raf = null
   const rerender = () => {
     // ensure we pass a scatterObj so it renders immediately (1D or 2D as appropriate)
-    if (state?.lastScatterOpts && state?.scatterObj) {
+    if (state.lastScatterOpts && state.scatterObj) {
       const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj }
       renderScatterOverlay(opts)
     }
@@ -2023,7 +2091,7 @@ function wirePixelProbe() {
   const header = document.querySelector('header');
 
   if (overlay) {
-    overlay.addEventListener('mouseenter', () => {
+    overlay.addEventListener('mouseover', () => {
       state.probeSuppressed = true;
       probe.style.display = 'none';
     });
@@ -2034,7 +2102,7 @@ function wirePixelProbe() {
   }
 
   if (header) {
-    header.addEventListener('mouseenter', () => {
+    header.addEventListener('mouseover', () => {
       state.probeSuppressed = true;
       probe.style.display = 'none';
     });
@@ -2076,7 +2144,7 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
-  const layerName = (idx) => state?.availableLayers?.[idx]?.name ?? '(none)'
+  const layerName = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
   let inFlight = null
@@ -2175,7 +2243,6 @@ function wirePixelProbe() {
       await Promise.all(jobs)
     } catch (e) {
       if (ac.signal.aborted) return
-      // non-fatal: keep probe visible with error marker
     } finally {
       if (inFlight?.ts === ts) inFlight = null
     }
@@ -2197,8 +2264,8 @@ function wirePixelProbe() {
         label: `${nameA}: ${valA} • ${nameB}: ${valB}`
       }
       // if scatter is visible, refresh to draw marker
-      if (state?.lastScatterOpts && state?.scatterObj) {
-        renderScatterOverlay({ ...state.lastScatterOpts, scatterObj: state.scatterObj })
+      if (state.lastScatterOpts && state.scatterObj) {
+        renderScatterPoint(state.lastPixelPoint, 'A', 'B');
       }
     } else {
       if (state.lastPointMarker && state.lastPointMarker.parentNode) {
@@ -2605,6 +2672,7 @@ function enableWindowSampler() {
   };
 
   handlers.click = async (evt) => {
+    clearScatterOverlay();
     const lyrA = state.availableLayers[state.activeLayerIdxA];
     const lyrB = state.availableLayers[state.activeLayerIdxB];
     if (!lyrA || !lyrB) return;
@@ -2768,7 +2836,6 @@ function wireCollapsibleTopBar() {
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()
   wireAutoStyleFromHistogram()
-  wirePercentiles()
   wirePixelProbe()
   wireBivariatePalettePicker('bivariatePaletteSelect')
   wireShapefileAOIControl()

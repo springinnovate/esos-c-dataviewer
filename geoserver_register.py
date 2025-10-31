@@ -816,6 +816,10 @@ def main():
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_password = config_data["geoserver"]["password"]
 
+    geoserver_init_process_files = (
+        os.getenv("GEOSERVER_INIT_PROCESS_FILES", "true").lower() == "true"
+    )
+
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
@@ -852,17 +856,21 @@ def main():
         file_path = Path(layer_def["file_path"])
         target_path = local_working_dir / Path(file_path).name
 
-        process_task = task_graph.add_task(
-            func=reproject_and_build_overviews_if_needed,
-            args=(
-                file_path,
-                target_projection,
-                Resampling.nearest,
-                target_path,
-            ),
-            target_path_list=[target_path],
-            task_name=f"process {raster_id}",
-        )
+        create_layer_task_list = []
+        if geoserver_init_process_files:
+            # assume it's already there
+            process_task = task_graph.add_task(
+                func=reproject_and_build_overviews_if_needed,
+                args=(
+                    file_path,
+                    target_projection,
+                    Resampling.nearest,
+                    target_path,
+                ),
+                target_path_list=[target_path],
+                task_name=f"process {raster_id}",
+            )
+            create_layer_task_list.append(process_task)
         task_graph.add_task(
             func=create_layer,
             args=(
@@ -872,7 +880,7 @@ def main():
                 target_path,
                 style_id,
             ),
-            dependent_task_list=[process_task],
+            dependent_task_list=create_layer_task_list,
             task_name=f"create layer {raster_id}",
             transient_run=True,
         )

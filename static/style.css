@@ -563,3 +563,12 @@ header.is-collapsed .topbar-content {
   transform: translateY(-4px);
   pointer-events: none;
 }
+
+
+.layer-label {
+  display: block;
+  color: #ffb300;
+  font-size: 1rem;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}

@@ -2994,10 +2994,10 @@ function disableWindowSampler() {
 
   const { handlers } = state._areaSampler;
 
-  map.off('mousemove', handlers.mousemove);
-  map.off('mouseout', handlers.mouseout);
-  map.off('mouseover', handlers.mouseover);
-  map.off('click', handlers.click);
+  map.off('mousemove', handlers.onMouseMove);
+  map.off('mouseout', handlers.onMouseOut);
+  map.off('mouseover', handlers.onMouseOver);
+  map.off('click', handlers.onClick);
 
   if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
 

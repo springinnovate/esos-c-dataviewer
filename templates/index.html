@@ -10,6 +10,7 @@
     <script src='https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js'></script>
     <script src='https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js'></script>
     <script src='https://unpkg.com/shpjs@latest/dist/shp.min.js'></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <link rel='stylesheet' href='static/style.css' />
   </head>
   <body>
@@ -88,7 +89,7 @@
               <div class='tool-section' data-section='export'>
                 <p class='tool-description'>Download the raster layer(s) clipped to the current window or uploaded area.</p>
                 <div class='export-actions'>
-                  <button type='button' id='exportAreaBtn' class='btn solid export-btn disabled' aria-label='Download Sampling Area'>Download Area</button>
+                  <button type='button' id='exportAreaBtn' class='btn solid export-btn disabled' aria-label='Download Sampling Area'>Download disabled: select area on map</button>
                   <span id='exportStatus' class='small-mono muted' aria-live='polite'></span>
                 </div>
               </div>

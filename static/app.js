@@ -602,10 +602,14 @@ function populateLayerSelects() {
     const sel = document.getElementById(`layerSelect${layerId}`);
     fill(sel);
     const def = sel.dataset.default;
+    sel.addEventListener('change', e => onLayerChange(e, layerId));
     const idx = /^\d+$/.test(def) ? parseInt(def, 10)
       : state.availableLayers.findIndex(l => l.id === def || l.name === def);
+      //layer not enabled yet like when the page loads
+    if (idx < 0) {
+      return;
+    }
     sel.value = String(idx);
-    sel.addEventListener('change', e => onLayerChange(e, layerId));
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
@@ -693,8 +697,8 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      raster_id_x: rasterIdX,
-      raster_id_y: rasterIdY,
+      raster_id_x: rasterIdX ?? null,
+      raster_id_y: rasterIdY ?? null,
       geometry: geojson.geometry ? geojson.geometry : geojson,
       from_crs: 'EPSG:4326', //the poly should be in lat/lng
       histogram_bins: MAX_HISTOGRAM_BINS,
@@ -2043,7 +2047,6 @@ function wireControlGroup() {
   const sections = {
     window: group.querySelector("[data-section='window']"),
     shapefile: group.querySelector("[data-section='shapefile']")
-    // note: export section is not mode-driven; always available
   };
   const inputs = {
     window: [group.querySelector('#windowSize'), group.querySelector('#windowSizeNumber')],
@@ -2105,6 +2108,9 @@ function wireControlGroup() {
   }
 
   setMode(mode);
+
+  document.getElementById('exportAreaBtn').disabled = true;
+  // set up listener for
 }
 
 /**
@@ -2816,18 +2822,21 @@ async function setAOIAndRenderOverlay(featureCollection) {
       ? collapseToMultiPolygon(featureCollection)
       : featureCollection;
 
-    scatterStats = await fetchScatterStats(layerX.name, layerY.name, aoiGeometry);
+    scatterStats = await fetchScatterStats(
+      layerX?.name, layerY?.name, aoiGeometry);
   } catch (err) {
     showOverlayError(`area sampler error: ${err.message || String(err)}`);
     throw err;
   }
 
+  const areaM2 = turf.area(featureCollection);
+  const areaKm2 = areaM2 / 1e6;
   renderScatterOverlay({
-    rasterX: layerX.name,
-    rasterY: layerY.name,
+    rasterX: layerX?.name,
+    rasterY: layerY?.name,
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
-    boxKm: null,
+    boxKm: areaKm2,
     scatterObj: scatterStats
   });
 }
@@ -2877,36 +2886,40 @@ function enableWindowSampler() {
   const map = state.map;
   if (!map || state._areaSampler?.enabled) return;
 
-  const handlers = {};
+  // ensure hoverRect exists and is on the map
   if (!state.hoverRect) {
     state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
-  } else {
-    if (!map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  } else if (!map.hasLayer(state.hoverRect)) {
+    state.hoverRect.addTo(map);
   }
 
-  handlers.mousemove = (e) => {
+  /** Update hoverRect while the mouse moves. */
+  function onMouseMove(e) {
     state.lastMouseLatLng = e.latlng;
     const poly = squarePolygonAt(e.latlng, state.boxSizeKm);
     state.hoverRect.setLatLngs(poly.getLatLngs());
-  };
+  }
 
-  handlers.mouseout = () => {
+  /** Hide hoverRect when leaving the map. */
+  function onMouseOut() {
     if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
-  };
+  }
 
-  handlers.mouseover = () => {
+  /** Show hoverRect when entering the map. */
+  function onMouseOver() {
     if (state.hoverRect && !map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
-  };
+  }
 
-  handlers.click = async (evt) => {
+  /** Perform sampling and render overlay on click. */
+  async function onClick(evt) {
     clearScatterOverlay();
+
     let lyrA = state.availableLayers[state.activeLayerIdxA];
     let lyrB = state.availableLayers[state.activeLayerIdxB];
 
     const visA = document.getElementById('layerVisibleA');
     const visB = document.getElementById('layerVisibleB');
 
-    // turn off the layers if any of the layers are shown 'off'
     if (visA && !visA.checked) lyrA = null;
     if (visB && !visB.checked) lyrB = null;
 
@@ -2914,6 +2927,7 @@ function enableWindowSampler() {
     _updateOutline(poly);
 
     if (!lyrA && !lyrB) return;
+
     renderScatterOverlay({
       rasterX: lyrA?.name,
       rasterY: lyrB?.name,
@@ -2923,30 +2937,43 @@ function enableWindowSampler() {
       scatterObj: null
     });
 
-    let scatterStats;
     try {
-      scatterStats = await fetchScatterStats(lyrA?.name ?? null, lyrB?.name ?? null, poly.toGeoJSON());
+      const scatterStats = await fetchScatterStats(
+        lyrA?.name ?? null,
+        lyrB?.name ?? null,
+        poly.toGeoJSON()
+      );
+
+      renderScatterOverlay({
+        rasterX: lyrA?.name,
+        rasterY: lyrB?.name,
+        centerLng: evt.latlng.lng,
+        centerLat: evt.latlng.lat,
+        boxKm: state.boxSizeKm,
+        scatterObj: scatterStats
+      });
+
+      document.getElementById('exportAreaBtn').disabled = false;
+      document.getElementById('exportAreaBtn').textContent = 'Download Area';
     } catch (e) {
       showOverlayError(`area sampler error: ${e.message || String(e)}`);
-      return;
     }
+  }
 
-    renderScatterOverlay({
-      rasterX: lyrA?.name,
-      rasterY: lyrB?.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: scatterStats
-    });
+  // wire events
+  map.on('mousemove', onMouseMove);
+  map.on('mouseout', onMouseOut);
+  map.on('mouseover', onMouseOver);
+  map.on('click', onClick);
+
+  state._areaSampler = {
+    enabled: true,
+    onMouseMove,
+    onMouseOut,
+    onMouseOver,
+    onClick
   };
 
-  map.on('mousemove', handlers.mousemove);
-  map.on('mouseout', handlers.mouseout);
-  map.on('mouseover', handlers.mouseover);
-  map.on('click', handlers.click);
-
-  state._areaSampler = { handlers, enabled: true };
   if (map._container) {
     map._container.classList.add('mode-window');
     map._container.classList.remove('mode-shapefile');

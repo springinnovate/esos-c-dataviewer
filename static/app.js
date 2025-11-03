@@ -2004,12 +2004,46 @@ function wirePercentiles() {
   handlePercentileInput()
 }
 
+/**
+ * Initializes and wires up the sampling-mode controls in the tools panel.
+ *
+ * This function binds event listeners to the “Window” and “Shapefile” toggle buttons,
+ * synchronizes input states for each mode, and manages visibility and activation
+ * of related sections within the control group. It also keeps the numeric and range
+ * inputs for window size synchronized and triggers updates when the sampling
+ * configuration changes.
+ *
+ * Behavior summary:
+ * - Toggles between “window” and “shapefile” sampling modes.
+ * - Updates section visibility and accessibility attributes based on the active mode.
+ * - Disables or enables relevant inputs when modes switch.
+ * - Removes uploaded shapefile layers when switching to window mode.
+ * - Restores the shapefile area overlay if returning to shapefile mode.
+ * - Keeps the range and number window-size inputs synchronized in both directions.
+ * - Sets `state.sampleMode` and calls `setSamplingMode()` to propagate changes.
+ *
+ * Dependencies:
+ * - Expects global `state` object with properties:
+ *   - `map`, `uploadedLayer`, `lastFeatureCollection`
+ *   - `samplingMode`, `sampleMode`
+ * - Expects external functions:
+ *   - `setSamplingMode(mode: string)`
+ *   - `setAOIAndRenderOverlay(featureCollection: object)`
+ *   - optional global `window.onWindowSizeChange(newSizeKm: number)`
+ *
+ * Elements required in the DOM:
+ * - `.control-group.tools` container
+ * - `.tool-toggle .mode-btn[data-mode='window'|'shapefile']`
+ * - `[data-section='window']`, `[data-section='shapefile']`
+ * - `#windowSize`, `#windowSizeNumber`, `#shpInput`
+ */
 function wireControlGroup() {
   const group = document.querySelector('.control-group.tools');
-  const buttons = Array.from(group.querySelectorAll('.mode-btn'));
+  const buttons = Array.from(group.querySelectorAll('.tool-toggle .mode-btn'));
   const sections = {
     window: group.querySelector("[data-section='window']"),
     shapefile: group.querySelector("[data-section='shapefile']")
+    // note: export section is not mode-driven; always available
   };
   const inputs = {
     window: [group.querySelector('#windowSize'), group.querySelector('#windowSizeNumber')],
@@ -2018,45 +2052,46 @@ function wireControlGroup() {
   const shpInput = inputs.shapefile[0];
   let mode = group.getAttribute('data-mode') || 'window';
 
-  const setMode = mode => {
-    group.setAttribute('data-mode', mode);
-    state.sampleMode = mode;
+  const setMode = m => {
+    group.setAttribute('data-mode', m);
+    state.sampleMode = m;
 
     buttons.forEach(b => {
-      const sel = b.getAttribute('data-mode') === mode;
+      const sel = b.getAttribute('data-mode') === m;
       b.classList.toggle('is-selected', sel);
       b.setAttribute('aria-pressed', String(sel));
     });
 
-    const on = mode === 'window' ? 'window' : 'shapefile';
-    const off = mode === 'window' ? 'shapefile' : 'window';
+    const on = m === 'window' ? 'window' : 'shapefile';
+    const off = m === 'window' ? 'shapefile' : 'window';
 
     sections[on].classList.add('is-active');
     sections[on].classList.remove('is-inactive');
     sections[off].classList.add('is-inactive');
     sections[off].classList.remove('is-active');
 
-    if (mode == 'window' && state.uploadedLayer) {
+    if (m === 'window' && state.uploadedLayer) {
       state.map.removeLayer(state.uploadedLayer);
       state.uploadedLayer = null;
-    } else if (mode == 'shapefile' && state.lastFeatureCollection) {
+    } else if (m === 'shapefile' && state.lastFeatureCollection) {
       setAOIAndRenderOverlay(state.lastFeatureCollection);
     }
 
-    inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
-    inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
+    inputs[on].forEach(el => { if (el) { el.disabled = false; el.tabIndex = 0; } });
+    inputs[off].forEach(el => { if (el) { el.disabled = true; el.tabIndex = -1; } });
 
-    state.samplingMode = mode;
-    setSamplingMode(mode)
+    state.samplingMode = m;
+    setSamplingMode(m);
   };
 
   buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-  shpInput.addEventListener('change', () => {
-    const f = shpInput.files && shpInput.files[0];
-    if (f) setMode('shapefile');
-  });
+  if (shpInput) {
+    shpInput.addEventListener('change', () => {
+      const f = shpInput.files && shpInput.files[0];
+      if (f) setMode('shapefile');
+    });
+  }
 
-  // keep number/range in sync (optional)
   const range = group.querySelector('#windowSize');
   const num = group.querySelector('#windowSizeNumber');
   if (range && num) {
@@ -2069,7 +2104,6 @@ function wireControlGroup() {
     num.addEventListener('input', () => sync(num));
   }
 
-  // init
   setMode(mode);
 }
 

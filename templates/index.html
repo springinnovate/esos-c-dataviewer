@@ -84,6 +84,14 @@
                 <p class='tool-description'>If uploaded, the shapefile defines the area for histogram and scatterplot stats, overriding the moving window.</p>
                 <input id='shpInput' type='file' accept='.zip' />
               </div>
+
+              <div class='tool-section' data-section='export'>
+                <p class='tool-description'>Download the raster layer(s) clipped to the current window or uploaded area.</p>
+                <div class='export-actions'>
+                  <button type='button' id='exportAreaBtn' class='btn solid export-btn disabled' aria-label='Download Sampling Area'>Download Area</button>
+                  <span id='exportStatus' class='small-mono muted' aria-live='polite'></span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

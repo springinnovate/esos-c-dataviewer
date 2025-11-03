@@ -571,3 +571,33 @@ header.is-collapsed .topbar-content {
   margin-bottom: 4px;
   letter-spacing: 0.5px;
 }
+
+
+/* scope toggle button styles so they don't hit other buttons */
+.control-group.tools .tool-toggle .mode-btn {
+  appearance: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 6px 12px;
+  border: 0;
+  cursor: pointer;
+}
+.control-group.tools .tool-toggle .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.control-group.tools .tool-toggle .mode-btn.is-selected {
+  background: var(--brand);
+  color: #081015;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.15);
+}
+
+.btn.solid {
+  background: var(--brand);
+  border-color: var(--brand-hover);
+  color: #081015;
+  font-weight: 400;
+}
+.btn.solid:hover { background: var(--brand-hover); }
+
+.export-actions { display: flex; align-items: center; gap: 10px; }
+
+.disabled { opacity: 0.5; pointer-events: none; cursor: not-allowed; }

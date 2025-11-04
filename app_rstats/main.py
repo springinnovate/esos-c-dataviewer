@@ -281,20 +281,43 @@ def _reproject_geojson_geoms(gj: dict, from_crs: str, to_crs) -> list[dict]:
     return [_tx_geometry(g) for g in geoms]
 
 
-def _extract_geometries(gj: dict) -> list[dict]:
-    t = gj.get("type")
-    if t == "Feature":
-        g = gj.get("geometry")
-        return [g] if g else []
-    if t == "FeatureCollection":
-        out = []
-        for f in gj.get("features", []):
-            g = f.get("geometry")
-            if g:
-                out.append(g)
-        return out
-    # assume a bare geometry
-    return [gj]
+def _extract_geometries(geojson_obj: dict) -> list[dict]:
+    """Extract all geometry dictionaries from a GeoJSON object.
+
+    This function normalizes various GeoJSON structures—such as a bare geometry,
+    a single Feature, or a FeatureCollection—into a flat list of geometry
+    dictionaries. Each geometry dictionary in the returned list will contain
+    at least a 'type' (e.g., 'Polygon', 'Point') and 'coordinates' key,
+    making the result suitable for operations like masking or reprojection.
+
+    Args:
+        geojson_obj (dict): A GeoJSON dictionary. This may represent a
+            single geometry (e.g., {"type": "Polygon", "coordinates": [...]})
+            or a higher-level container such as a Feature or FeatureCollection.
+
+    Returns:
+        list[dict]: A list of GeoJSON geometry dictionaries extracted from the
+        input object. The list will contain:
+            - One geometry if the input is a single Feature or bare geometry.
+            - Multiple geometries if the input is a FeatureCollection.
+            - An empty list if the input contains no valid geometries.
+    """
+    geojson_type = geojson_obj.get("type")
+
+    if geojson_type == "Feature":
+        geometry = geojson_obj.get("geometry")
+        return [geometry] if geometry else []
+
+    if geojson_type == "FeatureCollection":
+        geometries = []
+        for feature in geojson_obj.get("features", []):
+            geometry = feature.get("geometry")
+            if geometry:
+                geometries.append(geometry)
+        return geometries
+
+    # Assume the input is a bare geometry object
+    return [geojson_obj]
 
 
 def _clip_and_write_tif(

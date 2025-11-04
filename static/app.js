@@ -657,32 +657,33 @@ function addWmsLayer(qualifiedName, slot, className) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.availableLayers[idx]
-  document.getElementById('statsOverlay').classList.add('hidden')
-  document.getElementById('overlayBody').innerHTML = ''
-  try {
-    const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ raster_id: lyr.name }),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    const { min_, max_ } = await res.json()
-    const med = (max_ + min_) / 2
+  const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ raster_id: lyr.name }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const { min_, max_ } = await res.json()
+  const med = (max_ + min_) / 2
 
-    // write values into the correct panel (A or B)
-    document.getElementById(`layer${layerId}MinInput`).value = min_
-    document.getElementById(`layer${layerId}MedInput`).value = med
-    document.getElementById(`layer${layerId}MaxInput`).value = max_
+  // write values into the correct panel (A or B)
+  document.getElementById(`layer${layerId}MinInput`).value = min_
+  document.getElementById(`layer${layerId}MedInput`).value = med
+  document.getElementById(`layer${layerId}MaxInput`).value = max_
 
-    // update state and map layer
-    state[`activeLayerIdx${layerId}`] = idx
-    const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
-    addWmsLayer(lyr.name, layerId, className)
-
-    // apply style for this layer
-    _applyDynamicStyle(layerId)
-  } catch (err) {
-    console.error(`Failed to fetch min/max for layer ${layerId}`, err)
+  // update state and map layer
+  state[`activeLayerIdx${layerId}`] = idx
+  const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
+  addWmsLayer(lyr.name, layerId, className)
+  _applyDynamicStyle(layerId)
+  if (!state.sampleMode) {
+    document.getElementById('statsOverlay').classList.add('hidden')
+    document.getElementById('overlayBody').innerHTML = ''
+  } else if (state.sampleMode == 'shapefile') {
+    // calculate new stats then re-render scatter overlay
+    setAOIAndRenderOverlay(state.lastFeatureCollection)
+  } else if (state.sampleMode == 'window') {
+    sampleAndRenderSampleBox();
   }
 }
 
@@ -2997,50 +2998,9 @@ function enableWindowSampler() {
   async function onClick(evt) {
     clearScatterOverlay();
 
-    let lyrA = state.availableLayers[state.activeLayerIdxA];
-    let lyrB = state.availableLayers[state.activeLayerIdxB];
-
-    const visA = document.getElementById('layerVisibleA');
-    const visB = document.getElementById('layerVisibleB');
-
-    if (visA && !visA.checked) lyrA = null;
-    if (visB && !visB.checked) lyrB = null;
-
-    const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
-    state.sampleBox = poly;
-    _updateOutline(poly);
-
-    if (!lyrA && !lyrB) return;
-
-    renderScatterOverlay({
-      rasterX: lyrA?.name,
-      rasterY: lyrB?.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: null
-    });
-
-    try {
-      const scatterStats = await fetchScatterStats(
-        lyrA?.name ?? null,
-        lyrB?.name ?? null,
-        poly.toGeoJSON()
-      );
-
-      renderScatterOverlay({
-        rasterX: lyrA?.name,
-        rasterY: lyrB?.name,
-        centerLng: evt.latlng.lng,
-        centerLat: evt.latlng.lat,
-        boxKm: state.boxSizeKm,
-        scatterObj: scatterStats
-      });
-
-      enableDownloadButton();
-    } catch (e) {
-      showOverlayError(`area sampler error: ${e.message || String(e)}`);
-    }
+    const sampleBox = squarePolygonAt(evt.latlng, state.boxSizeKm);
+    state.sampleBox = sampleBox;
+    await sampleAndRenderSampleBox(evt.latlng);
   }
 
   map.on('mousemove', onMouseMove);
@@ -3060,6 +3020,61 @@ function enableWindowSampler() {
     map._container.classList.add('mode-window');
     map._container.classList.remove('mode-shapefile');
   }
+}
+
+async function sampleAndRenderSampleBox(latlng) {
+  let lyrA = state.availableLayers[state.activeLayerIdxA];
+  let lyrB = state.availableLayers[state.activeLayerIdxB];
+
+  const visA = document.getElementById('layerVisibleA');
+  const visB = document.getElementById('layerVisibleB');
+
+  if (visA && !visA.checked) lyrA = null;
+  if (visB && !visB.checked) lyrB = null;
+  _updateOutline(state.sampleBox);
+  if (!lyrA && !lyrB) return;
+
+  if (!latlng) {
+    latlng = {
+      lng: state.lastScatterOpts.centerLng,
+      lat: state.lastScatterOpts.centerLat,
+    };
+  }
+
+  renderScatterOverlay({
+    rasterX: lyrA?.name,
+    rasterY: lyrB?.name,
+    centerLng: latlng.lng,
+    centerLat: latlng.lat,
+    boxKm: state.boxSizeKm,
+    scatterObj: null
+  });
+
+  const scatterStats = await fetchScatterStats(
+    lyrA?.name ?? null,
+    lyrB?.name ?? null,
+    state.sampleBox.toGeoJSON()
+  );
+
+  renderScatterOverlay({
+    rasterX: lyrA?.name,
+    rasterY: lyrB?.name,
+    centerLng: latlng.lng,
+    centerLat: latlng.lat,
+    boxKm: state.boxSizeKm,
+    scatterObj: scatterStats
+  });
+
+  state.lastScatterOpts = {
+    rasterX: lyrA?.name,
+    rasterY: lyrB?.name,
+    centerLng: latlng.lng,
+    centerLat: latlng.lat,
+    boxKm: state.boxSizeKm,
+  };
+  state.scatterObj = scatterStats;
+
+  enableDownloadButton();
 }
 
 /**

@@ -83,6 +83,7 @@ const state = {
   probeSuppressed: false,
   pctBounds: null,
   lastFeatureCollection: null,
+  sampleBox: null,
   scatterSvg: null,
   pointCircle: null,
   pointBackground: null,
@@ -602,10 +603,14 @@ function populateLayerSelects() {
     const sel = document.getElementById(`layerSelect${layerId}`);
     fill(sel);
     const def = sel.dataset.default;
+    sel.addEventListener('change', e => onLayerChange(e, layerId));
     const idx = /^\d+$/.test(def) ? parseInt(def, 10)
       : state.availableLayers.findIndex(l => l.id === def || l.name === def);
+      //layer not enabled yet like when the page loads
+    if (idx < 0) {
+      return;
+    }
     sel.value = String(idx);
-    sel.addEventListener('change', e => onLayerChange(e, layerId));
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
@@ -693,8 +698,8 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      raster_id_x: rasterIdX,
-      raster_id_y: rasterIdY,
+      raster_id_x: rasterIdX ?? null,
+      raster_id_y: rasterIdY ?? null,
       geometry: geojson.geometry ? geojson.geometry : geojson,
       from_crs: 'EPSG:4326', //the poly should be in lat/lng
       histogram_bins: MAX_HISTOGRAM_BINS,
@@ -2004,9 +2009,42 @@ function wirePercentiles() {
   handlePercentileInput()
 }
 
+/**
+ * Initializes and wires up the sampling-mode controls in the tools panel.
+ *
+ * This function binds event listeners to the “Window” and “Shapefile” toggle buttons,
+ * synchronizes input states for each mode, and manages visibility and activation
+ * of related sections within the control group. It also keeps the numeric and range
+ * inputs for window size synchronized and triggers updates when the sampling
+ * configuration changes.
+ *
+ * Behavior summary:
+ * - Toggles between “window” and “shapefile” sampling modes.
+ * - Updates section visibility and accessibility attributes based on the active mode.
+ * - Disables or enables relevant inputs when modes switch.
+ * - Removes uploaded shapefile layers when switching to window mode.
+ * - Restores the shapefile area overlay if returning to shapefile mode.
+ * - Keeps the range and number window-size inputs synchronized in both directions.
+ * - Sets `state.sampleMode` and calls `setSamplingMode()` to propagate changes.
+ *
+ * Dependencies:
+ * - Expects global `state` object with properties:
+ *   - `map`, `uploadedLayer`, `lastFeatureCollection`
+ *   - `samplingMode`, `sampleMode`
+ * - Expects external functions:
+ *   - `setSamplingMode(mode: string)`
+ *   - `setAOIAndRenderOverlay(featureCollection: object)`
+ *   - optional global `window.onWindowSizeChange(newSizeKm: number)`
+ *
+ * Elements required in the DOM:
+ * - `.control-group.tools` container
+ * - `.tool-toggle .mode-btn[data-mode='window'|'shapefile']`
+ * - `[data-section='window']`, `[data-section='shapefile']`
+ * - `#windowSize`, `#windowSizeNumber`, `#shpInput`
+ */
 function wireControlGroup() {
   const group = document.querySelector('.control-group.tools');
-  const buttons = Array.from(group.querySelectorAll('.mode-btn'));
+  const buttons = Array.from(group.querySelectorAll('.tool-toggle .mode-btn'));
   const sections = {
     window: group.querySelector("[data-section='window']"),
     shapefile: group.querySelector("[data-section='shapefile']")
@@ -2018,45 +2056,58 @@ function wireControlGroup() {
   const shpInput = inputs.shapefile[0];
   let mode = group.getAttribute('data-mode') || 'window';
 
-  const setMode = mode => {
-    group.setAttribute('data-mode', mode);
-    state.sampleMode = mode;
+  const setMode = selectedMode => {
+    group.setAttribute('data-mode', selectedMode);
+    state.sampleMode = selectedMode;
 
-    buttons.forEach(b => {
-      const sel = b.getAttribute('data-mode') === mode;
-      b.classList.toggle('is-selected', sel);
-      b.setAttribute('aria-pressed', String(sel));
+    buttons.forEach(button => {
+      const isSelected = button.getAttribute('data-mode') === selectedMode;
+      button.classList.toggle('is-selected', isSelected);
+      button.setAttribute('aria-pressed', String(isSelected));
     });
 
-    const on = mode === 'window' ? 'window' : 'shapefile';
-    const off = mode === 'window' ? 'shapefile' : 'window';
+    const activeSection = selectedMode === 'window' ? 'window' : 'shapefile';
+    const inactiveSection = selectedMode === 'window' ? 'shapefile' : 'window';
 
-    sections[on].classList.add('is-active');
-    sections[on].classList.remove('is-inactive');
-    sections[off].classList.add('is-inactive');
-    sections[off].classList.remove('is-active');
+    sections[activeSection].classList.add('is-active');
+    sections[activeSection].classList.remove('is-inactive');
+    sections[inactiveSection].classList.add('is-inactive');
+    sections[inactiveSection].classList.remove('is-active');
 
-    if (mode == 'window' && state.uploadedLayer) {
+    if (selectedMode === 'window' && state.uploadedLayer) {
       state.map.removeLayer(state.uploadedLayer);
       state.uploadedLayer = null;
-    } else if (mode == 'shapefile' && state.lastFeatureCollection) {
+    } else if (selectedMode === 'shapefile' && state.lastFeatureCollection) {
       setAOIAndRenderOverlay(state.lastFeatureCollection);
     }
 
-    inputs[on].forEach(el => { el.disabled = false; el.tabIndex = 0; });
-    inputs[off].forEach(el => { el.disabled = true; el.tabIndex = -1; });
+    inputs[activeSection].forEach(inputElement => {
+      if (inputElement) {
+        inputElement.disabled = false;
+        inputElement.tabIndex = 0;
+      }
+    });
 
-    state.samplingMode = mode;
-    setSamplingMode(mode)
+    inputs[inactiveSection].forEach(inputElement => {
+      if (inputElement) {
+        inputElement.disabled = true;
+        inputElement.tabIndex = -1;
+      }
+    });
+
+    state.samplingMode = selectedMode;
+    setSamplingMode(selectedMode);
   };
 
-  buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-  shpInput.addEventListener('change', () => {
-    const f = shpInput.files && shpInput.files[0];
-    if (f) setMode('shapefile');
-  });
 
-  // keep number/range in sync (optional)
+  buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+  if (shpInput) {
+    shpInput.addEventListener('change', () => {
+      const f = shpInput.files && shpInput.files[0];
+      if (f) setMode('shapefile');
+    });
+  }
+
   const range = group.querySelector('#windowSize');
   const num = group.querySelector('#windowSizeNumber');
   if (range && num) {
@@ -2069,8 +2120,69 @@ function wireControlGroup() {
     num.addEventListener('input', () => sync(num));
   }
 
-  // init
   setMode(mode);
+
+  document.getElementById('exportAreaBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('exportAreaBtn');
+    try {
+      btn.classList.add('disabled');
+
+      const lyrA = state.availableLayers[state.activeLayerIdxA];
+      const lyrB = state.availableLayers[state.activeLayerIdxB];
+
+      const lyrAChecked = !!document.getElementById(`layerVisibleA`)?.checked;
+      const lyrBChecked = !!document.getElementById(`layerVisibleB`)?.checked;
+
+      const raster_id_x = lyrAChecked ? lyrA?.name ?? null : null;
+      const raster_id_y = lyrBChecked ? lyrB?.name ?? null : null;
+
+      const selectedBtn = buttons.find(b => b.classList.contains('is-selected'));
+      const selectedMode = selectedBtn?.getAttribute('data-mode') ?? null;
+      let geometry = null;
+      if (selectedMode == 'window') {
+        geometry = state.sampleBox.toGeoJSON();
+      } else {
+        geometry = state.lastFeatureCollection;
+      }
+      if (!geometry) return;
+
+      const payload = {
+        raster_id_x,
+        raster_id_y,
+        geometry,
+        from_crs: 'EPSG:4326'
+      };
+
+      const res = await fetch(`${state.baseStatsUrl}/download/clip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`clip request failed (${res.status}): ${errText}`);
+      }
+
+      const blob = await res.blob();
+      const dispo = res.headers.get('Content-Disposition');
+      const match = dispo && dispo.match(/filename="?([^"]+)"?/i);
+      const filename = match ? match[1] : 'clip.zip';
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      btn.classList.remove('disabled');
+    }
+  });
 }
 
 /**
@@ -2738,6 +2850,7 @@ function wireShapefileAOIControl() {
       const featureCollection = toFeatureCollection(polyJSON);
       state.lastFeatureCollection = featureCollection;
       await setAOIAndRenderOverlay(featureCollection);
+      enableDownloadButton();
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
@@ -2782,18 +2895,21 @@ async function setAOIAndRenderOverlay(featureCollection) {
       ? collapseToMultiPolygon(featureCollection)
       : featureCollection;
 
-    scatterStats = await fetchScatterStats(layerX.name, layerY.name, aoiGeometry);
+    scatterStats = await fetchScatterStats(
+      layerX?.name, layerY?.name, aoiGeometry);
   } catch (err) {
     showOverlayError(`area sampler error: ${err.message || String(err)}`);
     throw err;
   }
 
+  const areaM2 = turf.area(featureCollection);
+  const areaKm2 = areaM2 / 1e6;
   renderScatterOverlay({
-    rasterX: layerX.name,
-    rasterY: layerY.name,
+    rasterX: layerX?.name,
+    rasterY: layerY?.name,
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
-    boxKm: null,
+    boxKm: areaKm2,
     scatterObj: scatterStats
   });
 }
@@ -2843,43 +2959,49 @@ function enableWindowSampler() {
   const map = state.map;
   if (!map || state._areaSampler?.enabled) return;
 
-  const handlers = {};
+  // ensure hoverRect exists and is on the map
   if (!state.hoverRect) {
     state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
-  } else {
-    if (!map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+  } else if (!map.hasLayer(state.hoverRect)) {
+    state.hoverRect.addTo(map);
   }
 
-  handlers.mousemove = (e) => {
+  /** Update hoverRect while the mouse moves. */
+  function onMouseMove(e) {
     state.lastMouseLatLng = e.latlng;
     const poly = squarePolygonAt(e.latlng, state.boxSizeKm);
     state.hoverRect.setLatLngs(poly.getLatLngs());
-  };
+  }
 
-  handlers.mouseout = () => {
+  /** Hide hoverRect when leaving the map. */
+  function onMouseOut() {
     if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
-  };
+  }
 
-  handlers.mouseover = () => {
+  /** Show hoverRect when entering the map. */
+  function onMouseOver() {
     if (state.hoverRect && !map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
-  };
+  }
 
-  handlers.click = async (evt) => {
+  /** Perform sampling and render overlay on click. */
+  async function onClick(evt) {
     clearScatterOverlay();
+
     let lyrA = state.availableLayers[state.activeLayerIdxA];
     let lyrB = state.availableLayers[state.activeLayerIdxB];
 
     const visA = document.getElementById('layerVisibleA');
     const visB = document.getElementById('layerVisibleB');
 
-    // turn off the layers if any of the layers are shown 'off'
     if (visA && !visA.checked) lyrA = null;
     if (visB && !visB.checked) lyrB = null;
 
     const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
+    state.sampleBox = poly;
     _updateOutline(poly);
 
     if (!lyrA && !lyrB) return;
+
     renderScatterOverlay({
       rasterX: lyrA?.name,
       rasterY: lyrB?.name,
@@ -2889,34 +3011,59 @@ function enableWindowSampler() {
       scatterObj: null
     });
 
-    let scatterStats;
     try {
-      scatterStats = await fetchScatterStats(lyrA?.name ?? null, lyrB?.name ?? null, poly.toGeoJSON());
+      const scatterStats = await fetchScatterStats(
+        lyrA?.name ?? null,
+        lyrB?.name ?? null,
+        poly.toGeoJSON()
+      );
+
+      renderScatterOverlay({
+        rasterX: lyrA?.name,
+        rasterY: lyrB?.name,
+        centerLng: evt.latlng.lng,
+        centerLat: evt.latlng.lat,
+        boxKm: state.boxSizeKm,
+        scatterObj: scatterStats
+      });
+
+      enableDownloadButton();
     } catch (e) {
       showOverlayError(`area sampler error: ${e.message || String(e)}`);
-      return;
     }
+  }
 
-    renderScatterOverlay({
-      rasterX: lyrA?.name,
-      rasterY: lyrB?.name,
-      centerLng: evt.latlng.lng,
-      centerLat: evt.latlng.lat,
-      boxKm: state.boxSizeKm,
-      scatterObj: scatterStats
-    });
+  map.on('mousemove', onMouseMove);
+  map.on('mouseout', onMouseOut);
+  map.on('mouseover', onMouseOver);
+  map.on('click', onClick);
+
+  state._areaSampler = {
+    enabled: true,
+    onMouseMove,
+    onMouseOut,
+    onMouseOver,
+    onClick
   };
 
-  map.on('mousemove', handlers.mousemove);
-  map.on('mouseout', handlers.mouseout);
-  map.on('mouseover', handlers.mouseover);
-  map.on('click', handlers.click);
-
-  state._areaSampler = { handlers, enabled: true };
   if (map._container) {
     map._container.classList.add('mode-window');
     map._container.classList.remove('mode-shapefile');
   }
+}
+
+/**
+ * Enables the export/download button once a valid area is selected.
+ *
+ * This function removes the 'disabled' class from the export button and updates
+ * its label text to indicate that the user can now download the selected area.
+ * It is typically called after the user has drawn a sampling window or uploaded
+ * an AOI shapefile, signaling that a download action is available.
+ */
+
+function enableDownloadButton() {
+  document.getElementById('exportAreaBtn').classList.remove('disabled');
+  document.getElementById('exportAreaBtn').textContent = 'Download Area';
 }
 
 /**
@@ -2931,12 +3078,10 @@ function disableWindowSampler() {
   const map = state.map;
   if (!map || !state._areaSampler?.enabled) return;
 
-  const { handlers } = state._areaSampler;
-
-  map.off('mousemove', handlers.mousemove);
-  map.off('mouseout', handlers.mouseout);
-  map.off('mouseover', handlers.mouseover);
-  map.off('click', handlers.click);
+  map.off('mousemove', state._areaSampler.onMouseMove);
+  map.off('mouseout', state._areaSampler.onMouseOut);
+  map.off('mouseover', state._areaSampler.onMouseOver);
+  map.off('click', state._areaSampler.onClick);
 
   if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
 

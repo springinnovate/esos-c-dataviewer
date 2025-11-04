@@ -26,10 +26,15 @@ Intended usage:
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List
 import logging
 import os
+import shutil
+import tempfile
+import traceback
+import zipfile
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -37,15 +42,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from osgeo import gdal
 from pydantic import BaseModel
 from pyproj import Transformer
+from rasterio.errors import WindowError
 from rasterio.features import geometry_mask
+from rasterio.mask import mask as rio_mask
 from rasterio.warp import reproject, Resampling
 from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds, Window
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
+from starlette.background import BackgroundTask
+from starlette.responses import FileResponse
 import numpy as np
 import rasterio
-import traceback
 import yaml
 
 load_dotenv()
@@ -175,6 +183,201 @@ class PixelValOut(BaseModel):
     col: Optional[int] = None
     in_bounds: bool = False
     value: Optional[float] = None
+
+
+class ClipIn(BaseModel):
+    """Input model for raster clipping requests.
+
+    This schema defines the inputs required to clip one or two rasters
+    using a provided GeoJSON geometry. The geometry can be a Feature or
+    FeatureCollection, and is assumed to be in the coordinate reference
+    system specified by `from_crs`.
+
+    Attributes:
+        raster_id_x (Optional[str]): Identifier for the first raster layer to clip.
+            May be `None` if only one raster is needed.
+        raster_id_y (Optional[str]): Identifier for the second raster layer to clip.
+            May be `None` if only one raster is needed.
+        geometry (dict): A GeoJSON dictionary defining the polygon(s) to clip.
+            Supports both single `Feature` and `FeatureCollection` formats.
+        from_crs (str): Coordinate reference system of the input geometry,
+            e.g. 'EPSG:4326'.
+        all_touched (bool): Whether to include all pixels touched by the
+            geometry boundary (True) or only those whose centers fall within
+            the geometry (False). Defaults to False.
+    """
+
+    raster_id_x: Optional[str]
+    raster_id_y: Optional[str]
+    geometry: dict
+    from_crs: str
+    all_touched: bool = False
+
+
+def _reproject_geojson_geoms(gj: dict, from_crs: str, to_crs) -> list[dict]:
+    """Reproject all geometries in a GeoJSON object to the target CRS.
+
+    Accepts Feature, FeatureCollection, or bare geometry GeoJSON dictionaries
+    and returns a list of reprojected geometry dictionaries suitable for use
+    with rasterio masking operations. The function supports nested coordinate
+    arrays for polygons, multipolygons, and geometry collections.
+
+    Args:
+        gj (dict): Input GeoJSON object containing geometries to reproject.
+        from_crs (str): EPSG code or PROJ string defining the input CRS.
+        to_crs: A `pyproj.CRS` object or similar defining the target CRS.
+
+    Returns:
+        list[dict]: A list of GeoJSON geometry dictionaries reprojected to the
+        target CRS. If no reprojection is needed, the original geometries are
+        returned unchanged.
+    """
+    if not to_crs or not from_crs or from_crs == to_crs.to_string():
+        return _extract_geometries(gj)
+
+    tf = Transformer.from_crs(from_crs, to_crs, always_xy=True)
+
+    def _tx_point(pt):
+        if len(pt) == 2:
+            x, y = tf.transform(pt[0], pt[1])
+            return [x, y]
+        x, y, z = pt[0], pt[1], pt[2]
+        x2, y2 = tf.transform(x, y)
+        return [x2, y2, z]
+
+    def _map_coords(coords):
+        if (
+            isinstance(coords, (list, tuple))
+            and coords
+            and isinstance(coords[0], (int, float))
+        ):
+            return _tx_point(coords)
+        return [_map_coords(c) for c in coords]
+
+    def _tx_geometry(geom):
+        gtype = geom.get("type")
+        if gtype in (
+            "Point",
+            "MultiPoint",
+            "LineString",
+            "MultiLineString",
+            "Polygon",
+            "MultiPolygon",
+        ):
+            return {
+                "type": gtype,
+                "coordinates": _map_coords(geom.get("coordinates", [])),
+            }
+        if gtype == "GeometryCollection":
+            return {
+                "type": "GeometryCollection",
+                "geometries": [
+                    _tx_geometry(g) for g in geom.get("geometries", [])
+                ],
+            }
+        return geom
+
+    geoms = _extract_geometries(gj)
+    return [_tx_geometry(g) for g in geoms]
+
+
+def _extract_geometries(geojson_obj: dict) -> list[dict]:
+    """Extract all geometry dictionaries from a GeoJSON object.
+
+    This function normalizes various GeoJSON structures—such as a bare geometry,
+    a single Feature, or a FeatureCollection—into a flat list of geometry
+    dictionaries. Each geometry dictionary in the returned list will contain
+    at least a 'type' (e.g., 'Polygon', 'Point') and 'coordinates' key,
+    making the result suitable for operations like masking or reprojection.
+
+    Args:
+        geojson_obj (dict): A GeoJSON dictionary. This may represent a
+            single geometry (e.g., {"type": "Polygon", "coordinates": [...]})
+            or a higher-level container such as a Feature or FeatureCollection.
+
+    Returns:
+        list[dict]: A list of GeoJSON geometry dictionaries extracted from the
+        input object. The list will contain:
+            - One geometry if the input is a single Feature or bare geometry.
+            - Multiple geometries if the input is a FeatureCollection.
+            - An empty list if the input contains no valid geometries.
+    """
+    geojson_type = geojson_obj.get("type")
+
+    if geojson_type == "Feature":
+        geometry = geojson_obj.get("geometry")
+        return [geometry] if geometry else []
+
+    if geojson_type == "FeatureCollection":
+        geometries = []
+        for feature in geojson_obj.get("features", []):
+            geometry = feature.get("geometry")
+            if geometry:
+                geometries.append(geometry)
+        return geometries
+
+    # Assume the input is a bare geometry object
+    return [geojson_obj]
+
+
+def _clip_and_write_tif(
+    ds: rasterio.io.DatasetReader,
+    geoms_ds: list[dict],
+    from_crs: str,
+    nodata_val,
+    all_touched: bool,
+    out_path: str,
+):
+    """Clip a raster dataset to a GeoJSON geometry and write the result to disk.
+
+    Reprojects the input GeoJSON geometry to match the raster's CRS,
+    applies the geometry as a spatial mask, and writes the clipped subset
+    to a new GeoTIFF file. Supports both single and multi-feature geometries
+    and respects the `all_touched` flag for boundary inclusion.
+
+    Args:
+        ds (rasterio.io.DatasetReader): Opened raster dataset to clip.
+        geoms_ds (list[dict]): List of GeoJSON geometry dictionaries (e.g.,
+            Polygons or MultiPolygons) already reprojected to the raster's CRS.
+        from_crs (str): CRS string of the input geometry (e.g., 'EPSG:4326').
+        nodata_val: NoData value to use for masking. If None, uses the dataset's
+            internal NoData value.
+        all_touched (bool): Whether to include all pixels touched by the
+            geometry boundary.
+        out_path (str): Filesystem path where the clipped GeoTIFF will be saved.
+
+    Raises:
+        HTTPException: If no valid geometry is provided.
+    """
+    if not geoms_ds:
+        raise HTTPException(
+            status_code=400, detail="No valid geometry provided"
+        )
+
+    out_image, out_transform = rio_mask(
+        ds,
+        geoms_ds,
+        crop=True,
+        all_touched=bool(all_touched),
+        nodata=nodata_val if nodata_val is not None else ds.nodata,
+        filled=True,
+    )
+    out_meta = ds.meta.copy()
+    out_meta.update(
+        {
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform,
+            "nodata": nodata_val if nodata_val is not None else ds.nodata,
+            "compress": "deflate",
+            "tiled": True,
+            "blockxsize": 256,
+            "blockysize": 256,
+            "BIGTIFF": "IF_SAFER",
+        }
+    )
+    with rasterio.open(out_path, "w", **out_meta) as dst:
+        dst.write(out_image)
 
 
 def _load_registry() -> dict:
@@ -400,7 +603,7 @@ def _safe_window_for_geom(dataset, geometry):
 
     Args:
         dataset (rasterio.io.DatasetReader): Open raster dataset.
-        geometry (shapely.geometry.base.BaseGeometry): Geometry to bound,
+        geometry (dict (geojson)): Geometry to bound,
             must be in the same CRS as dataset.
 
     Returns:
@@ -509,40 +712,43 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         y_arr, y_on_xgrid_masked = (None, None)
         if y_ds and x_ds:
-            logger.debug("Transforming bounds and reprojecting Y to X grid")
-            ul = x_affine * (0, 0)
-            lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
-            minx, maxx = sorted([ul[0], lr[0]])
-            miny, maxy = sorted([ul[1], lr[1]])
-            minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
-                x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
-            )
-            y_win = from_bounds(
-                minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
-            )
-            y_win = (
-                y_win.round_offsets()
-                .round_lengths()
-                .intersection(Window(0, 0, y_ds.width, y_ds.height))
-            )
-            y_src = y_ds.read(1, window=y_win, masked=False).astype(
-                "float64", copy=False
-            )
-            y_affine = y_ds.window_transform(y_win)
-            y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
-            reproject(
-                source=y_src,
-                destination=y_on_xgrid,
-                src_transform=y_affine,
-                src_crs=y_ds.crs,
-                src_nodata=y_nodata_val,
-                dst_transform=x_affine,
-                dst_crs=x_ds.crs,
-                dst_nodata=np.nan,
-                resampling=Resampling.nearest,
-                num_threads=0,
-            )
-            y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
+            try:
+                logger.debug("Transforming bounds and reprojecting Y to X grid")
+                ul = x_affine * (0, 0)
+                lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
+                minx, maxx = sorted([ul[0], lr[0]])
+                miny, maxy = sorted([ul[1], lr[1]])
+                minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
+                    x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
+                )
+                y_win = from_bounds(
+                    minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
+                )
+                y_win = (
+                    y_win.round_offsets()
+                    .round_lengths()
+                    .intersection(Window(0, 0, y_ds.width, y_ds.height))
+                )
+                y_src = y_ds.read(1, window=y_win, masked=False).astype(
+                    "float64", copy=False
+                )
+                y_affine = y_ds.window_transform(y_win)
+                y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
+                reproject(
+                    source=y_src,
+                    destination=y_on_xgrid,
+                    src_transform=y_affine,
+                    src_crs=y_ds.crs,
+                    src_nodata=y_nodata_val,
+                    dst_transform=x_affine,
+                    dst_crs=x_ds.crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.nearest,
+                    num_threads=0,
+                )
+                y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
+            except WindowError:
+                pass
 
         elif y_ds:
             y_arr, y_affine, mask = read_masked_array(
@@ -725,4 +931,102 @@ def pixel_val(req: PixelValIn):
         raise HTTPException(
             status_code=500,
             detail=f"Pixel value query failed: {type(e).__name__}: {e}",
+        )
+
+
+@app.post("/download/clip")
+def download_clip(req: ClipIn):
+    try:
+        if not req.raster_id_x and not req.raster_id_y:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one of raster_id_x or raster_id_y must be provided",
+            )
+
+        x_ds = x_nodata = y_ds = y_nodata = None
+        if req.raster_id_x:
+            x_ds, x_nodata = _open_raster(req.raster_id_x)
+        if req.raster_id_y:
+            y_ds, y_nodata = _open_raster(req.raster_id_y)
+
+        ref_ds = x_ds or y_ds
+        if ref_ds is None:
+            raise HTTPException(
+                status_code=400, detail="No valid raster provided"
+            )
+
+        geom_ref = _reproject_geojson_geoms(
+            req.geometry, req.from_crs, ref_ds.crs
+        )
+        ts = datetime.utcnow().strftime("%Y_%m_%d_%H_%M_%S")
+        name_parts = []
+        if req.raster_id_x:
+            name_parts.append(req.raster_id_x)
+        if req.raster_id_y:
+            name_parts.append(req.raster_id_y)
+        base_name = "_".join(name_parts) if name_parts else "clip"
+        zip_name = f"{base_name}_{ts}.zip"
+
+        temp_dir = tempfile.mkdtemp(prefix="essosc_clip_")
+        out_paths = []
+
+        if req.raster_id_x:
+            out_x = Path(temp_dir) / f"{req.raster_id_x}_{ts}.tif"
+            _clip_and_write_tif(
+                x_ds,
+                geom_ref,
+                req.from_crs,
+                x_nodata,
+                req.all_touched,
+                str(out_x),
+            )
+            out_paths.append(out_x)
+
+        if req.raster_id_y:
+            out_y = Path(temp_dir) / f"{req.raster_id_y}_{ts}.tif"
+            _clip_and_write_tif(
+                y_ds,
+                geom_ref,
+                req.from_crs,
+                y_nodata,
+                req.all_touched,
+                str(out_y),
+            )
+            out_paths.append(out_y)
+
+        zip_path = Path(temp_dir) / zip_name
+        with zipfile.ZipFile(
+            zip_path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as zf:
+            for p in out_paths:
+                zf.write(p, arcname=p.name)
+
+        # close datasets before returning
+        for d in (x_ds, y_ds):
+            try:
+                if d:
+                    d.close()
+            except Exception:
+                pass
+
+        def _cleanup():
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=zip_name,
+            background=BackgroundTask(_cleanup),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("download_clip failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Clip download failed: {type(e).__name__}: {e}",
         )

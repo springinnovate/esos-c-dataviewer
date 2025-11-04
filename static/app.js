@@ -2109,8 +2109,57 @@ function wireControlGroup() {
 
   setMode(mode);
 
-  document.getElementById('exportAreaBtn').disabled = true;
-  // set up listener for
+  document.getElementById('exportAreaBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('exportAreaBtn');
+    try {
+      btn.classList.add('disabled');
+
+      const lyrA = state.availableLayers[state.activeLayerIdxA];
+      const lyrB = state.availableLayers[state.activeLayerIdxB];
+
+      const raster_id_x = lyrA?.name ?? null;
+      const raster_id_y = lyrB?.name ?? null;
+
+      const geometry = state.lastFeatureCollection; // GeoJSON Feature/FeatureCollection
+      if (!geometry) return;
+
+      const payload = {
+        raster_id_x,
+        raster_id_y,
+        geometry,
+        from_crs: 'EPSG:4326'
+      };
+
+      const res = await fetch(`${state.baseStatsUrl}/download/clip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`clip request failed (${res.status}): ${errText}`);
+      }
+
+      const blob = await res.blob();
+      const dispo = res.headers.get('Content-Disposition');
+      const match = dispo && dispo.match(/filename="?([^"]+)"?/i);
+      const filename = match ? match[1] : 'clip.zip';
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      btn.classList.remove('disabled');
+    }
+  });
 }
 
 /**
@@ -2778,6 +2827,7 @@ function wireShapefileAOIControl() {
       const featureCollection = toFeatureCollection(polyJSON);
       state.lastFeatureCollection = featureCollection;
       await setAOIAndRenderOverlay(featureCollection);
+      enableDownloadButton();
     } catch (err) {
       console.error(err);
       alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
@@ -2953,8 +3003,7 @@ function enableWindowSampler() {
         scatterObj: scatterStats
       });
 
-      document.getElementById('exportAreaBtn').disabled = false;
-      document.getElementById('exportAreaBtn').textContent = 'Download Area';
+      enableDownloadButton();
     } catch (e) {
       showOverlayError(`area sampler error: ${e.message || String(e)}`);
     }
@@ -2981,6 +3030,20 @@ function enableWindowSampler() {
 }
 
 /**
+ * Enables the export/download button once a valid area is selected.
+ *
+ * This function removes the 'disabled' class from the export button and updates
+ * its label text to indicate that the user can now download the selected area.
+ * It is typically called after the user has drawn a sampling window or uploaded
+ * an AOI shapefile, signaling that a download action is available.
+ */
+
+function enableDownloadButton() {
+  document.getElementById('exportAreaBtn').classList.remove('disabled');
+  document.getElementById('exportAreaBtn').textContent = 'Download Area';
+}
+
+/**
  * Disables the map window sampling mode and removes related UI elements and handlers.
  *
  * - Detaches all event listeners registered by `enableWindowSampler()`.
@@ -2992,12 +3055,10 @@ function disableWindowSampler() {
   const map = state.map;
   if (!map || !state._areaSampler?.enabled) return;
 
-  const { handlers } = state._areaSampler;
-
-  map.off('mousemove', handlers.onMouseMove);
-  map.off('mouseout', handlers.onMouseOut);
-  map.off('mouseover', handlers.onMouseOver);
-  map.off('click', handlers.onClick);
+  map.off('mousemove', state._areaSampler.onMouseMove);
+  map.off('mouseout', state._areaSampler.onMouseOut);
+  map.off('mouseover', state._areaSampler.onMouseOver);
+  map.off('click', state._areaSampler.onClick);
 
   if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
 

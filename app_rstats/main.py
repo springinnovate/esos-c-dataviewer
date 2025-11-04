@@ -33,6 +33,7 @@ import logging
 import os
 import shutil
 import tempfile
+import traceback
 import zipfile
 
 from dotenv import load_dotenv
@@ -53,7 +54,6 @@ from starlette.background import BackgroundTask
 from starlette.responses import FileResponse
 import numpy as np
 import rasterio
-import traceback
 import yaml
 
 load_dotenv()

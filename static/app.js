@@ -2117,8 +2117,11 @@ function wireControlGroup() {
       const lyrA = state.availableLayers[state.activeLayerIdxA];
       const lyrB = state.availableLayers[state.activeLayerIdxB];
 
-      const raster_id_x = lyrA?.name ?? null;
-      const raster_id_y = lyrB?.name ?? null;
+      const lyrAChecked = !!document.getElementById(`layerVisibleA`)?.checked;
+      const lyrBChecked = !!document.getElementById(`layerVisibleA`)?.checked;
+
+      const raster_id_x = lyrAChecked ? lyrA?.name : null;
+      const raster_id_y = lyrBChecked ? lyrB?.name : null;
 
       const geometry = state.lastFeatureCollection; // GeoJSON Feature/FeatureCollection
       if (!geometry) return;

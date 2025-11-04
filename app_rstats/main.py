@@ -41,6 +41,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from osgeo import gdal
 from pydantic import BaseModel
 from pyproj import Transformer
+from rasterio.errors import WindowError
 from rasterio.features import geometry_mask
 from rasterio.mask import mask as rio_mask
 from rasterio.warp import reproject, Resampling
@@ -688,40 +689,43 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         y_arr, y_on_xgrid_masked = (None, None)
         if y_ds and x_ds:
-            logger.debug("Transforming bounds and reprojecting Y to X grid")
-            ul = x_affine * (0, 0)
-            lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
-            minx, maxx = sorted([ul[0], lr[0]])
-            miny, maxy = sorted([ul[1], lr[1]])
-            minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
-                x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
-            )
-            y_win = from_bounds(
-                minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
-            )
-            y_win = (
-                y_win.round_offsets()
-                .round_lengths()
-                .intersection(Window(0, 0, y_ds.width, y_ds.height))
-            )
-            y_src = y_ds.read(1, window=y_win, masked=False).astype(
-                "float64", copy=False
-            )
-            y_affine = y_ds.window_transform(y_win)
-            y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
-            reproject(
-                source=y_src,
-                destination=y_on_xgrid,
-                src_transform=y_affine,
-                src_crs=y_ds.crs,
-                src_nodata=y_nodata_val,
-                dst_transform=x_affine,
-                dst_crs=x_ds.crs,
-                dst_nodata=np.nan,
-                resampling=Resampling.nearest,
-                num_threads=0,
-            )
-            y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
+            try:
+                logger.debug("Transforming bounds and reprojecting Y to X grid")
+                ul = x_affine * (0, 0)
+                lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
+                minx, maxx = sorted([ul[0], lr[0]])
+                miny, maxy = sorted([ul[1], lr[1]])
+                minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
+                    x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
+                )
+                y_win = from_bounds(
+                    minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
+                )
+                y_win = (
+                    y_win.round_offsets()
+                    .round_lengths()
+                    .intersection(Window(0, 0, y_ds.width, y_ds.height))
+                )
+                y_src = y_ds.read(1, window=y_win, masked=False).astype(
+                    "float64", copy=False
+                )
+                y_affine = y_ds.window_transform(y_win)
+                y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
+                reproject(
+                    source=y_src,
+                    destination=y_on_xgrid,
+                    src_transform=y_affine,
+                    src_crs=y_ds.crs,
+                    src_nodata=y_nodata_val,
+                    dst_transform=x_affine,
+                    dst_crs=x_ds.crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.nearest,
+                    num_threads=0,
+                )
+                y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
+            except WindowError:
+                pass
 
         elif y_ds:
             y_arr, y_affine, mask = read_masked_array(

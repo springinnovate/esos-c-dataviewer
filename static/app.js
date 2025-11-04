@@ -83,6 +83,7 @@ const state = {
   probeSuppressed: false,
   pctBounds: null,
   lastFeatureCollection: null,
+  sampleBox: null,
   scatterSvg: null,
   pointCircle: null,
   pointBackground: null,
@@ -2118,12 +2119,19 @@ function wireControlGroup() {
       const lyrB = state.availableLayers[state.activeLayerIdxB];
 
       const lyrAChecked = !!document.getElementById(`layerVisibleA`)?.checked;
-      const lyrBChecked = !!document.getElementById(`layerVisibleA`)?.checked;
+      const lyrBChecked = !!document.getElementById(`layerVisibleB`)?.checked;
 
-      const raster_id_x = lyrAChecked ? lyrA?.name : null;
-      const raster_id_y = lyrBChecked ? lyrB?.name : null;
+      const raster_id_x = lyrAChecked ? lyrA?.name ?? null : null;
+      const raster_id_y = lyrBChecked ? lyrB?.name ?? null : null;
 
-      const geometry = state.lastFeatureCollection; // GeoJSON Feature/FeatureCollection
+      const selectedBtn = buttons.find(b => b.classList.contains('is-selected'));
+      const selectedMode = selectedBtn?.getAttribute('data-mode') ?? null;
+      let geometry = null;
+      if (selectedMode == 'window') {
+        geometry = state.sampleBox.toGeoJSON();
+      } else {
+        geometry = state.lastFeatureCollection;
+      }
       if (!geometry) return;
 
       const payload = {
@@ -2977,6 +2985,7 @@ function enableWindowSampler() {
     if (visB && !visB.checked) lyrB = null;
 
     const poly = squarePolygonAt(evt.latlng, state.boxSizeKm);
+    state.sampleBox = poly;
     _updateOutline(poly);
 
     if (!lyrA && !lyrB) return;

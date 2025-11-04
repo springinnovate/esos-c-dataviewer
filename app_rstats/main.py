@@ -935,7 +935,7 @@ def download_clip(req: ClipIn):
         geom_ref = _reproject_geojson_geoms(
             req.geometry, req.from_crs, ref_ds.crs
         )
-        ts = datetime.utcnow().strftime("%Y_%m_%d_%S")
+        ts = datetime.utcnow().strftime("%Y_%m_%d_%H_%M_%S")
         name_parts = []
         if req.raster_id_x:
             name_parts.append(req.raster_id_x)

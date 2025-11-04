@@ -89,6 +89,7 @@ const state = {
   pointBackground: null,
   pointGroup: null,
   lastHasData: null,
+  selectElement: null,
  }
 
 
@@ -1096,7 +1097,9 @@ function renderScatterOverlay(opts) {
     rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj,
     visA,
     visB,
+    palette: state.selectElement.value,
     percentiles: state.percentiles,
+
   });
 
   if (state.lastRenderKey === newRenderKey) {
@@ -2646,81 +2649,88 @@ function wirePixelProbe() {
 /**
  * Initializes and manages a bivariate palette picker dropdown UI element.
  *
- * This function creates (if necessary) and populates a <select> element used to switch
- * between registered bivariate palettes defined in `state.bivariatePalette`.
- * It also wires up automatic application of the selected palette and provides
- * a manual refresh hook if palettes are added dynamically.
+ * This function ensures a <select> element exists for selecting among registered
+ * bivariate palettes defined in `state.bivariatePalette`, populates its options,
+ * applies the selected palette automatically, and exposes a manual refresh method.
  *
  * Behavior summary:
  * - Ensures a <select> element with the given ID exists (default: 'bivariatePaletteSelect').
  * - Populates it with sorted keys from `state.bivariatePalette`.
- * - Automatically applies the currently selected palette to active axes (A and B).
+ * - Automatically applies the selected palette to active axes (A and B).
  * - Supports palettes defined as functions, objects with `.cmap`, or objects containing `{A, B}`.
- * - Exposes a refresh method `state.refreshBivariatePalettePicker()` to rebuild the dropdown and reapply.
+ * - Exposes a `state.refreshBivariatePalettePicker()` method to rebuild the dropdown dynamically.
  *
  * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
  * @returns {void}
  */
-function wireBivariatePalettePicker(selectId) {
-  const ensureSelect = () => {
-    let sel = document.getElementById(selectId);
-    if (!sel) {
-      sel = document.createElement('select');
-      sel.id = selectId;
+function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+  const ensureSelectElement = () => {
+    let selectElement = document.getElementById(selectId);
+    if (!selectElement) {
+      selectElement = document.createElement('select');
+      selectElement.id = selectId;
       const container = document.getElementById('bivariatePaletteContainer') || document.body;
-      container.appendChild(sel);
+      container.appendChild(selectElement);
     }
-    return sel;
+    return selectElement;
   };
 
-  const getKeys = () => Object.keys(state.bivariatePalette || {}).sort();
+  const getPaletteKeys = () => Object.keys(state.bivariatePalette).sort();
 
-  const refreshOptions = (sel) => {
-    const cur = sel.value;
-    sel.innerHTML = '';
-    getKeys().forEach(key => {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = key;
-      sel.appendChild(opt);
+  const refreshSelectOptions = (selectElement) => {
+    const currentValue = selectElement.value;
+    selectElement.innerHTML = '';
+    getPaletteKeys().forEach(paletteKey => {
+      const optionElement = document.createElement('option');
+      optionElement.value = paletteKey;
+      optionElement.textContent = paletteKey;
+      selectElement.appendChild(optionElement);
     });
-    if (getKeys().length) {
-      sel.value = getKeys().includes(cur) ? cur : getKeys()[0];
+    const availableKeys = getPaletteKeys();
+    if (availableKeys.length) {
+      selectElement.value = availableKeys.includes(currentValue) ? currentValue : availableKeys[0];
     }
   };
 
-  const applySelected = (key) => {
-    const pal = state.bivariatePalette?.[key];
-    if (!pal) return;
-    if (typeof pal === 'function') {
-      applyBivariateColormapToAB(pal);
-      return;
+  const applySelectedPalette = (paletteKey) => {
+    const selectedPalette = state.bivariatePalette[paletteKey];
+    if (!selectedPalette) return;
+
+    if (typeof selectedPalette === 'function') {
+      applyBivariateColormapToAB(selectedPalette);
+    } else if (typeof selectedPalette.cmap === 'function') {
+      applyBivariateColormapToAB(selectedPalette.cmap);
+    } else if (selectedPalette.A && selectedPalette.B) {
+      applyBivariatePalette(selectedPalette);
     }
-    if (typeof pal.cmap === 'function') {
-      applyBivariateColormapToAB(pal.cmap);
-      return;
-    }
-    if (pal.A && pal.B) {
-      applyBivariatePalette(pal);
-      return;
+
+    if (state.lastScatterOpts) {
+      renderScatterOverlay({
+        ...state.lastScatterOpts,
+        scatterObj: state.scatterObj
+      });
     }
   };
 
-  const sel = ensureSelect();
-  refreshOptions(sel);
-  if (sel.querySelector('option[value="orangeBlue"]')) {
-      sel.value = 'orangeBlue';
+  const selectElement = ensureSelectElement();
+  state.selectElement = selectElement;
+  refreshSelectOptions(selectElement);
+
+  if (selectElement.querySelector('option[value="orangeBlue"]')) {
+    selectElement.value = 'orangeBlue';
   }
-  applySelected(sel.value);
 
-  sel.addEventListener('change', () => applySelected(sel.value));
+  applySelectedPalette(selectElement.value);
 
-  // expose a manual refresh if palettes are added later
+  selectElement.addEventListener('change', () => applySelectedPalette(selectElement.value));
+
+  // Expose manual refresh for dynamic palette registration
   state.refreshBivariatePalettePicker = () => {
-    refreshOptions(sel);
-    applySelected(sel.value);
+    refreshSelectOptions(selectElement);
+    applySelectedPalette(selectElement.value);
   };
 }
+
 
 function addGeoJSONPolyToMap(fc) {
   if (state.uploadedLayer) {

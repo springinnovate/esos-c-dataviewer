@@ -3033,7 +3033,6 @@ function enableWindowSampler() {
     }
   }
 
-  // wire events
   map.on('mousemove', onMouseMove);
   map.on('mouseout', onMouseOut);
   map.on('mouseover', onMouseOver);

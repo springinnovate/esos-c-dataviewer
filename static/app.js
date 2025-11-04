@@ -2056,37 +2056,49 @@ function wireControlGroup() {
   const shpInput = inputs.shapefile[0];
   let mode = group.getAttribute('data-mode') || 'window';
 
-  const setMode = m => {
-    group.setAttribute('data-mode', m);
-    state.sampleMode = m;
+  const setMode = selectedMode => {
+    group.setAttribute('data-mode', selectedMode);
+    state.sampleMode = selectedMode;
 
-    buttons.forEach(b => {
-      const sel = b.getAttribute('data-mode') === m;
-      b.classList.toggle('is-selected', sel);
-      b.setAttribute('aria-pressed', String(sel));
+    buttons.forEach(button => {
+      const isSelected = button.getAttribute('data-mode') === selectedMode;
+      button.classList.toggle('is-selected', isSelected);
+      button.setAttribute('aria-pressed', String(isSelected));
     });
 
-    const on = m === 'window' ? 'window' : 'shapefile';
-    const off = m === 'window' ? 'shapefile' : 'window';
+    const activeSection = selectedMode === 'window' ? 'window' : 'shapefile';
+    const inactiveSection = selectedMode === 'window' ? 'shapefile' : 'window';
 
-    sections[on].classList.add('is-active');
-    sections[on].classList.remove('is-inactive');
-    sections[off].classList.add('is-inactive');
-    sections[off].classList.remove('is-active');
+    sections[activeSection].classList.add('is-active');
+    sections[activeSection].classList.remove('is-inactive');
+    sections[inactiveSection].classList.add('is-inactive');
+    sections[inactiveSection].classList.remove('is-active');
 
-    if (m === 'window' && state.uploadedLayer) {
+    if (selectedMode === 'window' && state.uploadedLayer) {
       state.map.removeLayer(state.uploadedLayer);
       state.uploadedLayer = null;
-    } else if (m === 'shapefile' && state.lastFeatureCollection) {
+    } else if (selectedMode === 'shapefile' && state.lastFeatureCollection) {
       setAOIAndRenderOverlay(state.lastFeatureCollection);
     }
 
-    inputs[on].forEach(el => { if (el) { el.disabled = false; el.tabIndex = 0; } });
-    inputs[off].forEach(el => { if (el) { el.disabled = true; el.tabIndex = -1; } });
+    inputs[activeSection].forEach(inputElement => {
+      if (inputElement) {
+        inputElement.disabled = false;
+        inputElement.tabIndex = 0;
+      }
+    });
 
-    state.samplingMode = m;
-    setSamplingMode(m);
+    inputs[inactiveSection].forEach(inputElement => {
+      if (inputElement) {
+        inputElement.disabled = true;
+        inputElement.tabIndex = -1;
+      }
+    });
+
+    state.samplingMode = selectedMode;
+    setSamplingMode(selectedMode);
   };
+
 
   buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
   if (shpInput) {

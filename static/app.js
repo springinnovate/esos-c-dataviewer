@@ -741,7 +741,6 @@ function _zoomToOutline(centerLng, centerLat) {
   } else if (state.uploadedLayer && state.map.hasLayer(state.uploadedLayer)) {
     const b = state.uploadedLayer.getBounds()
     if (b && b.isValid()) {
-      //const centerLngLat = getGeoJSONCenter(featureCollection);
       state.map.fitBounds(b, { padding: [24, 24] })
       return
     }

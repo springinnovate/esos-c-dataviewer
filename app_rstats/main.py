@@ -733,8 +733,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if vals.size > 0:
                     hist, edges = np.histogram(vals, bins=bins)
                     valid = True
-            except ValueError:
-                logger.exception(f"error on _read_clip_hist {raster_id}")
+            except ValueError as e:
+                logger.warning(f"{e} error on _read_clip_hist {raster_id}")
 
             return {
                 "ds": ds,

@@ -1193,10 +1193,15 @@ function renderScatterOverlay(opts) {
       svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B')
     }
   }
-  plotEl.appendChild(svg);
-  state.scatterSvg = svg;
-  wirePercentiles()
-  state.scatterObj = scatterObj;
+  if (svg) {
+    plotEl.appendChild(svg);
+    state.scatterSvg = svg;
+    wirePercentiles()
+    state.scatterObj = scatterObj;
+  } else {
+    state.scatterSvg = null;
+    state.scatterObj = null;
+  }
 }
 
 /**
@@ -3031,8 +3036,9 @@ async function sampleAndRenderSampleBox(latlng) {
 
   if (visA && !visA.checked) lyrA = null;
   if (visB && !visB.checked) lyrB = null;
-  _updateOutline(state.sampleBox);
+  if (!state.sampleBox) return;
   if (!lyrA && !lyrB) return;
+  _updateOutline(state.sampleBox);
 
   if (!latlng) {
     latlng = {

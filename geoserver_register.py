@@ -37,6 +37,7 @@ from typing import Any
 import argparse
 import logging
 import os
+import secrets
 import sys
 import tempfile
 import time
@@ -47,6 +48,7 @@ from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.windows import Window
+from requests.auth import HTTPBasicAuth
 import numpy as np
 import rasterio
 import requests
@@ -63,6 +65,8 @@ logger = logging.getLogger(__name__)
 requests.packages.urllib3.disable_warnings()  # noqa: E402
 
 load_dotenv()
+
+PASSWORD_LENGTH = 16
 
 
 class Gs:
@@ -887,6 +891,39 @@ def main():
     task_graph.join()
     task_graph.close()
     logger.info("All done.")
+
+    # randomly change the master password first, then the admin password so
+    # it can never be guessed!
+    http_jobs = [
+        (  # master password
+            f"{geoserver_base_url}/rest/security/self/password",
+            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
+        ),
+        (  # admin password
+            f"{geoserver_base_url}/rest/security/masterpw.json",
+            {
+                "oldMasterPassword": "geoserver",
+                "newMasterPassword": secrets.token_urlsafe(PASSWORD_LENGTH),
+            },
+        ),
+    ]
+
+    for url, payload in http_jobs:
+        try:
+            resp = requests.put(
+                url,
+                json=payload,
+                auth=HTTPBasicAuth(geoserver_user, geoserver_password),
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                logger.error(
+                    f"Failed to update PUT with {url} and {payload} {resp.text}"
+                )
+        except Exception as e:
+            logger.exception(
+                f"Failed to update PUT with {url} and {payload} {e}"
+            )
 
 
 if __name__ == "__main__":

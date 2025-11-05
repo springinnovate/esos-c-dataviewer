@@ -601,3 +601,18 @@ header.is-collapsed .topbar-content {
 .export-actions { display: flex; align-items: center; gap: 10px; }
 
 .disabled { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
+
+/* allow link-style buttons in header too */
+.overlay-row .link-btn,
+.overlay-header .link-btn {
+  background: transparent;
+  border: none;
+  color: var(--brand);
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+.overlay-row .link-btn:hover,
+.overlay-header .link-btn:hover { color: var(--brand-hover); }
+.overlay-row .link-btn:focus-visible,
+.overlay-header .link-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

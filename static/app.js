@@ -738,86 +738,16 @@ function _zoomToOutline(centerLng, centerLat) {
       state.map.fitBounds(b, { padding: [24, 24] })
       return
     }
+  } else if (state.uploadedLayer && state.map.hasLayer(state.uploadedLayer)) {
+    const b = state.uploadedLayer.getBounds()
+    if (b && b.isValid()) {
+      state.map.fitBounds(b, { padding: [24, 24] })
+      return
+    }
   }
   state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
 }
 
-/**
- * Render the stats overlay content, including summary lines and an optional histogram.
- * @param {{rasterId:string,centerLng:number,centerLat:number,boxKm:number,statsObj?:object,units?:string}} args
- */
-function renderAreaStatsOverlay({ rasterId, centerLng, centerLat, boxKm, statsObj, units }) {
-  const overlay = document.getElementById('statsOverlay')
-  const body = document.getElementById('overlayBody')
-  overlay.classList.remove('hidden')
-
-  const s = statsObj || {}
-  state.lastStats = s
-
-  const centerRow = document.createElement('div')
-  centerRow.className = 'overlay-row'
-  const centerBtn = document.createElement('button')
-  centerBtn.className = 'link-btn'
-  centerBtn.type = 'button'
-  centerBtn.textContent = `Center: ${centerLng.toFixed(6)}, ${centerLat.toFixed(6)}`
-  centerBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    _zoomToOutline(centerLng, centerLat)
-  })
-  centerRow.appendChild(centerBtn)
-
-  const lines = [
-    `Layer: ${rasterId}`,
-    `Box size: ${boxKm} km`,
-    '',
-    `Count: ${s.count ?? 0}`,
-    `Mean: ${numFmt(s.mean)}`,
-    `Median: ${numFmt(s.median)}`,
-    `Min: ${numFmt(s.min)}`,
-    `Max: ${numFmt(s.max)}`,
-    `Sum: ${numFmt(s.sum)}`,
-    `Std Dev: ${numFmt(s.std)}`,
-    '',
-    `Valid pixels: ${s.valid_pixels ?? 0}`,
-    `Nodata pixels: ${s.nodata_pixels ?? 0}`,
-    `Coverage: ${pctFmt(s.coverage_ratio)}`,
-    '',
-    `Valid area: ${areaFmt(s.valid_area_m2)}`,
-    `Total mask area: ${areaFmt(s.window_mask_area_m2)}`,
-    units ? `Units: ${units}` : null,
-  ].filter(Boolean)
-
-  const pre = document.createElement('pre')
-  pre.textContent = lines.join('\n')
-
-  body.innerHTML = ''
-  body.appendChild(centerRow)
-  body.appendChild(pre)
-
-  if (Array.isArray(s.hist) && Array.isArray(s.bin_edges) && s.hist.length > 0 && s.bin_edges.length === s.hist.length + 1) {
-    const histTitle = document.createElement('div')
-    histTitle.style.marginTop = '0.5rem'
-    histTitle.textContent = 'Histogram'
-    body.appendChild(histTitle)
-
-    const svg = buildHistogramSVG(s.hist, s.bin_edges, { width: 420, height: 140, pad: 30 })
-    body.appendChild(svg)
-
-    const label = document.createElement('div')
-    label.style.display = 'flex'
-    label.style.justifyContent = 'space-between'
-    label.style.fontSize = '12px'
-    label.style.color = '#aaa'
-    label.style.marginTop = '2px'
-    label.innerHTML = `<span>${numFmt(s.bin_edges[0])}</span><span>${numFmt(s.bin_edges[s.bin_edges.length - 1])}</span>`
-    body.appendChild(label)
-  }
-
-  function numFmt(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) : '-' }
-  function pctFmt(v) { return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(1) + '%' : '-' }
-  function areaFmt(m2){ return (typeof m2 === 'number' && isFinite(m2)) ? (m2 / 1e6).toFixed(3) + ' km²' : '-' }
-}
 
 /**
  * Build a simple SVG histogram with per-bar tooltips.
@@ -1110,11 +1040,14 @@ function renderScatterOverlay(opts) {
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
 
   if (!body.innerHTML || state.lastHasData !== hasData) {
+    const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`
+    const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`
+
     body.innerHTML = `
       <div class='overlay-header'>
         <div>
           <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-          <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
+          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml} </div>
         </div>
       </div>
 
@@ -1142,6 +1075,13 @@ function renderScatterOverlay(opts) {
         </div>
       </div>
      `
+    // wire events
+    const centerZoomBtn = body.querySelector('.center-zoom-btn')
+    centerZoomBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      _zoomToOutline(centerLng, centerLat)
+    })
   }
   state.lastHasData = hasData;
   const plotEl = document.getElementById('scatterPlot');

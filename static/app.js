@@ -738,6 +738,13 @@ function _zoomToOutline(centerLng, centerLat) {
       state.map.fitBounds(b, { padding: [24, 24] })
       return
     }
+  } else if (state.uploadedLayer && state.map.hasLayer(state.uploadedLayer)) {
+    const b = state.uploadedLayer.getBounds()
+    if (b && b.isValid()) {
+      //const centerLngLat = getGeoJSONCenter(featureCollection);
+      state.map.fitBounds(b, { padding: [24, 24] })
+      return
+    }
   }
   state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
 }
@@ -1117,7 +1124,7 @@ function renderScatterOverlay(opts) {
       <div class='overlay-header'>
         <div>
           <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-          <div class='small-mono'>${centerHtml} - box: ${fmt(boxKm)} km</div>
+          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml} </div>
         </div>
       </div>
 

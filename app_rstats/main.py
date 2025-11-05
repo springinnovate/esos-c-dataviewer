@@ -62,10 +62,11 @@ RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s.%(funcName)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("rasterio").setLevel(logging.WARN)
 
 
 class RasterMinMaxIn(BaseModel):
@@ -611,13 +612,16 @@ def _safe_window_for_geom(dataset, geometry):
         fallback pixel window.
     """
     geometry_bounds = geometry.bounds
-    candidate_window = rasterio.windows.from_bounds(
-        *geometry_bounds, transform=dataset.transform
-    )
-    candidate_window = candidate_window.round_offsets().round_lengths()
-    candidate_window = candidate_window.intersection(
-        Window(0, 0, dataset.width, dataset.height)
-    )
+    try:
+        candidate_window = rasterio.windows.from_bounds(
+            *geometry_bounds, transform=dataset.transform
+        )
+        candidate_window = candidate_window.round_offsets().round_lengths()
+        candidate_window = candidate_window.intersection(
+            Window(0, 0, dataset.width, dataset.height)
+        )
+    except WindowError:
+        return Window(0, 0, 0, 0)
 
     if int(candidate_window.width) > 0 and int(candidate_window.height) > 0:
         return candidate_window
@@ -659,6 +663,9 @@ def _safe_window_for_geom(dataset, geometry):
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
+        logger.debug(f"Starting scatter computation: {scatter_request}")
+
+        # --- Open rasters ---
         logger.debug("Opening rasters")
         x_ds, x_nodata_val = (
             _open_raster(scatter_request.raster_id_x)
@@ -671,12 +678,15 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             else (None, None)
         )
 
+        # --- Geometry setup ---
         logger.debug("Shaping geometry")
         geom_in_shape = shape(scatter_request.geometry)
-
         reference_ds = x_ds or y_ds
+
         if scatter_request.from_crs != reference_ds.crs.to_string():
-            logger.debug("Reprojecting geometry to reference raster CRS")
+            logger.debug(
+                f"Reprojecting geometry from {scatter_request.from_crs} to {reference_ds.crs}"
+            )
             transformer_obj = Transformer.from_crs(
                 scatter_request.from_crs, reference_ds.crs, always_xy=True
             )
@@ -687,8 +697,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         else:
             geom_ref_shape = geom_in_shape
 
+        # --- Read helper ---
         def read_masked_array(ds, nodata_val, geom_shape):
+            logger.debug(f"Reading masked array for raster {ds.name}")
             win = _safe_window_for_geom(ds, geom_shape)
+            logger.debug(f"Computed window: {win}")
             data = ds.read(1, window=win, boundless=True, masked=False).astype(
                 "float64", copy=False
             )
@@ -702,14 +715,29 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             )
             if nodata_val is not None:
                 data = np.where(np.isclose(data, nodata_val), np.nan, data)
+            valid_ratio = np.count_nonzero(np.isfinite(data)) / data.size
+            logger.debug(
+                f"Masked array for {ds.name}: shape={data.shape}, valid_ratio={valid_ratio:.3f}, "
+                f"nodata_val={nodata_val}"
+            )
             return np.where(mask, data, np.nan), affine, mask
 
+        # --- Read X raster ---
         x_arr, x_affine, mask = (None, None, None)
         if x_ds:
-            x_arr, x_affine, mask = read_masked_array(
-                x_ds, x_nodata_val, geom_ref_shape
-            )
+            try:
+                x_arr, x_affine, mask = read_masked_array(
+                    x_ds, x_nodata_val, geom_ref_shape
+                )
+                logger.debug(
+                    f"x_arr stats: shape={x_arr.shape}, finite={np.count_nonzero(np.isfinite(x_arr))}, "
+                    f"nan={np.count_nonzero(np.isnan(x_arr))}"
+                )
+            except ValueError:
+                x_ds = None
+                x_arr = np.array([])
 
+        # --- Read or reproject Y raster ---
         y_arr, y_on_xgrid_masked = (None, None)
         if y_ds and x_ds:
             try:
@@ -721,6 +749,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
                     x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
                 )
+
                 y_win = from_bounds(
                     minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
                 )
@@ -729,11 +758,17 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     .round_lengths()
                     .intersection(Window(0, 0, y_ds.width, y_ds.height))
                 )
+
+                logger.debug(
+                    f"Y window: {y_win}, raster size=({y_ds.width}, {y_ds.height})"
+                )
+
                 y_src = y_ds.read(1, window=y_win, masked=False).astype(
                     "float64", copy=False
                 )
                 y_affine = y_ds.window_transform(y_win)
                 y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
+
                 reproject(
                     source=y_src,
                     destination=y_on_xgrid,
@@ -746,15 +781,30 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     resampling=Resampling.nearest,
                     num_threads=0,
                 )
+
                 y_on_xgrid_masked = np.where(mask, y_on_xgrid, np.nan)
-            except WindowError:
-                pass
+                nonzero_count = np.count_nonzero(np.isfinite(y_on_xgrid_masked))
+                logger.debug(
+                    f"Reprojected Y: y_src.shape={y_src.shape}, y_on_xgrid.shape={y_on_xgrid.shape}, "
+                    f"finite_in_mask={nonzero_count}"
+                )
+                if nonzero_count == 0:
+                    y_on_xgrid_masked = None
+
+            except WindowError as e:
+                logger.warning(f"Y window intersection failed: {e}")
+                y_on_xgrid_masked = np.full_like(x_arr, np.nan)
 
         elif y_ds:
-            y_arr, y_affine, mask = read_masked_array(
-                y_ds, y_nodata_val, geom_ref_shape
-            )
+            try:
+                y_arr, y_affine, mask = read_masked_array(
+                    y_ds, y_nodata_val, geom_ref_shape
+                )
+            except ValueError:
+                y_ds = None
+                y_arr = np.array([])
 
+        # --- Extract valid values ---
         x_vals = x_arr[np.isfinite(x_arr)] if x_arr is not None else None
         y_vals = y_arr[np.isfinite(y_arr)] if y_arr is not None else None
 
@@ -762,14 +812,26 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             finite_mask = np.isfinite(x_arr) & np.isfinite(y_on_xgrid_masked)
             x_vals = x_arr[finite_mask]
             y_vals = y_on_xgrid_masked[finite_mask]
+            logger.debug(f"Both rasters overlap: {len(x_vals)} valid pairs")
         elif x_arr is not None:
-            x_vals = x_arr[np.isfinite(x_arr)]
+            logger.debug(
+                f"Only X raster valid: {np.count_nonzero(np.isfinite(x_vals))} values"
+            )
         elif y_arr is not None:
-            y_vals = y_arr[np.isfinite(y_arr)]
+            logger.debug(
+                f"Only Y raster valid: {np.count_nonzero(np.isfinite(y_vals))} values"
+            )
 
+        # --- Histogram computation ---
         x_plot, y_plot = None, None
         n_pairs = len(x_vals) if x_vals is not None else len(y_vals)
+        logger.debug(f"x_vals={x_vals}; y_vals={y_vals}")
+        logger.debug(
+            f"n_pairs={n_pairs}, histogram_bins={scatter_request.histogram_bins}"
+        )
+
         if n_pairs == 0:
+            logger.debug("No valid pixel pairs found.")
             return ScatterOut(
                 raster_id_x=scatter_request.raster_id_x,
                 raster_id_y=scatter_request.raster_id_y,
@@ -790,6 +852,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 x_plot = x_vals[idx]
             if y_vals is not None:
                 y_plot = y_vals[idx]
+            logger.debug(
+                f"Downsampled to {scatter_request.max_points} points for plotting"
+            )
         else:
             x_plot = x_vals
             y_plot = y_vals
@@ -801,23 +866,26 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             hist1d_x, x_edges = np.histogram(
                 x_vals, bins=scatter_request.histogram_bins
             )
-            hist1d_x = hist1d_x.astype("int64")
-            x_plot = x_plot.astype("float64")
+            logger.debug(
+                f"Computed hist1d_x: bins={len(x_edges)}, nonzero={np.count_nonzero(hist1d_x)}"
+            )
         if y_vals is not None:
             hist1d_y, y_edges = np.histogram(
                 y_vals, bins=scatter_request.histogram_bins
             )
-            hist1d_y = hist1d_y.astype("int64")
-            y_plot = y_plot.astype("float64")
+            logger.debug(
+                f"Computed hist1d_y: bins={len(y_edges)}, nonzero={np.count_nonzero(hist1d_y)}"
+            )
         if x_vals is not None and y_vals is not None:
             hist2d, x_edges, y_edges = np.histogram2d(
                 x_vals, y_vals, bins=scatter_request.histogram_bins
             )
-            hist2d = hist2d.astype("int64")
+            logger.debug(
+                f"Computed hist2d: shape={hist2d.shape}, sum={np.sum(hist2d)}"
+            )
 
-        pearson_r = None
-        slope = None
-        intercept = None
+        # --- Correlation stats ---
+        pearson_r, slope, intercept = None, None, None
         if x_vals is not None and y_vals is not None and n_pairs > 1:
             x_std, y_std = np.std(x_vals), np.std(y_vals)
             if x_std != 0 and y_std != 0:
@@ -827,14 +895,25 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 slope, intercept = np.linalg.lstsq(design, y_vals, rcond=None)[
                     0
                 ]
-                slope = float(slope)
-                intercept = float(intercept)
+                slope, intercept = float(slope), float(intercept)
+                logger.debug(
+                    f"Pearson r={pearson_r:.3f}, slope={slope:.3f}, intercept={intercept:.3f}"
+                )
 
         total_mask_pixels = (
             int(np.count_nonzero(mask)) if mask is not None else 0
         )
         valid_pixels = n_pairs
-        logger.debug(f"this is the scatter requets: {scatter_request}")
+        coverage_ratio = (
+            float(valid_pixels / total_mask_pixels)
+            if total_mask_pixels
+            else 0.0
+        )
+        logger.debug(
+            f"Summary: total_mask_pixels={total_mask_pixels}, valid_pixels={valid_pixels}, "
+            f"coverage_ratio={coverage_ratio:.3f}"
+        )
+
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
@@ -851,11 +930,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             intercept=intercept,
             pixels_sampled=total_mask_pixels,
             valid_pixels=valid_pixels,
-            coverage_ratio=(
-                float(valid_pixels / total_mask_pixels)
-                if total_mask_pixels
-                else 0.0
-            ),
+            coverage_ratio=coverage_ratio,
             geometry=scatter_request.geometry,
         )
 

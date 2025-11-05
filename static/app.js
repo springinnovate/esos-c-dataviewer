@@ -685,6 +685,9 @@ async function onLayerChange(e, layerId) {
   } else if (state.sampleMode == 'window') {
     sampleAndRenderSampleBox();
   }
+  const url = new URL(window.location.href)
+  url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name)
+  history.replaceState(null, '', url.toString())
 }
 
 /**

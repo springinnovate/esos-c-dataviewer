@@ -1110,11 +1110,14 @@ function renderScatterOverlay(opts) {
   const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
 
   if (!body.innerHTML || state.lastHasData !== hasData) {
+    const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`
+    const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`
+
     body.innerHTML = `
       <div class='overlay-header'>
         <div>
           <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-          <div class='small-mono'>center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)} - box: ${fmt(boxKm)} km</div>
+          <div class='small-mono'>${centerHtml} - box: ${fmt(boxKm)} km</div>
         </div>
       </div>
 
@@ -1142,6 +1145,13 @@ function renderScatterOverlay(opts) {
         </div>
       </div>
      `
+    // wire events
+    const centerZoomBtn = body.querySelector('.center-zoom-btn')
+    centerZoomBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      _zoomToOutline(centerLng, centerLat)
+    })
   }
   state.lastHasData = hasData;
   const plotEl = document.getElementById('scatterPlot');

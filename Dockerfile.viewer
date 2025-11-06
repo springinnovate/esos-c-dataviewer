@@ -1,11 +1,9 @@
 # Dockerfile.viewer
-# --- frontend build ---
+# pre-install the leaflet and suporting libraries so we don't pull them from a cdn
 FROM node:20-slim AS build
 WORKDIR /build
 
-# copy only what’s needed for install first
-COPY static/package*.json ./
-COPY static/vite.config.* ./
+COPY static/ ./
 RUN npm install
 
 # now copy sources
@@ -16,8 +14,7 @@ RUN node -e "console.log('vite=', require('vite/package.json').version)" && [ -f
 
 RUN npm run build && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
 
-
-# --- python runtime ---
+# python frontend
 FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -26,6 +23,7 @@ RUN pip install --no-cache-dir fastapi uvicorn pyyaml jinja2
 
 COPY viewer_app /app/viewer_app
 COPY templates /app/templates
+
 COPY --from=build /build/dist /app/static
 
 CMD uvicorn viewer_app.main:app --host 0.0.0.0 --port 5173

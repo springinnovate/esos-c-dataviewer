@@ -36,6 +36,10 @@ services:
       - traefik.http.routers.http-catchall.middlewares=redirect-to-https
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
 
+      - traefik.http.middlewares.cache-year.headers.customResponseHeaders.Cache-Control=public,max-age=31536000,immutable
+      - traefik.http.middlewares.no-store.headers.customResponseHeaders.Cache-Control=no-store
+
+
   geoserver:
     image: ${GEOSERVER_IMAGE}
     restart: unless-stopped
@@ -80,21 +84,36 @@ services:
     labels:
       - traefik.enable=true
 
-      # deploy (HTTPS)
+      # --- shared service + middleware ---
+      - traefik.http.services.viewer.loadbalancer.server.port=5173
+      - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
+
+      # --- deploy (HTTPS) ---
       - traefik.http.routers.viewer.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer.entrypoints=websecure
       - traefik.http.routers.viewer.tls=true
       - traefik.http.routers.viewer.tls.certresolver=le
+      # prevent caching of HTML entry
+      - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker,no-store@docker
 
-      # local (HTTP)
+      # --- local (HTTP) ---
       - traefik.http.routers.viewer-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer-local.entrypoints=web
+      - traefik.http.routers.viewer-local.middlewares=viewer-stripprefix@docker,no-store@docker
 
-      # shared service + middleware
-      - traefik.http.services.viewer.loadbalancer.server.port=5173
-      - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
-      - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker
-      - traefik.http.routers.viewer-local.middlewares=viewer-stripprefix@docker
+      # --- long cache for static assets only ---
+      # prod assets
+      - traefik.http.routers.viewer-assets.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer/assets`)
+      - traefik.http.routers.viewer-assets.entrypoints=websecure
+      - traefik.http.routers.viewer-assets.tls=true
+      - traefik.http.routers.viewer-assets.tls.certresolver=le
+      - traefik.http.routers.viewer-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
+
+      # local assets
+      - traefik.http.routers.viewer-local-assets.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer/assets`)
+      - traefik.http.routers.viewer-local-assets.entrypoints=web
+      - traefik.http.routers.viewer-local-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
+
 
   geoserver-init:
     build:
@@ -133,18 +152,18 @@ services:
     labels:
       - traefik.enable=true
 
-      # deploy (HTTPS)
+      # --- shared service + middleware (define once) ---
+      - traefik.http.services.rstats.loadbalancer.server.port=8000
+      - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
+
+      # --- deploy (HTTPS) ---
       - traefik.http.routers.rstats.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/rstats`)
       - traefik.http.routers.rstats.entrypoints=websecure
       - traefik.http.routers.rstats.tls=true
       - traefik.http.routers.rstats.tls.certresolver=le
+      - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker,no-store@docker
 
-      # local (HTTP)
+      # --- local (HTTP) ---
       - traefik.http.routers.rstats-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/rstats`)
       - traefik.http.routers.rstats-local.entrypoints=web
-
-      # shared service + middleware
-      - traefik.http.services.rstats.loadbalancer.server.port=8000
-      - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
-      - traefik.http.routers.rstats.middlewares=rstats-stripprefix@docker
-      - traefik.http.routers.rstats-local.middlewares=rstats-stripprefix@docker
+      - traefik.http.routers.rstats-local.middlewares=rstats-stripprefix@docker,no-store@docker

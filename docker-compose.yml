@@ -103,14 +103,14 @@ services:
 
       # --- long cache for static assets only ---
       # prod assets
-      - traefik.http.routers.viewer-assets.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer/assets`)
+      - traefik.http.routers.viewer-assets.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer-assets.entrypoints=websecure
       - traefik.http.routers.viewer-assets.tls=true
       - traefik.http.routers.viewer-assets.tls.certresolver=le
       - traefik.http.routers.viewer-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
 
       # local assets
-      - traefik.http.routers.viewer-local-assets.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer/assets`)
+      - traefik.http.routers.viewer-local-assets.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer-local-assets.entrypoints=web
       - traefik.http.routers.viewer-local-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
 

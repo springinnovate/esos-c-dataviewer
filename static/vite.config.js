@@ -10,18 +10,16 @@ export default defineConfig({
     assetsDir: '',
     target: 'esnext',
     cssCodeSplit: true,
-    minify: true,
+    minify: 'esbuild',
     cssMinify: true,
     sourcemap: false,
+    lib: {
+      entry: path.resolve(__dirname, 'app.js'),
+      formats: ['es'],
+      name: 'viewer'
+    },
     rollupOptions: {
-      input: {
-        app: path.resolve(__dirname, 'app.js')
-      },
-      output: {
-        manualChunks: {
-          leaflet: ['leaflet', 'proj4', 'proj4leaflet']
-        }
-      }
+      output: { }
     }
   },
   esbuild: {

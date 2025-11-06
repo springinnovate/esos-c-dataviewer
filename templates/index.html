@@ -13,8 +13,19 @@
       #map { height: 100%; }
     </style>
 
+
+    <style>
+      /* preload base CSS while the rest lazy loads */
+      :root { color-scheme: dark; }
+      html,body,#app{height:100%;margin:0}
+      #map{height:100%}
+      #map.leh, .leaflet-container{background:#0f1115}
+    </style>
+
+    {# async-load the built CSS; keep noscript fallback #}
     {% for href in main_css_list %}
-    <link rel='stylesheet' href='{{ href }}'>
+    <link rel="preload" href="{{ href }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="{{ href }}"></noscript>
     {% endfor %}
   </head>
   <body>

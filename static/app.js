@@ -1,21 +1,13 @@
 // static/app.js
-import './style.css'                // your app styles
-import 'leaflet/dist/leaflet.css'   // leaflet css
+import 'leaflet/dist/leaflet.css'
+import './style.css'
 
 import L from 'leaflet'
 import proj4 from 'proj4'
 import 'proj4leaflet'
 
-let shp
-let turf
-export async function getShp() {
-  if (!shp) shp = (await import('shpjs')).default
-  return shp
-}
-export async function getTurf() {
-  if (!turf) turf = await import('@turf/turf')
-  return turf
-}
+import shp from 'shpjs'
+import * as turf from '@turf/turf'
 
 /**
  * @file
@@ -1634,7 +1626,12 @@ function wireAutoStyleFromHistogram() {
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
 
-    const pb = state.pctBounds;
+    let pb = null;
+    if (a && b) {
+      pb = state.pctBounds;
+    } else {
+      pb = state.pctBounds1d;
+    }
     if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
       a.min = pb.xmin;
       a.max = pb.xmax;

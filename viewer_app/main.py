@@ -64,9 +64,6 @@ def _css_paths(key: str) -> list[str]:
     return [f"static/{c}" for c in entry.get("css", [])]
 
 
-logger.info(f"*****{_manifest}")
-
-
 def _load_layers_config(config_path: str) -> dict:
     """Load a YAML layers configuration file.
 

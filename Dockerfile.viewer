@@ -25,5 +25,6 @@ COPY viewer_app /app/viewer_app
 COPY templates /app/templates
 
 COPY --from=build /build/dist /app/static
+COPY static/favicon.ico /app/static
 
 CMD uvicorn viewer_app.main:app --host 0.0.0.0 --port 5173

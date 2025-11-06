@@ -1,5 +1,13 @@
 // static/app.js
-/* global L */
+import 'leaflet/dist/leaflet.css'
+import './style.css'
+
+import L from 'leaflet'
+import proj4 from 'proj4'
+import 'proj4leaflet'
+
+import shp from 'shpjs'
+import * as turf from '@turf/turf'
 
 /**
  * @file
@@ -7,6 +15,21 @@
  * Uses Leaflet WMS for visualization and fetches raster stats for a user-defined square window.
  * Docstrings use JSDoc so editors/TS can infer types.
  */
+const MAX_HISTOGRAM_BINS = 50
+const MAX_HISTOGRAM_POINTS = 20000
+const CANADA_CENTER = [55, -96.9]
+const INITIAL_ZOOM = 0
+const GLOBAL_CRS = 'EPSG:3347'
+const CRS3347 = new L.Proj.CRS(
+  'EPSG:3347',
+  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
+  {
+    origin: [0, 0],
+    resolutions: [
+      4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
+    ]
+  }
+)
 
 const state = {
   map: null,
@@ -26,7 +49,7 @@ const state = {
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
-  percentiles: "5 50 90",
+  percentiles: '5 50 90',
   scatterBounds: null,
   lastPixelPoint: null,
   bivariatePalette: {
@@ -92,27 +115,6 @@ const state = {
   selectElement: null,
  }
 
-
-/**
- * Derives two axis definitions (A and B) from a 3×3 grid of color control values.
- *
- * The input `grid` is expected to be an object keyed by string positions of the form 'row-col',
- * where rows and columns are numbered from 1 to 3 (e.g. '1-1', '2-3').
- *
- * Axis A takes its cmin, cmed, and cmax values from the first column (rows 1–3),
- * while axis B takes them from the first row (columns 1–3).
- *
- * @param {Object<string, number|string>} grid - A 3×3 lookup object with keys like '1-1', '1-2', '1-3', etc.
- * @returns {Object} Object containing axis definitions:
- *   - {Object} A: { cmin, cmed, cmax } from the first column of the grid.
- *   - {Object} B: { cmin, cmed, cmax } from the first row of the grid.
- */
-function axesFromGrid3x3(grid) {
-  return {
-    A: { cmin: grid['1-1'], cmed: grid['2-1'], cmax: grid['3-1'] },
-    B: { cmin: grid['1-1'], cmed: grid['1-2'], cmax: grid['1-3'] }
-  };
-}
 
 /**
  * Create a continuous 2D colormap that combines a base color ramp (X-axis)
@@ -319,7 +321,6 @@ function hslToRgb(h, s, l) {
 function applyBivariateColormapToAB(cmap) {
   const setVal = (id, value) => {
     const el = document.getElementById(id);
-    if (!el) return;
     el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
@@ -341,21 +342,10 @@ function applyBivariateColormapToAB(cmap) {
  */
 function setLayerVisibility(layerId, visible) {
   const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
-  if (layer) layer.setOpacity(visible ? 1 : 0)
+  layer.setOpacity(visible ? 1 : 0)
   state.visibility[layerId] = visible
   const cb = document.getElementById(`layerVisible${layerId}`)
-  if (cb) cb.checked = !!visible
-}
-
-/**
- * Apply the stored visibility state to a layer when it is created or reinitialized.
- * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
- */
-function attachInitialOpacity(layerId) {
-  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
-  if (!layer) return
-  const visible = state.visibility[layerId] ?? true
-  layer.setOpacity(visible ? 1 : 0)
+  cb.checked = !!visible
 }
 
 /**
@@ -365,7 +355,6 @@ function attachInitialOpacity(layerId) {
 function wireVisibilityCheckboxes() {
   ;['A', 'B'].forEach(id => {
     const cb = document.getElementById(`layerVisible${id}`)
-    if (!cb) return
     cb.checked = state.visibility[id]
     cb.addEventListener('change', () => setLayerVisibility(id, cb.checked))
   })
@@ -381,22 +370,6 @@ async function loadConfig() {
   if (!res.ok) throw new Error('Failed to load config')
   return res.json()
 }
-
-const MAX_HISTOGRAM_BINS = 50
-const MAX_HISTOGRAM_POINTS = 20000
-const CANADA_CENTER = [55, -96.9]
-const INITIAL_ZOOM = 0
-const GLOBAL_CRS = 'EPSG:3347'
-const CRS3347 = new L.Proj.CRS(
-  'EPSG:3347',
-  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
-  {
-    origin: [0, 0],
-    resolutions: [
-      4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
-    ]
-  }
-)
 
 /**
  * Initialize the Leaflet map and overlay event swallowing.
@@ -439,30 +412,6 @@ function squarePolygonAt(centerLatLng, windowSizeKm) {
   return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
 
-/**
- * Compute a square LatLngBounds of given size (km) centered at a point.
- * @param {L.LatLng} centerLatLng
- * @param {number|string} windowSizeKm
- * @returns {L.LatLngBounds}
- */
-function latLngBoundsForSquareKilometers(centerLatLng, windowSizeKm) {
-  const crs = state.map.options.crs
-  const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
-  const p = crs.project(centerLatLng)
-  const sw = crs.unproject(L.point(p.x - halfSizeM, p.y - halfSizeM))
-  const ne = crs.unproject(L.point(p.x + halfSizeM, p.y + halfSizeM))
-  return L.latLngBounds(sw, ne)
-}
-
-/**
- * Convert first ring of a GeoJSON Polygon to Leaflet [lat,lng] pairs.
- * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
- * @returns {Array<[number,number]>} Array of [lat,lng]
- * @private
- */
-function _latlngsFromPoly(polyGeoJSON) {
-  return polyGeoJSON.geometry.coordinates[0].map(([lng, lat]) => [lat, lng])
-}
 
 /**
  * Ensure a single outline polygon exists for the current selection.
@@ -488,38 +437,12 @@ function _ensureOutlineLayer() {
  * @param {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]}}} polyGeoJSON
  * @private
  */
-function _updateOutline(poly) {
+function updateOutline(poly) {
  const layer = _ensureOutlineLayer()
  layer.setLatLngs(poly.getLatLngs())
  if (!state.map.hasLayer(layer)) layer.addTo(state.map)
 }
 
-/**
- * Build a square GeoJSON Polygon centered at a LatLng with edge length windowSizeKm.
- * @param {L.LatLng} centerLatLng
- * @param {number|string} windowSizeKm
- * @returns {{type:'Feature',geometry:{type:'Polygon',coordinates:number[][][]},properties:{kind:string,halfSizeM:number}}}
- */
-function squarePolygonGeoJSON(centerLatLng, windowSizeKm) {
-  const crs = state.map.options.crs || L.CRS.EPSG3857
-  const halfSizeM = (Number(windowSizeKm) || 0) * 1000 / 2
-  const p = crs.project(centerLatLng)
-  const cornersM = [
-    [p.x - halfSizeM, p.y - halfSizeM],
-    [p.x + halfSizeM, p.y - halfSizeM],
-    [p.x + halfSizeM, p.y + halfSizeM],
-    [p.x - halfSizeM, p.y + halfSizeM],
-  ]
-  const ringLngLat = cornersM
-    .map(([x, y]) => crs.unproject(L.point(x, y)))
-    .map(ll => [ll.lng, ll.lat])
-  ringLngLat.push(ringLngLat[0])
-  return {
-    type: 'Feature',
-    geometry: { type: 'Polygon', coordinates: [ringLngLat] },
-    properties: { kind: 'square', halfSizeM },
-  }
-}
 
 /**
  * Wire UI controls that set the sampling window size (km).
@@ -675,7 +598,7 @@ async function onLayerChange(e, layerId) {
   state[`activeLayerIdx${layerId}`] = idx
   const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
   addWmsLayer(lyr.name, layerId, className)
-  _applyDynamicStyle(layerId)
+  applyDynamicStyle(layerId)
   if (!state.sampleMode) {
     document.getElementById('statsOverlay').classList.add('hidden')
     document.getElementById('overlayBody').innerHTML = ''
@@ -734,7 +657,7 @@ function showOverlayError(msg) {
  * @param {number} centerLat
  * @private
  */
-function _zoomToOutline(centerLng, centerLat) {
+function zoomToOutline(centerLng, centerLat) {
   if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
     const b = state.outlineLayer.getBounds()
     if (b && b.isValid()) {
@@ -751,113 +674,174 @@ function _zoomToOutline(centerLng, centerLat) {
   state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
 }
 
-
 /**
- * Build a simple SVG histogram with per-bar tooltips.
- * @param {number[]|ArrayLike<number>} hist Bin counts
- * @param {number[]} binEdges Bin edges, length = hist.length + 1
- * @param {{width?:number,height?:number,pad?:number}} [opts]
- * @returns {SVGSVGElement}
+ * Builds an SVG histogram visualization for a single raster layer.
+ *
+ * This function renders a 1D histogram from the provided bin edges and counts,
+ * using layer-specific colors for each bar. It also draws percentile guide lines
+ * and labels (if available in `state.percentiles`) with interactive hover
+ * tooltips. The resulting `<svg>` element is returned and can be inserted into
+ * the DOM.
+ *
+ * The function also exposes scaling functions and bounds to `state` for reuse:
+ *   - `state.scaleX`: maps data values to pixel X coordinates.
+ *   - `state.hist1dBounds`: the [min, max] value range of the histogram.
+ *   - `state.pctBounds1d`: percentile bounds if percentiles were rendered.
+ *
+ * @param {number[]} edges - Array of histogram bin edges (length = N + 1).
+ * @param {number[]} hist - Array of histogram bin counts (length = N).
+ * @param {string} layerId - Identifier of the raster layer, used for color mapping.
+ * @returns {SVGElement} The constructed histogram `<svg>` element.
  */
-function buildHistogramSVG(hist, binEdges, opts = {}) {
-  const width = opts.width ?? 420
-  const height = opts.height ?? 140
-  const pad = opts.pad ?? 30
-  const w = width, h = height
-  const innerW = Math.max(1, w - pad * 2)
-  const innerH = Math.max(1, h - pad * 2)
+function buildHistogramSVG(edges, hist, layerId) {
+  const w = 480;
+  const h = 160;
+  const pad = 36;
+  const axisColor = '#666';
+  const percentileColor = '#eeeeee';
+  const percentileDecimals = 2;
 
-  const counts = Array.from(hist, v => Math.max(0, Number(v) || 0))
-  const maxCount = Math.max(1, ...counts)
-  const bins = counts.length
-  const barW = innerW / Math.max(1, bins)
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
 
-  const svgNS = 'http://www.w3.org/2000/svg'
-  const svg = document.createElementNS(svgNS, 'svg')
-  svg.setAttribute('width', String(w))
-  svg.setAttribute('height', String(h))
+  const xMin = Math.min(...edges);
+  const xMax = Math.max(...edges);
+  const innerW = Math.max(1, w - pad * 2);
+  const innerH = Math.max(1, h - pad * 2);
 
-  const axisColor = '#666'
-  const mkLine = (x1, y1, x2, y2) => {
-    const Ln = document.createElementNS(svgNS, 'line')
-    Ln.setAttribute('x1', x1); Ln.setAttribute('y1', y1)
-    Ln.setAttribute('x2', x2); Ln.setAttribute('y2', y2)
-    Ln.setAttribute('stroke', axisColor)
-    Ln.setAttribute('stroke-width', '1')
-    return Ln
+  const plotX0 = pad;
+  const plotY0 = pad;
+  const plotX1 = pad + innerW;
+  const plotY1 = pad + innerH;
+
+  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
+  const scaleH = c => {
+    const maxC = Math.max(1, ...hist.map(v => Number.isFinite(v) ? v : 0));
+    return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
+  };
+
+  state.scaleX = scaleX;
+  state.hist1dBounds = [xMin, xMax];
+
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
+    return l;
+  };
+  const mkText = (txt, x, y, anchor = 'middle') => {
+    const t = document.createElementNS(svgNS, 'text');
+    t.textContent = txt;
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
+    t.setAttribute('text-anchor', anchor);
+    return t;
+  };
+
+  // axes
+  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
+  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
+  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+
+  // bars
+  for (let i = 0; i < hist.length; i++) {
+    const c = Number(hist[i]) || 0;
+    const x0 = scaleX(edges[i]);
+    const x1 = scaleX(edges[i + 1]);
+    const barW = Math.max(1, x1 - x0);
+    const hPix = scaleH(c);
+    const mid = (edges[i] + edges[i + 1]) / 2;
+    const rgbArray = styleColorArrForValue(layerId, mid);
+    const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
+
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(x0));
+    rect.setAttribute('y', String(plotY1 - hPix));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', rgbStr);
+    rect.setAttribute('fill-opacity', '0.85');
+    svg.appendChild(rect);
   }
-  svg.appendChild(mkLine(String(pad), String(h - pad), String(w - pad), String(h - pad)))
-  svg.appendChild(mkLine(String(pad), String(pad), String(pad), String(h - pad)))
 
-  for (let i = 0; i < bins; i++) {
-    const v = counts[i]
-    const barH = (v / maxCount) * innerH
-    const safeH = Math.max((v > 0 ? 1 : 0), barH)
-    const x = pad + i * barW + 1
-    const y = h - pad - safeH
+  // percentiles (reads from state.percentiles if available)
+  const percentilesRaw = Array.isArray(state.percentiles) ? state.percentiles : [];
+  const parsePercent = p => {
+    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
+    if (typeof p === 'string') {
+      const s = p.trim(); if (!s) return null;
+      const num = parseFloat(s); if (!Number.isFinite(num)) return null;
+      return (s.endsWith('%') || num > 1) ? num / 100 : num;
+    }
+    return null;
+  };
+  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b);
 
-    const rect = document.createElementNS(svgNS, 'rect')
-    rect.setAttribute('x', String(x))
-    rect.setAttribute('y', String(y))
-    rect.setAttribute('width', String(Math.max(0, barW - 2)))
-    rect.setAttribute('height', String(Math.max(0, safeH)))
-    rect.setAttribute('fill', '#1e90ff')
-    rect.setAttribute('stroke', '#0c63b8')
-    rect.setAttribute('stroke-width', '0.5')
-    svg.appendChild(rect)
+  const total = hist.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  const getQuantile = q => {
+    if (total <= 0) return xMin;
+    const target = q * total;
+    let cum = 0;
+    for (let i = 0; i < hist.length; i++) {
+      const c = Number.isFinite(hist[i]) ? hist[i] : 0;
+      const next = cum + c;
+      if (target <= next) {
+        const e0 = edges[i], e1 = edges[i + 1];
+        const f = c > 0 ? (target - cum) / c : 0;
+        return e0 + f * (e1 - e0);
+      }
+      cum = next;
+    }
+    return xMax;
+  };
 
-    const lo = binEdges[i]
-    const hi = binEdges[i + 1]
-    const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : String(n)
-    const text = `Range: [${fmt(lo)}, ${fmt(hi)}) Count: ${v.toLocaleString()}`
+  const attachPctHover = (guideEl, lblEl, text) => {
+    [guideEl, lblEl].forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('mouseenter', e => {
+        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
+        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      });
+      el.addEventListener('mousemove', e => {
+        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      });
+      el.addEventListener('mouseleave', () => {
+        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
+        if (typeof hidePctTooltip === 'function') hidePctTooltip();
+      });
+    });
+  };
 
-    rect.addEventListener('mouseenter', (ev) => {
-      _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
-    })
-    rect.addEventListener('mousemove', (ev) => {
-      _showHistTooltip(text, ev.clientX, ev.clientY, document.getElementById('statsOverlay'))
-    })
-    rect.addEventListener('mouseleave', () => _hideHistTooltip())
-    rect.addEventListener('touchstart', (ev) => {
-      const t = ev.touches[0]
-      _showHistTooltip(text, t.clientX, t.clientY, document.getElementById('statsOverlay'))
-    }, { passive: true })
-    rect.addEventListener('touchend', () => _hideHistTooltip())
+  for (const p of percentiles) {
+    const xv = getQuantile(p);
+    const x = scaleX(xv);
+    const gx = mkLine(x, plotY0, x, plotY1, percentileColor);
+    gx.setAttribute('stroke-dasharray', '4,3');
+    gx.setAttribute('opacity', '0.5');
+    svg.appendChild(gx);
+
+    const label = `${Math.round(p * 100)}% (${xv.toFixed(percentileDecimals)})`;
+    const lx = mkText(label, x, plotY0 - 6, 'middle');
+    lx.setAttribute('fill', percentileColor);
+    svg.appendChild(lx);
+    attachPctHover(gx, lx, `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`);
   }
 
-  const mkText = (str, x, y) => {
-    const t = document.createElementNS(svgNS, 'text')
-    t.setAttribute('x', String(x))
-    t.setAttribute('y', String(y))
-    t.setAttribute('fill', '#aaa')
-    t.setAttribute('font-size', '10')
-    t.setAttribute('text-anchor', 'end')
-    t.textContent = str
-    return t
+  if (percentiles.length) {
+    const minP = Math.min(...percentiles);
+    const maxP = Math.max(...percentiles);
+    const xmin = getQuantile(minP);
+    const xmax = getQuantile(maxP);
+    state.pctBounds1d = { xmin, xmax };
   }
-  svg.appendChild(mkText('0', pad - 4, h - pad + 3))
-  svg.appendChild(mkText(String(Math.max(...counts)), pad - 4, pad + 3))
 
-  svg.addEventListener('mouseleave', () => _hideHistTooltip())
-
-  return svg
+  return svg;
 }
 
-/**
- * Ensure a singleton tooltip element exists for histogram tooltips.
- * @returns {HTMLDivElement}
- * @private
- */
-function _ensureHistTooltip() {
-  let tip = document.querySelector('.hist-tooltip')
-  if (!tip) {
-    tip = document.createElement('div')
-    tip.className = 'hist-tooltip'
-    tip.style.display = 'none'
-    document.body.appendChild(tip)
-  }
-  return tip
-}
 
 /**
  * Show and position the histogram tooltip within the overlay.
@@ -867,8 +851,14 @@ function _ensureHistTooltip() {
  * @param {HTMLElement} anchorEl Overlay element to position within
  * @private
  */
-function _showHistTooltip(text, clientX, clientY, anchorEl) {
-  const tip = _ensureHistTooltip()
+function showHistTooltip(text, clientX, clientY, anchorEl) {
+  let tip = document.querySelector('.hist-tooltip')
+  if (!tip) {
+    tip = document.createElement('div')
+    tip.className = 'hist-tooltip'
+    tip.style.display = 'none'
+    document.body.appendChild(tip)
+  }
   tip.textContent = text
   const r = anchorEl.getBoundingClientRect()
   tip.style.left = `${clientX - r.left}px`
@@ -880,7 +870,7 @@ function _showHistTooltip(text, clientX, clientY, anchorEl) {
  * Hide the histogram tooltip if present.
  * @private
  */
-function _hideHistTooltip() {
+function hideHistTooltip() {
   const tip = document.querySelector('.hist-tooltip')
   if (tip) tip.style.display = 'none'
 }
@@ -892,7 +882,7 @@ function _hideHistTooltip() {
  * @returns {string}
  * @private
  */
-function _buildEnvString(obj) {
+function buildEnvString(obj) {
   const entries = Object.entries(obj || {}).map(([k, v]) => {
     if (v == null) return null
     return `${k}:${v}`
@@ -905,15 +895,15 @@ function _buildEnvString(obj) {
  * @param {'A'|'B'} layerId
  * @returns {{min:number,med:number,max:number,cmin:string,cmed:string,cmax:string,ncolor:string}}
  */
-function _readStyleInputsFromUI(layerId) {
+function readStyleInputsFromUI(layerId) {
   const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`)
   return {
-    min: get('MinInput')?.value,
-    med: get('MedInput')?.value,
-    max: get('MaxInput')?.value,
-    cmin: get('CminInput')?.value,
-    cmed: get('CmedInput')?.value,
-    cmax: get('CmaxInput')?.value,
+    min: get('MinInput').value,
+    med: get('MedInput').value,
+    max: get('MaxInput').value,
+    cmin: get('CminInput').value,
+    cmed: get('CmedInput').value,
+    cmax: get('CmaxInput').value,
   }
 }
 
@@ -921,7 +911,7 @@ function _readStyleInputsFromUI(layerId) {
  * Apply a dynamic style to WMS layer A or B using the current UI values.
  * @param {'A'|'B'} layerId
  */
-function _applyDynamicStyle(layerId) {
+function applyDynamicStyle(layerId) {
   const layer = state[`wmsLayer${layerId}`]
   if (!layer) return
 
@@ -929,8 +919,8 @@ function _applyDynamicStyle(layerId) {
   delete layer.wmsParams?.sld
   delete layer.wmsParams?.sld_body
 
-  const styleVars = _readStyleInputsFromUI(layerId)
-  const env = _buildEnvString(styleVars)
+  const styleVars = readStyleInputsFromUI(layerId)
+  const env = buildEnvString(styleVars)
 
   layer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
 }
@@ -940,12 +930,12 @@ function _applyDynamicStyle(layerId) {
  * @param {'A'|'B'} layerId
  */
 function wireDynamicStyleControls(layerId) {
-  const update = () => _applyDynamicStyle(layerId)
+  const update = () => applyDynamicStyle(layerId)
 
   const suffixes = ['MinInput', 'MedInput', 'MaxInput', 'CminInput', 'CmedInput', 'CmaxInput']
   suffixes.forEach(suffix => {
     const el = document.getElementById(`layer${layerId}${suffix}`)
-    if (el) el.addEventListener('input', update)
+    el.addEventListener('input', update)
   })
   update()
 }
@@ -971,10 +961,10 @@ function enableAltWheelSlider() {
   }
 
   const onKeyDown = (e) => {
-    if (e.altKey && state.map) state.map.scrollWheelZoom.disable()
+    if (e.altKey) state.map.scrollWheelZoom.disable()
   }
   const onKeyUp = () => {
-    if (state.map) state.map.scrollWheelZoom.enable()
+    state.map.scrollWheelZoom.enable()
   }
 
   const onWheel = (e) => {
@@ -996,12 +986,9 @@ function enableAltWheelSlider() {
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
 function renderScatterOverlay(opts) {
-  if (!opts) {
-    return
-  }
   state.lastScatterOpts = opts
-  const visA = document.getElementById('layerVisibleA')?.checked ?? true;
-  const visB = document.getElementById('layerVisibleB')?.checked ?? true;
+  const visA = document.getElementById('layerVisibleA').checked;
+  const visB = document.getElementById('layerVisibleB').checked;
   const {
     rasterX, rasterY,
     centerLng, centerLat,
@@ -1011,7 +998,6 @@ function renderScatterOverlay(opts) {
 
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
-  if (!overlay || !body) return
 
   const hasData = !!scatterObj
 
@@ -1083,7 +1069,7 @@ function renderScatterOverlay(opts) {
     centerZoomBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
-      _zoomToOutline(centerLng, centerLat)
+      zoomToOutline(centerLng, centerLat)
     })
   }
   state.lastHasData = hasData;
@@ -1179,11 +1165,11 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
     const px = state.scaleX(point.x);
     const py = state.scaleY(point.y);
 
-    const colA = _styleColorArrForValue(layerIdX, point.x);
-    const colB = _styleColorArrForValue(layerIdY, point.y);
+    const colA = styleColorArrForValue(layerIdX, point.x);
+    const colB = styleColorArrForValue(layerIdY, point.y);
     const blendMode = state.lastScatterOpts.blendMode;
     const blended =
-      blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+      blendMode === 'screen' ? blendScreenRGB(colA, colB) : blendPlusLighterRGB(colA, colB);
     const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
     const svgNS = 'http://www.w3.org/2000/svg'
@@ -1257,9 +1243,9 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
     const tipText = point.label || labelText;
     [circ, label].forEach(el => {
       el.style.cursor = 'default';
-      el.addEventListener('mouseenter', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mousemove', e => _showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mouseleave', () => _hidePctTooltip?.());
+      el.addEventListener('mouseenter', e => showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mousemove', e => showPctTooltip?.(tipText, e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => hidePctTooltip?.());
     });
 
     state.pointGroup = pointGroup;
@@ -1270,10 +1256,11 @@ function clearScatterOverlay() {
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');
   const plot = document.getElementById('scatterPlot');
+  if (!plot) return; // plot hasn't been initalized yet
 
-  if (overlay) overlay.classList.add('hidden');
-  if (body) body.innerHTML = '';
-  if (plot) plot.innerHTML = '';
+  overlay.classList.add('hidden');
+  body.innerHTML = '';
+  plot.innerHTML = '';
   delete state.scatterObj;
   delete state.lastScatterOpts;
   delete state.pointGroup;
@@ -1282,70 +1269,11 @@ function clearScatterOverlay() {
 
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('change', () =>
+  el.addEventListener('change', () =>
     renderScatterOverlay(
       { ...state.lastScatterOpts, scatterObj: state.scatterObj }));
 });
 
-
-/**
- * Converts an RGB color value to HSL.
- * @param {number} r - Red component (0–255).
- * @param {number} g - Green component (0–255).
- * @param {number} b - Blue component (0–255).
- * @returns {number[]} Array containing [h, s, l]:
- *   - h: hue (0–1)
- *   - s: saturation (0–1)
- *   - l: lightness (0–1)
- */
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h, s, l = (max + min) / 2;
-  if (max === min) { h = s = 0; }
-  else {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
-  return [h, s, l];
-}
-
-/**
- * Converts an HSL color value to RGB.
- * @param {number} h - Hue (0–1).
- * @param {number} s - Saturation (0–1).
- * @param {number} l - Lightness (0–1).
- * @returns {number[]} Array containing [r, g, b]:
- *   - r: red (0–255)
- *   - g: green (0–255)
- *   - b: blue (0–255)
- */
-function hslToRgb(h, s, l) {
-  const hue2rgb = (p, q, t) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1/6) return p + (q - p) * 6 * t;
-    if (t < 1/2) return q;
-    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-    return p;
-  };
-  let r, g, b;
-  if (s === 0) { r = g = b = l; }
-  else {
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1/3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1/3);
-  }
-  return [r * 255, g * 255, b * 255];
-}
 
 /**
  * Computes a smoothed, normalized density weight from histogram counts.
@@ -1460,10 +1388,10 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
       const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
 
-      const colA = _styleColorArrForValue(layerIdX, xMid);
-      const colB = _styleColorArrForValue(layerIdY, yMid);
+      const colA = styleColorArrForValue(layerIdX, xMid);
+      const colB = styleColorArrForValue(layerIdY, yMid);
       const blended =
-        blendMode === 'screen' ? _blendScreenRGB(colA, colB) : _blendPlusLighterRGB(colA, colB);
+        blendMode === 'screen' ? blendScreenRGB(colA, colB) : blendPlusLighterRGB(colA, colB);
 
       const rect = document.createElementNS(svgNS, 'rect');
       const shrink = -0.05+0.5*(1-t); // fraction of each bin to inset by default make it a little bigger
@@ -1535,11 +1463,12 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const barW = Math.max(1, x1 - x0);
     const hPix = scaleTopH(xCounts[i]);
     const mid = (xEdges[i] + xEdges[i + 1]) / 2;
-    const fill = _styleColorForValue(layerIdX, mid);
+    const rgbArray = styleColorArrForValue(layerIdX, mid);
+    const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
     const rect = document.createElementNS(svgNS, 'rect');
     rect.setAttribute('x', String(x0)); rect.setAttribute('y', String(topY1 - hPix));
     rect.setAttribute('width', String(barW)); rect.setAttribute('height', String(hPix));
-    rect.setAttribute('fill', fill); rect.setAttribute('fill-opacity', '0.85');
+    rect.setAttribute('fill', rgbStr); rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 
@@ -1553,14 +1482,15 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     const barH = Math.max(1, y0 - y1);
     const wPix = scaleRightW(yCounts[j]);
     const mid = (yEdges[j] + yEdges[j + 1]) / 2;
-    const fill = _styleColorForValue(layerIdY, mid);
+    const rgbArray = styleColorArrForValue(layerIdY, mid);
+    const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
 
     const rect = document.createElementNS(svgNS, 'rect');
     rect.setAttribute('x', String(rightX0));
     rect.setAttribute('y', String(y1));
     rect.setAttribute('width', String(wPix));
     rect.setAttribute('height', String(barH));
-    rect.setAttribute('fill', fill);
+    rect.setAttribute('fill', rgbStr);
     rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
@@ -1595,14 +1525,14 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       el.style.cursor = 'pointer';
       el.addEventListener('mouseenter', e => {
         guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
       });
       el.addEventListener('mousemove', e => {
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
+        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
       });
       el.addEventListener('mouseleave', () => {
         guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
-        if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
+        if (typeof hidePctTooltip === 'function') hidePctTooltip();
       });
     });
   };
@@ -1639,174 +1569,6 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 }
 
 /**
- * Builds an SVG histogram visualization for a single raster layer.
- *
- * This function renders a 1D histogram from the provided bin edges and counts,
- * using layer-specific colors for each bar. It also draws percentile guide lines
- * and labels (if available in `state.percentiles`) with interactive hover
- * tooltips. The resulting `<svg>` element is returned and can be inserted into
- * the DOM.
- *
- * The function also exposes scaling functions and bounds to `state` for reuse:
- *   - `state.scaleX`: maps data values to pixel X coordinates.
- *   - `state.hist1dBounds`: the [min, max] value range of the histogram.
- *   - `state.pctBounds1d`: percentile bounds if percentiles were rendered.
- *
- * @param {number[]} edges - Array of histogram bin edges (length = N + 1).
- * @param {number[]} hist - Array of histogram bin counts (length = N).
- * @param {string} layerId - Identifier of the raster layer, used for color mapping.
- * @returns {SVGElement} The constructed histogram `<svg>` element.
- */
-function buildHistogramSVG(edges, hist, layerId) {
-  const w = 480;
-  const h = 160;
-  const pad = 36;
-  const axisColor = '#666';
-  const percentileColor = '#eeeeee';
-  const percentileDecimals = 2;
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', String(w));
-  svg.setAttribute('height', String(h));
-
-  const xMin = Math.min(...edges);
-  const xMax = Math.max(...edges);
-  const innerW = Math.max(1, w - pad * 2);
-  const innerH = Math.max(1, h - pad * 2);
-
-  const plotX0 = pad;
-  const plotY0 = pad;
-  const plotX1 = pad + innerW;
-  const plotY1 = pad + innerH;
-
-  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
-  const scaleH = c => {
-    const maxC = Math.max(1, ...hist.map(v => Number.isFinite(v) ? v : 0));
-    return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
-  };
-
-  state.scaleX = scaleX;
-  state.hist1dBounds = [xMin, xMax];
-
-  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
-    const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text');
-    t.textContent = txt;
-    t.setAttribute('x', x); t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
-    t.setAttribute('text-anchor', anchor);
-    return t;
-  };
-
-  // axes
-  svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
-  svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
-
-  // bars
-  for (let i = 0; i < hist.length; i++) {
-    const c = Number(hist[i]) || 0;
-    const x0 = scaleX(edges[i]);
-    const x1 = scaleX(edges[i + 1]);
-    const barW = Math.max(1, x1 - x0);
-    const hPix = scaleH(c);
-    const mid = (edges[i] + edges[i + 1]) / 2;
-    const fill = _styleColorForValue(layerId, mid);
-
-    const rect = document.createElementNS(svgNS, 'rect');
-    rect.setAttribute('x', String(x0));
-    rect.setAttribute('y', String(plotY1 - hPix));
-    rect.setAttribute('width', String(barW));
-    rect.setAttribute('height', String(hPix));
-    rect.setAttribute('fill', fill);
-    rect.setAttribute('fill-opacity', '0.85');
-    svg.appendChild(rect);
-  }
-
-  // percentiles (reads from state.percentiles if available)
-  const percentilesRaw = Array.isArray(state.percentiles) ? state.percentiles : [];
-  const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === 'string') {
-      const s = p.trim(); if (!s) return null;
-      const num = parseFloat(s); if (!Number.isFinite(num)) return null;
-      return (s.endsWith('%') || num > 1) ? num / 100 : num;
-    }
-    return null;
-  };
-  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b);
-
-  const total = hist.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const getQuantile = q => {
-    if (total <= 0) return xMin;
-    const target = q * total;
-    let cum = 0;
-    for (let i = 0; i < hist.length; i++) {
-      const c = Number.isFinite(hist[i]) ? hist[i] : 0;
-      const next = cum + c;
-      if (target <= next) {
-        const e0 = edges[i], e1 = edges[i + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = next;
-    }
-    return xMax;
-  };
-
-  const attachPctHover = (guideEl, lblEl, text) => {
-    [guideEl, lblEl].forEach(el => {
-      el.style.cursor = 'pointer';
-      el.addEventListener('mouseenter', e => {
-        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
-      });
-      el.addEventListener('mousemove', e => {
-        if (typeof _showPctTooltip === 'function') _showPctTooltip(text, e.clientX, e.clientY);
-      });
-      el.addEventListener('mouseleave', () => {
-        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
-        if (typeof _hidePctTooltip === 'function') _hidePctTooltip();
-      });
-    });
-  };
-
-  for (const p of percentiles) {
-    const xv = getQuantile(p);
-    const x = scaleX(xv);
-    const gx = mkLine(x, plotY0, x, plotY1, percentileColor);
-    gx.setAttribute('stroke-dasharray', '4,3');
-    gx.setAttribute('opacity', '0.5');
-    svg.appendChild(gx);
-
-    const label = `${Math.round(p * 100)}% (${xv.toFixed(percentileDecimals)})`;
-    const lx = mkText(label, x, plotY0 - 6, 'middle');
-    lx.setAttribute('fill', percentileColor);
-    svg.appendChild(lx);
-    attachPctHover(gx, lx, `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`);
-  }
-
-  if (percentiles.length) {
-    const minP = Math.min(...percentiles);
-    const maxP = Math.max(...percentiles);
-    const xmin = getQuantile(minP);
-    const xmax = getQuantile(maxP);
-    state.pctBounds1d = { xmin, xmax };
-  }
-
-  return svg;
-}
-
-
-/**
  * Prevent Leaflet map zooming when the Alt key is held during scroll.
  * @returns {void}
  */
@@ -1820,53 +1582,6 @@ function disableLeafletScrollOnAlt() {
   }, { passive: false, capture: true })
 }
 
-/**
- * Wire the "flip layers" button to toggle visibility between Layer A and Layer B.
- *
- * When the button with ID 'flipLayersBtn' is clicked, this function inverts
- * the visibility state of the two layer checkboxes ('layerVisibleA' and
- * 'layerVisibleB') so that only one layer is visible at a time.
- *
- * It then:
- * - Dispatches 'change' events for both checkboxes to trigger any external listeners.
- * - Calls `setLayerVisibility()` if available to update map layers directly.
- * - Otherwise, adjusts layer opacity and `state.visibility` manually.
- *
- * This ensures the UI checkboxes, visibility state, and rendered layers
- * remain synchronized when the user flips layers.
- */
-function wireLayerFlipper() {
-  document.getElementById('flipLayersBtn')?.addEventListener('click', () => {
-    const cbA = document.getElementById('layerVisibleA');
-    const cbB = document.getElementById('layerVisibleB');
-    if (!cbA || !cbB) return;
-
-    const aOn = !!cbA.checked;
-    const bOn = !!cbB.checked;
-
-    const nextAOn = !(aOn && !bOn);
-    cbA.checked = nextAOn;
-    cbB.checked = !nextAOn;
-
-    cbA.dispatchEvent(new Event('change', { bubbles: true }));
-    cbB.dispatchEvent(new Event('change', { bubbles: true }));
-
-    setLayerVisibility('A', cbA.checked);
-    setLayerVisibility('B', cbB.checked);
-  });
-document.getElementById('bothLayersOnBtn')?.addEventListener('click', () => {
-    const cbA = document.getElementById('layerVisibleA');
-    const cbB = document.getElementById('layerVisibleB');
-    cbA.checked = true
-    cbB.checked = true
-
-    cbA.dispatchEvent(new Event('change', { bubbles: true }));
-    cbB.dispatchEvent(new Event('change', { bubbles: true }));
-
-    setLayerVisibility('A', cbA.checked);
-    setLayerVisibility('B', cbB.checked);
-  });
-}
 
 /**
  * Wire the "Set Min/Med/Max from Histogram" button to automatically
@@ -1884,7 +1599,6 @@ document.getElementById('bothLayersOnBtn')?.addEventListener('click', () => {
  */
 function wireAutoStyleFromHistogram() {
   const btn = document.getElementById('applyAutoStyleBtn');
-  if (!btn) return;
 
   const getMinMedMaxFromEdges = (edges) => {
     if (!edges || !edges.length) return null;
@@ -1896,14 +1610,13 @@ function wireAutoStyleFromHistogram() {
   };
 
   const setTriple = (layerId, triple) => {
-    if (!triple) return;
     const fmt = (v) => Number.isFinite(v) ? +v.toPrecision(6) : '';
     const minEl = document.getElementById(`layer${layerId}MinInput`);
     const medEl = document.getElementById(`layer${layerId}MedInput`);
     const maxEl = document.getElementById(`layer${layerId}MaxInput`);
-    if (minEl) { minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (medEl) { medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (maxEl) { maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true }));
+    medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true }));
+    maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
   btn.addEventListener('click', () => {
@@ -1913,7 +1626,12 @@ function wireAutoStyleFromHistogram() {
     const a = getMinMedMaxFromEdges(xEdges);
     const b = getMinMedMaxFromEdges(yEdges);
 
-    const pb = state.pctBounds;
+    let pb = null;
+    if (a && b) {
+      pb = state.pctBounds;
+    } else {
+      pb = state.pctBounds1d;
+    }
     if (pb && Number.isFinite(pb.xmin) && Number.isFinite(pb.xmax) && a) {
       a.min = pb.xmin;
       a.max = pb.xmax;
@@ -1925,8 +1643,8 @@ function wireAutoStyleFromHistogram() {
       b.med = (pb.ymin + pb.ymax) / 2;
     }
 
-    setTriple('A', a);
-    setTriple('B', b);
+    if (a) setTriple('A', a);
+    if (b) setTriple('B', b);
 
     const previousOptions = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
     clearScatterOverlay();
@@ -1936,7 +1654,6 @@ function wireAutoStyleFromHistogram() {
 
 function wirePercentiles() {
   const percentilesInput = document.getElementById('percentiles')
-  if (!percentilesInput) return
 
   let raf = null
   const rerender = () => {
@@ -2053,24 +1770,20 @@ function wireControlGroup() {
 
 
   buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-  if (shpInput) {
-    shpInput.addEventListener('change', () => {
-      const f = shpInput.files && shpInput.files[0];
-      if (f) setMode('shapefile');
-    });
-  }
+  shpInput.addEventListener('change', () => {
+    const f = shpInput.files && shpInput.files[0];
+    if (f) setMode('shapefile');
+  });
 
   const range = group.querySelector('#windowSize');
   const num = group.querySelector('#windowSizeNumber');
-  if (range && num) {
-    const sync = src => {
-      if (src === range) num.value = range.value;
-      else range.value = num.value;
-      if (typeof window.onWindowSizeChange === 'function') window.onWindowSizeChange(Number(range.value));
-    };
-    range.addEventListener('input', () => sync(range));
-    num.addEventListener('input', () => sync(num));
-  }
+  const sync = src => {
+    if (src === range) num.value = range.value;
+    else range.value = num.value;
+    if (typeof window.onWindowSizeChange === 'function') window.onWindowSizeChange(Number(range.value));
+  };
+  range.addEventListener('input', () => sync(range));
+  num.addEventListener('input', () => sync(num));
 
   setMode(mode);
 
@@ -2142,7 +1855,7 @@ function wireControlGroup() {
  * Creates a fixed-position, styled <div> appended to the document body if none exists.
  * @returns {HTMLDivElement} The tooltip element.
  */
-function _ensurePctTooltip() {
+function ensurePctTooltip() {
   let tip = document.querySelector('.pct-tooltip')
   if (!tip) {
     tip = document.createElement('div')
@@ -2171,8 +1884,8 @@ function _ensurePctTooltip() {
  * @param {number} x - Mouse X coordinate (in client space).
  * @param {number} y - Mouse Y coordinate (in client space).
  */
-function _showPctTooltip(text, x, y) {
-  const tip = _ensurePctTooltip()
+function showPctTooltip(text, x, y) {
+  const tip = ensurePctTooltip()
   tip.textContent = text
   tip.style.left = `${x + 8}px`
   tip.style.top = `${y + 8}px`
@@ -2183,80 +1896,9 @@ function _showPctTooltip(text, x, y) {
  * Hide the percentile tooltip if currently visible.
  * Clears its display without removing the element from the DOM.
  */
-function _hidePctTooltip() {
+function hidePctTooltip() {
   const tip = document.querySelector('.pct-tooltip')
   if (tip) tip.style.display = 'none'
-}
-
-/**
- * Convert a hexadecimal color string (e.g., '#ffcc00' or 'fc0') to an RGB array.
- * @param {string} hex - Hexadecimal color string.
- * @returns {[number, number, number]} Array of [r, g, b] values (0–255).
- */
-function _hexToRgb(hex) {
-  const s = String(hex || '').trim();
-  const m = s.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
-  if (!m) return [136, 136, 136];
-  let h = m[1];
-  if (h.length === 3) h = h.split('').map(ch => ch + ch).join('');
-  const n = parseInt(h, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-/**
- * Interpolate between two RGB colors and return a CSS 'rgb(...)' string.
- * @param {[number, number, number]} c1 - Starting RGB color.
- * @param {[number, number, number]} c2 - Ending RGB color.
- * @param {number} t - Interpolation fraction (0–1).
- * @returns {string} CSS color string in 'rgb(r,g,b)' format.
- */
-function _interpRgb(c1, c2, t) {
-  const u = 1 - t;
-  const r = Math.round(u * c1[0] + t * c2[0]);
-  const g = Math.round(u * c1[1] + t * c2[1]);
-  const b = Math.round(u * c1[2] + t * c2[2]);
-  return `rgb(${r},${g},${b})`;
-}
-
-/**
- * Compute an interpolated CSS RGB color for a given numeric value based on
- * the active style inputs (min/med/max and their colors) for a specified layer.
- * @param {'A'|'B'} layerId - Layer identifier.
- * @param {number} v - Numeric value to colorize.
- * @returns {string} CSS color string ('rgb(r,g,b)').
- */
-function _styleColorForValue(layerId, v) {
-  const s = _readStyleInputsFromUI(layerId);
-  const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
-  const cmin = _hexToRgb(s.cmin || '#000000');
-  const cmed = _hexToRgb(s.cmed || '#888888');
-  const cmax = _hexToRgb(s.cmax || '#ffffff');
-  if (!Number.isFinite(v) || !Number.isFinite(min) || !Number.isFinite(med) || !Number.isFinite(max)) return 'rgb(136,136,136)';
-  if (v <= min) return `rgb(${cmin[0]},${cmin[1]},${cmin[2]})`;
-  if (v >= max) return `rgb(${cmax[0]},${cmax[1]},${cmax[2]})`;
-  if (v <= med) {
-    const t = (v - min) / Math.max(1e-9, (med - min));
-    return _interpRgb(cmin, cmed, t);
-  } else {
-    const t = (v - med) / Math.max(1e-9, (max - med));
-    return _interpRgb(cmed, cmax, t);
-  }
-}
-
-/**
- * Interpolate between two RGB color arrays and return a new [r,g,b] array.
- * @param {[number, number, number]} c1 - Starting color.
- * @param {[number, number, number]} c2 - Ending color.
- * @param {number} t - Interpolation fraction (0–1).
- * @returns {[number, number, number]} Interpolated RGB array.
- */
-function _interpRgbArr(c1, c2, t) {
-  const u = 1 - t;
-  return [
-    Math.round(u * c1[0] + t * c2[0]),
-    Math.round(u * c1[1] + t * c2[1]),
-    Math.round(u * c1[2] + t * c2[2]),
-  ];
 }
 
 /**
@@ -2266,15 +1908,23 @@ function _interpRgbArr(c1, c2, t) {
  * @param {number} v - Numeric value to colorize.
  * @returns {[number, number, number]} RGB array representing the color.
  */
-function _styleColorArrForValue(layerId, v) {
-  const s = _readStyleInputsFromUI(layerId);
+function styleColorArrForValue(layerId, v) {
+  const s = readStyleInputsFromUI(layerId);
   const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
-  const cmin = _hexToRgb(s.cmin || '#000000');
-  const cmed = _hexToRgb(s.cmed || '#888888');
-  const cmax = _hexToRgb(s.cmax || '#ffffff');
+  const cmin = hexToRgb(s.cmin || '#000000');
+  const cmed = hexToRgb(s.cmed || '#888888');
+  const cmax = hexToRgb(s.cmax || '#ffffff');
   if (!Number.isFinite(v) || !Number.isFinite(min) || !Number.isFinite(med) || !Number.isFinite(max)) return [136,136,136];
   if (v <= min) return cmin.slice();
   if (v >= max) return cmax.slice();
+  function _interpRgbArr(c1, c2, t) {
+    const u = 1 - t;
+    return [
+      Math.round(u * c1[0] + t * c2[0]),
+      Math.round(u * c1[1] + t * c2[1]),
+      Math.round(u * c1[2] + t * c2[2]),
+    ];
+  }
   if (v <= med) {
     const t = (v - min) / Math.max(1e-9, (med - min));
     return _interpRgbArr(cmin, cmed, t);
@@ -2291,7 +1941,7 @@ function _styleColorArrForValue(layerId, v) {
  * @param {[number, number, number]} b - Second RGB color.
  * @returns {[number, number, number]} Blended RGB color array.
  */
-function _blendPlusLighterRGB(a, b) {
+function blendPlusLighterRGB(a, b) {
   return [
     Math.min(255, a[0] + b[0]),
     Math.min(255, a[1] + b[1]),
@@ -2306,7 +1956,7 @@ function _blendPlusLighterRGB(a, b) {
  * @param {[number, number, number]} b - Second RGB color.
  * @returns {[number, number, number]} Blended RGB color array.
  */
-function _blendScreenRGB(a, b) {
+function blendScreenRGB(a, b) {
   return [
     255 - Math.round((255 - a[0]) * (255 - b[0]) / 255),
     255 - Math.round((255 - a[1]) * (255 - b[1]) / 255),
@@ -2339,7 +1989,6 @@ function _blendScreenRGB(a, b) {
  */
 function wirePixelProbe() {
   const map = state.map
-  if (!map) return
 
   // create probe element
   let probe = document.querySelector('.pixel-probe')
@@ -2347,27 +1996,23 @@ function wirePixelProbe() {
   const overlay = document.querySelector('#statsOverlay');
   const header = document.querySelector('header');
 
-  if (overlay) {
-    overlay.addEventListener('mouseover', () => {
-      state.probeSuppressed = true;
-      probe.style.display = 'none';
-    });
-    overlay.addEventListener('mouseleave', () => {
-      state.probeSuppressed = false;
-      probe.style.display = 'block';
-    });
-  }
+  overlay.addEventListener('mouseover', () => {
+    state.probeSuppressed = true;
+    probe.style.display = 'none';
+  });
+  overlay.addEventListener('mouseleave', () => {
+    state.probeSuppressed = false;
+    probe.style.display = 'block';
+  });
 
-  if (header) {
-    header.addEventListener('mouseover', () => {
-      state.probeSuppressed = true;
-      probe.style.display = 'none';
-    });
-    header.addEventListener('mouseleave', () => {
-      state.probeSuppressed = false;
-      probe.style.display = 'block';
-    });
-  }
+  header.addEventListener('mouseover', () => {
+    state.probeSuppressed = true;
+    probe.style.display = 'none';
+  });
+  header.addEventListener('mouseleave', () => {
+    state.probeSuppressed = false;
+    probe.style.display = 'block';
+  });
 
   // then in your global mousemove logic (or Leaflet map.on('mousemove'))
   document.addEventListener('mousemove', e => {
@@ -2580,10 +2225,8 @@ function wirePixelProbe() {
     pending = null
   })
 
-  if (overlay) {
-    overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
-    overlay.addEventListener('mouseleave', () => { })
-  }
+  overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
+  overlay.addEventListener('mouseleave', () => { })
 
   map._pixelProbeTeardown = () => {
     clearInterval(drainTimer)
@@ -2591,7 +2234,7 @@ function wirePixelProbe() {
     pending = null
     map.off('mousemove')
     map.off('mouseout')
-    if (probe && probe.parentNode) probe.parentNode.removeChild(probe)
+    probe.parentNode.removeChild(probe)
   }
 }
 
@@ -2791,7 +2434,6 @@ function collapseToMultiPolygon(fc) {
  */
 function wireShapefileAOIControl() {
   const inputEl = document.getElementById('shpInput');
-  if (!inputEl) return;
 
   inputEl.addEventListener('change', async evt => {
     const file = evt.target.files?.[0];
@@ -2883,22 +2525,18 @@ async function setAOIAndRenderOverlay(featureCollection) {
  */
 function wireOverlayControls() {
   const btn = document.getElementById('overlayClose');
-  if (btn) {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const wrap = document.getElementById('statsOverlay');
-      const body = document.getElementById('overlayBody');
-      if (wrap) wrap.classList.add('hidden');
-      if (body) body.innerHTML = '';
-    });
-  }
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const wrap = document.getElementById('statsOverlay');
+    const body = document.getElementById('overlayBody');
+    if (wrap) wrap.classList.add('hidden');
+    if (body) body.innerHTML = '';
+  });
 
   const overlay = document.getElementById('statsOverlay');
-  if (overlay) {
-    ['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
-      .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()));
-  }
+  ['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
+    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()));
 }
 
 /**
@@ -2916,7 +2554,7 @@ function wireOverlayControls() {
  */
 function enableWindowSampler() {
   const map = state.map;
-  if (!map || state._areaSampler?.enabled) return;
+  if (state._areaSampler?.enabled) return;
 
   // ensure hoverRect exists and is on the map
   if (!state.hoverRect) {
@@ -2977,11 +2615,11 @@ async function sampleAndRenderSampleBox(latlng) {
   const visA = document.getElementById('layerVisibleA');
   const visB = document.getElementById('layerVisibleB');
 
-  if (visA && !visA.checked) lyrA = null;
-  if (visB && !visB.checked) lyrB = null;
+  if (!visA.checked) lyrA = null;
+  if (!visB.checked) lyrB = null;
   if (!state.sampleBox) return;
   if (!lyrA && !lyrB) return;
-  _updateOutline(state.sampleBox);
+  updateOutline(state.sampleBox);
 
   if (!latlng) {
     latlng = {
@@ -3033,7 +2671,7 @@ async function sampleAndRenderSampleBox(latlng) {
  * its label text to indicate that the user can now download the selected area.
  * It is typically called after the user has drawn a sampling window or uploaded
  * an AOI shapefile, signaling that a download action is available.
- */
+ * */
 
 function enableDownloadButton() {
   document.getElementById('exportAreaBtn').classList.remove('disabled');
@@ -3050,7 +2688,7 @@ function enableDownloadButton() {
  */
 function disableWindowSampler() {
   const map = state.map;
-  if (!map || !state._areaSampler?.enabled) return;
+  if (!state._areaSampler?.enabled) return;
 
   map.off('mousemove', state._areaSampler.onMouseMove);
   map.off('mouseout', state._areaSampler.onMouseOut);
@@ -3114,8 +2752,6 @@ function wireCollapsibleTopBar() {
   const content = document.getElementById('topbarContent');
   const toggle = document.getElementById('headerToggle');
 
-  if (!header || !content || !toggle) return;
-
   const setExpanded = (expanded) => {
     if (expanded) {
       content.style.maxHeight = content.scrollHeight + 'px';
@@ -3150,7 +2786,6 @@ function wireCollapsibleTopBar() {
 ;(async function main() {
   initMap()
   wireSquareSamplerControls()
-  wireLayerFlipper()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
   wireVisibilityCheckboxes()

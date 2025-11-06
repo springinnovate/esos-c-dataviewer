@@ -5,14 +5,17 @@
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1' />
     <title>ESSOSC Viewer</title>
-    <link rel="icon" type="image/png" href="static/resnet_icon.jpg">
-    <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />
-    <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
-    <script src='https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js'></script>
-    <script src='https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js'></script>
-    <script src='https://unpkg.com/shpjs@latest/dist/shp.min.js'></script>
-    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
-    <link rel='stylesheet' href='static/style.css' />
+    <link rel='icon' type='image/png' href='{{ url_for("static", path="resnet_icon.jpg") }}'>
+
+    <style>
+      :root { color-scheme: dark; }
+      html, body, #app { height: 100%; margin: 0; }
+      #map { height: 100%; }
+    </style>
+
+    {% for href in main_css_list %}
+    <link rel='stylesheet' href='{{ href }}'>
+    {% endfor %}
   </head>
   <body>
     <header>
@@ -115,6 +118,7 @@
         </div>
       </section>
     </main>
-    <script src='static/app.js'></script>
+
+    <script type='module' src='{{ main_js }}'></script>
   </body>
 </html>

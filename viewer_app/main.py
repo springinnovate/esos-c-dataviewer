@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 import os
+import json
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Request
@@ -45,6 +46,25 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="ESSOSC Viewer")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+_manifest_path = Path("static/manifest.json")
+if not _manifest_path.exists():
+    raise RuntimeError(f"Missing manifest.json at {_manifest_path}")
+
+_manifest = json.loads(_manifest_path.read_text(encoding="utf-8"))
+
+
+def _asset_path(key: str) -> str:
+    entry = _manifest[key]  # let KeyError propagate if missing
+    return f"static/{entry['file']}"
+
+
+def _css_paths(key: str) -> list[str]:
+    entry = _manifest[key]
+    return [f"static/{c}" for c in entry.get("css", [])]
+
+
+logger.info(f"*****{_manifest}")
 
 
 def _load_layers_config(config_path: str) -> dict:
@@ -95,7 +115,13 @@ async def index(
 ):
     initial_layers = {"A": layerA or "", "B": layerB or ""}
     return templates.TemplateResponse(
-        "index.html", {"request": request, "initial_layers": initial_layers}
+        "index.html",
+        {
+            "request": request,
+            "initial_layers": initial_layers,
+            "main_js": _asset_path("app.js"),
+            "main_css_list": _css_paths("app.js"),
+        },
     )
 
 

@@ -39,7 +39,6 @@ services:
       - traefik.http.middlewares.cache-year.headers.customResponseHeaders.Cache-Control=public,max-age=31536000,immutable
       - traefik.http.middlewares.no-store.headers.customResponseHeaders.Cache-Control=no-store
 
-
   geoserver:
     image: ${GEOSERVER_IMAGE}
     restart: unless-stopped

@@ -5,7 +5,7 @@ RUN apk add --no-cache git
 WORKDIR /src
 # compute version from repo without copying .git into the image
 RUN --mount=type=bind,source=.git,target=/src/.git,ro \
-    git describe --tags --dirty --always > /version
+    git describe --tags --always > /version
 
 FROM node:20-slim AS build
 WORKDIR /build

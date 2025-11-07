@@ -113,6 +113,7 @@ const state = {
   pointGroup: null,
   lastHasData: null,
   selectElement: null,
+  lastLayerSetting: null,
  }
 
 
@@ -985,16 +986,29 @@ function enableAltWheelSlider() {
  * Render a scatterplot of two rasters' values within a polygon.
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
-function renderScatterOverlay(opts) {
+async function renderScatterOverlay(opts) {
   state.lastScatterOpts = opts
   const visA = document.getElementById('layerVisibleA').checked;
   const visB = document.getElementById('layerVisibleB').checked;
-  const {
+
+  let {
     rasterX, rasterY,
     centerLng, centerLat,
     boxKm,
     scatterObj // normal behavior to be null if not generated yet
   } = opts
+
+  const layerSetting = `${visA ? 'A1' : 'A0'}_${visB ? 'B1' : 'B0'}`;
+
+  if (state.lastScatterOpts != layerSetting) {
+      const lyrAName = state.availableLayers?.[state.activeLayerIdxA]?.name;
+      const lyrBName = state.availableLayers?.[state.activeLayerIdxB]?.name;
+      scatterObj = await fetchScatterStats(
+        lyrAName,
+        lyrBName,
+        state.sampleBox.toGeoJSON()
+      );
+  }
 
   const overlay = document.getElementById('statsOverlay')
   const body = document.getElementById('overlayBody')
@@ -1252,7 +1266,7 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
   }
 }
 
-function clearScatterOverlay() {
+async function clearScatterOverlay() {
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');
   const plot = document.getElementById('scatterPlot');
@@ -1269,8 +1283,8 @@ function clearScatterOverlay() {
 
 ['layerVisibleA', 'layerVisibleB'].forEach(id => {
   const el = document.getElementById(id);
-  el.addEventListener('change', () =>
-    renderScatterOverlay(
+  el.addEventListener('change', async () =>
+    await renderScatterOverlay(
       { ...state.lastScatterOpts, scatterObj: state.scatterObj }));
 });
 
@@ -1597,7 +1611,7 @@ function disableLeafletScrollOnAlt() {
  * - Finally, it calls `renderScatterOverlay()` to refresh the plot.
  *
  */
-function wireAutoStyleFromHistogram() {
+async function wireAutoStyleFromHistogram() {
   const btn = document.getElementById('applyAutoStyleBtn');
 
   const getMinMedMaxFromEdges = (edges) => {
@@ -1619,7 +1633,7 @@ function wireAutoStyleFromHistogram() {
     maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const so = state.scatterObj;
     const xEdges = so?.x_edges;
     const yEdges = so?.y_edges;
@@ -1647,20 +1661,20 @@ function wireAutoStyleFromHistogram() {
     if (b) setTriple('B', b);
 
     const previousOptions = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
-    clearScatterOverlay();
-    renderScatterOverlay(previousOptions)
+    await clearScatterOverlay();
+    await renderScatterOverlay(previousOptions)
   });
 }
 
-function wirePercentiles() {
+async function wirePercentiles() {
   const percentilesInput = document.getElementById('percentiles')
 
   let raf = null
-  const rerender = () => {
+  const rerender = async () => {
     // ensure we pass a scatterObj so it renders immediately (1D or 2D as appropriate)
     if (state.lastScatterOpts && state.scatterObj) {
       const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj }
-      renderScatterOverlay(opts)
+      await renderScatterOverlay(opts)
     }
   }
 
@@ -2284,7 +2298,7 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
     }
   };
 
-  const applySelectedPalette = (paletteKey) => {
+  const applySelectedPalette = async (paletteKey) => {
     const selectedPalette = state.bivariatePalette[paletteKey];
     if (!selectedPalette) return;
 
@@ -2297,7 +2311,7 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
     }
 
     if (state.lastScatterOpts) {
-      renderScatterOverlay({
+      await renderScatterOverlay({
         ...state.lastScatterOpts,
         scatterObj: state.scatterObj
       });
@@ -2505,7 +2519,7 @@ async function setAOIAndRenderOverlay(featureCollection) {
 
   const areaM2 = turf.area(featureCollection);
   const areaKm2 = areaM2 / 1e6;
-  renderScatterOverlay({
+  await renderScatterOverlay({
     rasterX: layerX?.name,
     rasterY: layerY?.name,
     centerLng: centerLngLat.lng,
@@ -2582,7 +2596,7 @@ function enableWindowSampler() {
 
   /** Perform sampling and render overlay on click. */
   async function onClick(evt) {
-    clearScatterOverlay();
+    await clearScatterOverlay();
 
     const sampleBox = squarePolygonAt(evt.latlng, state.boxSizeKm);
     state.sampleBox = sampleBox;
@@ -2628,7 +2642,7 @@ async function sampleAndRenderSampleBox(latlng) {
     };
   }
 
-  renderScatterOverlay({
+  await renderScatterOverlay({
     rasterX: lyrA?.name,
     rasterY: lyrB?.name,
     centerLng: latlng.lng,
@@ -2643,7 +2657,7 @@ async function sampleAndRenderSampleBox(latlng) {
     state.sampleBox.toGeoJSON()
   );
 
-  renderScatterOverlay({
+  await renderScatterOverlay({
     rasterX: lyrA?.name,
     rasterY: lyrB?.name,
     centerLng: latlng.lng,
@@ -2714,14 +2728,14 @@ function disableWindowSampler() {
  *
  * @param {string} mode - Sampling mode name ('window' or 'shapefile').
  */
-function setSamplingMode(mode) {
+async function setSamplingMode(mode) {
   state.sampleMode = mode.toLowerCase()
   if (state.sampleMode === 'window') {
     enableWindowSampler();
   } else {
     disableWindowSampler();
   }
-  clearScatterOverlay()
+  await clearScatterOverlay()
 }
 
 /**

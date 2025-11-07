@@ -19,8 +19,12 @@ export default defineConfig({
       name: 'viewer'
     },
     rollupOptions: {
-      output: { }
-    }
+      output: {
+        entryFileNames: 'app-[hash].js',
+        chunkFileNames: 'chunks/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
+        },
+    },
   },
   esbuild: {
     keepNames: false

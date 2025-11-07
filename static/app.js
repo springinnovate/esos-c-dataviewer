@@ -2816,7 +2816,6 @@ function wireCollapsibleTopBar() {
   state.geoserverBaseUrl = cfg.geoserver_base_url
   state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url
-
   ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   populateLayerSelects()
   const numInput = document.getElementById('windowSizeNumber');

@@ -1,20 +1,20 @@
 # Dockerfile.viewer
-# pre-install the leaflet and suporting libraries so we don't pull them from a cdn
+
+FROM alpine:3.20 AS versioner
+RUN apk add --no-cache git
+WORKDIR /src
+# compute version from repo without copying .git into the image
+RUN --mount=type=bind,source=.git,target=/src/.git,ro \
+    git describe --tags --dirty --always > /version
+
 FROM node:20-slim AS build
 WORKDIR /build
-
 COPY static/ ./
 RUN npm install
-
-# now copy sources
 COPY static/ ./
-
-# verify vite + config are present
 RUN node -e "console.log('vite=', require('vite/package.json').version)" && [ -f vite.config.js ] || (echo 'vite.config.js missing' && exit 1)
-
 RUN npm run build && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
 
-# python frontend
 FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -23,8 +23,9 @@ RUN pip install --no-cache-dir fastapi uvicorn pyyaml jinja2
 
 COPY viewer_app /app/viewer_app
 COPY templates /app/templates
-
 COPY --from=build /build/dist /app/static
 COPY static/favicon.ico /app/static
+
+COPY --from=versioner /version /app/version
 
 CMD uvicorn viewer_app.main:app --host 0.0.0.0 --port 5173

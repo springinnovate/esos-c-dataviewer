@@ -106,10 +106,48 @@ def _collect_layers(config: dict) -> list:
     return layers
 
 
+def _read_version():
+    """Return the application version from environment or a baked file.
+
+    This function checks the 'APP_VERSION' environment variable first. If it is
+    unset or empty, it attempts to read a pre-baked version string from
+    '/app/version'. If the file is missing, the function returns 'dev'. Other I/O
+    errors (e.g., permission errors) will propagate.
+
+    Returns:
+        str: A semantic or git-derived version string, or 'dev' if no version
+        information is available.
+    """
+    v = os.getenv("APP_VERSION")
+    if v:
+        return v
+    try:
+        with open("/app/version", "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return "dev"
+
+
 @app.get("/")
 async def index(
     request: Request, layerA: Optional[str] = None, layerB: Optional[str] = None
 ):
+    """Render the main viewer page.
+
+    This endpoint serves the index template and optionally initializes the A/B
+    layers from query parameters.
+
+    Args:
+        request (Request): Incoming FastAPI request object.
+        layerA (Optional[str]): Optional initial layer identifier for panel A,
+            taken from the 'layerA' query parameter.
+        layerB (Optional[str]): Optional initial layer identifier for panel B,
+            taken from the 'layerB' query parameter.
+
+    Returns:
+        TemplateResponse: Rendered 'index.html' with initial layer state,
+        asset paths, and application version.
+    """
     initial_layers = {"A": layerA or "", "B": layerB or ""}
     return templates.TemplateResponse(
         "index.html",
@@ -118,6 +156,7 @@ async def index(
             "initial_layers": initial_layers,
             "main_js": _asset_path("app.js"),
             "main_css_list": _css_paths("app.js"),
+            "app_version": _read_version(),
         },
     )
 

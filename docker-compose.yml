@@ -58,7 +58,7 @@ services:
       - traefik.enable=true
 
       # deploy (HTTPS)
-      - traefik.http.routers.geoserver.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/geoserver`)
+      - traefik.http.routers.geoserver.rule=Host(`${HOST}`) && PathPrefix(`/geoserver`)
       - traefik.http.routers.geoserver.entrypoints=websecure
       - traefik.http.routers.geoserver.tls=true
       - traefik.http.routers.geoserver.tls.certresolver=le
@@ -88,7 +88,7 @@ services:
       - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
 
       # deploy (HTTPS)
-      - traefik.http.routers.viewer.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
+      - traefik.http.routers.viewer.rule=Host(`${HOST}`) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer.entrypoints=websecure
       - traefik.http.routers.viewer.tls=true
       - traefik.http.routers.viewer.tls.certresolver=le
@@ -101,7 +101,7 @@ services:
       - traefik.http.routers.viewer-local.middlewares=viewer-stripprefix@docker,no-store@docker
 
       # HTTPS assets
-      - traefik.http.routers.viewer-assets.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/viewer`)
+      - traefik.http.routers.viewer-assets.rule=Host(`${HOST}`) && PathPrefix(`/viewer`)
       - traefik.http.routers.viewer-assets.entrypoints=websecure
       - traefik.http.routers.viewer-assets.tls=true
       - traefik.http.routers.viewer-assets.tls.certresolver=le
@@ -155,7 +155,7 @@ services:
       - traefik.http.middlewares.rstats-stripprefix.stripprefix.prefixes=/rstats
 
       # deploy (HTTPS)
-      - traefik.http.routers.rstats.rule=Host(`resnetdata.ecoshard.org`) && PathPrefix(`/rstats`)
+      - traefik.http.routers.rstats.rule=Host(`${HOST}`) && PathPrefix(`/rstats`)
       - traefik.http.routers.rstats.entrypoints=websecure
       - traefik.http.routers.rstats.tls=true
       - traefik.http.routers.rstats.tls.certresolver=le

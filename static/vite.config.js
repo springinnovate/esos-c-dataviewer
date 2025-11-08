@@ -10,9 +10,9 @@ export default defineConfig({
     assetsDir: '',
     target: 'esnext',
     cssCodeSplit: true,
-    minify: false, //'esbuild',
-    cssMinify: false, //true,
-    sourcemap: true, //false,
+    minify: 'esbuild',
+    cssMinify: true,
+    sourcemap: false,
     lib: {
       entry: path.resolve(__dirname, 'app.js'),
       formats: ['es'],
@@ -27,6 +27,6 @@ export default defineConfig({
     },
   },
   esbuild: {
-    keepNames: true//false
+    keepNames: false
   }
 })

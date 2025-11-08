@@ -450,11 +450,18 @@ function updateOutline(poly) {
  * Keeps range and numeric inputs in sync and updates hover rectangle.
  */
 function wireSquareSamplerControls() {
-  const rRange = document.getElementById('windowSize')
-  const rNum = document.getElementById('windowSizeNumber')
+  const windowSlider = document.getElementById('windowSlider')
+  const windowNumber = document.getElementById('windowSizeNumber')
 
   const minKm = 1
-  const maxKm = 1000
+  const maxKm = 400
+  const stepRange = 1
+  const currentKm = 200
+
+  windowNumber.min = minKm
+  windowNumber.max = maxKm
+  windowNumber.step = stepRange
+  windowNumber.value = currentKm
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
@@ -465,42 +472,36 @@ function wireSquareSamplerControls() {
     return minKm * Math.pow(maxKm / minKm, exp)
   }
 
-  // km in [minKm..maxKm] -> pos in [0..100]
-  function kmToSlider(km) {
-    const k = clamp(Number(km) || minKm, minKm, maxKm)
-    const exp = Math.log(k / minKm) / Math.log(maxKm / minKm) // [0..1]
-    return clamp(Math.pow(exp, 2) * 100, 0, 100)
-  }
-
   function updateHoverRect() {
     if (!state.map || !state.hoverRect) return
     const ll = state.lastMouseLatLng || state.map.getCenter()
     const poly = squarePolygonAt(ll, state.boxSizeKm)
     state.hoverRect.setLatLngs(poly.getLatLngs())
   }
+  windowSlider.addEventListener('input', () => updateHoverRect());
 
   function setFromSlider(pos) {
-    const km = sliderToKm(pos)
-    rRange.value = String(Math.round(clamp(pos, 0, 100)))
-    rNum.value = km.toFixed(1)
+    const p = clamp(Number(pos) || 0, 0, 100)
+    const exp = Math.sqrt(p / 100)
+    const km = minKm * Math.pow(maxKm / minKm, exp)
     state.boxSizeKm = km
+    windowNumber.value = km
     updateHoverRect()
   }
 
   function setFromKm(km) {
-    const pos = kmToSlider(km)
-    setFromSlider(pos)
+    state.boxSizeKm = km
+    const k = clamp(Number(km) || minKm, minKm, maxKm)
+    const exp = Math.log(k / minKm) / Math.log(maxKm / minKm) // [0..1]
+    const pos = clamp(Math.pow(exp, 2) * 1, 0, 100)*100
+    windowSlider.value = pos;
+    updateHoverRect()
   }
+  setFromKm(currentKm);
 
-  rRange.addEventListener('input', () => setFromSlider(Number(rRange.value)))
-  rNum.addEventListener('input', () => setFromKm(Number(rNum.value)))
+  windowSlider.addEventListener('input', () => setFromSlider(Number(windowSlider.value)))
+  windowNumber.addEventListener('input', () => setFromKm(Number(windowNumber.value)))
 
-  const kmFromNum = parseFloat(rNum.value)
-  if (Number.isFinite(kmFromNum)) {
-    setFromKm(kmFromNum)
-  } else {
-    setFromSlider(Number(rRange.value))
-  }
 }
 
 /**
@@ -946,17 +947,15 @@ function wireDynamicStyleControls(layerId) {
  * @returns {void}
  */
 function enableAltWheelSlider() {
-  const slider = document.getElementById('windowSize')
+  const slider = document.getElementById('windowSlider')
 
   const clamp = (v) => {
-    const min = parseFloat(slider.min) || 0
-    const max = parseFloat(slider.max) || 100
-    return Math.max(min, Math.min(max, v))
+    return Math.max(1, Math.min(100, v))
   }
 
-  const apply = (v) => {
-    const vv = clamp(v)
-    slider.value = String(vv)
+  const apply = (pos) => {
+    const posClamp = clamp(pos)
+    slider.value = String(posClamp)
     // let wireSquareSamplerControls' 'input' handler drive boxSize + number display
     slider.dispatchEvent(new Event('input', { bubbles: true }))
   }
@@ -1788,17 +1787,6 @@ function wireControlGroup() {
     const f = shpInput.files && shpInput.files[0];
     if (f) setMode('shapefile');
   });
-
-  const range = group.querySelector('#windowSize');
-  const num = group.querySelector('#windowSizeNumber');
-  const sync = src => {
-    if (src === range) num.value = range.value;
-    else range.value = num.value;
-    if (typeof window.onWindowSizeChange === 'function') window.onWindowSizeChange(Number(range.value));
-  };
-  range.addEventListener('input', () => sync(range));
-  num.addEventListener('input', () => sync(num));
-
   setMode(mode);
 
   document.getElementById('exportAreaBtn').addEventListener('click', async () => {
@@ -2818,8 +2806,4 @@ function wireCollapsibleTopBar() {
   state.baseStatsUrl = cfg.rstats_base_url
   ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
   populateLayerSelects()
-  const numInput = document.getElementById('windowSizeNumber');
-  numInput.addEventListener('change', () => {
-    numInput.value = parseFloat(numInput.value).toFixed(1);
-  });
 })()

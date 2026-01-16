@@ -447,6 +447,7 @@ def ping_until_up(geoserver_client: Gs, timeout_sec: int) -> None:
             if r.status_code == 200:
                 return
         except requests.RequestException:
+            logger.exception(f"request failed")
             pass
         time.sleep(2)
     raise TimeoutError("geoserver REST did not become ready")
@@ -802,6 +803,8 @@ def main():
     Returns:
         None
     """
+    logger.info("Starting GeoServer init")
+
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
@@ -810,12 +813,19 @@ def main():
     )
     parsed_args = parser.parse_args()
 
+    logger.info("Config path: %s", parsed_args.config)
+
     with open(parsed_args.config, "r", encoding="utf-8") as yaml_file:
         raw_yaml = yaml_file.read()
+    logger.info("Read config file (%d bytes)", len(raw_yaml))
 
     expanded_yaml = os.path.expandvars(raw_yaml)
-    config_data = yaml.safe_load(expanded_yaml)
+    if expanded_yaml != raw_yaml:
+        logger.info("Expanded environment variables in config YAML")
 
+    config_data = yaml.safe_load(expanded_yaml)
+    logger.info("Parsed YAML config")
+    logger.info(config_data)
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_password = config_data["geoserver"]["password"]
@@ -827,26 +837,42 @@ def main():
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
-    # doing -1 here because i often ran out of memory when processing more than
-    # one raster at a time
+
+    logger.info("GeoServer base_url: %s", geoserver_base_url)
+    logger.info("Workspace: %s", config_data.get("workspace_id"))
+    logger.info("Target projection: %s", target_projection)
+    logger.info("Local working dir: %s", str(local_working_dir))
+    logger.info("Init processing enabled: %s", geoserver_init_process_files)
+    logger.info("Layers defined: %d", len(config_data.get("layers") or {}))
+
     task_graph = taskgraph.TaskGraph(local_working_dir, -1, 15.0)
+    logger.info("TaskGraph initialized (workers=%s, timeout=%.1f)", -1, 15.0)
 
     timeout_seconds = 30
     geoserver_client = Gs(
         geoserver_base_url, geoserver_user, geoserver_password, timeout_seconds
     )
+    logger.info(
+        "GeoServer REST client initialized (timeout=%ss)", timeout_seconds
+    )
 
     seconds_to_wait_for_geoserver_start = 420
+    logger.info(
+        "Waiting for GeoServer to become available at %s (timeout=%ss)...",
+        geoserver_base_url,
+        seconds_to_wait_for_geoserver_start,
+    )
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
+    logger.info("GeoServer is up")
 
     workspace_id = config_data["workspace_id"]
-    purge_and_create_workspace(
-        geoserver_client,
-        workspace_id,
-    )
+    logger.info("Purging and creating workspace: %s", workspace_id)
+    purge_and_create_workspace(geoserver_client, workspace_id)
+    logger.info("Workspace ready: %s", workspace_id)
 
     style_path = config_data["style"]
     style_id = Path(style_path).stem
+    logger.info("Ensuring style exists: %s (path=%s)", style_id, style_path)
     create_style_if_not_exists(
         geoserver_client,
         workspace_id,
@@ -854,15 +880,33 @@ def main():
         "sld",
         style_path,
     )
+    logger.info("Style ready: %s", style_id)
 
-    for raster_id, layer_def in config_data.get("layers").items():
-        logger.info("Working on layer definition: %s", layer_def)
+    layers = config_data.get("layers") or {}
+    if not layers:
+        logger.warning('No layers found under config_data["layers"]')
+
+    scheduled_layers = 0
+    scheduled_tasks = 0
+
+    for raster_id, layer_def in layers.items():
+        logger.info("Scheduling layer: %s", raster_id)
+        logger.debug("Layer definition (%s): %s", raster_id, layer_def)
+
         file_path = Path(layer_def["file_path"])
         target_path = local_working_dir / Path(file_path).name
 
+        logger.info(
+            "Layer %s file_path=%s target_path=%s",
+            raster_id,
+            str(file_path),
+            str(target_path),
+        )
+
         create_layer_task_list = []
+
         if geoserver_init_process_files:
-            # assume it's already there
+            logger.info("Adding process task for %s", raster_id)
             process_task = task_graph.add_task(
                 func=reproject_and_build_overviews_if_needed,
                 args=(
@@ -875,6 +919,14 @@ def main():
                 task_name=f"process {raster_id}",
             )
             create_layer_task_list.append(process_task)
+            scheduled_tasks += 1
+        else:
+            logger.info(
+                "Skipping processing for %s (GEOSERVER_INIT_PROCESS_FILES=false)",
+                raster_id,
+            )
+
+        logger.info("Adding create-layer task for %s", raster_id)
         task_graph.add_task(
             func=create_layer,
             args=(
@@ -888,27 +940,37 @@ def main():
             task_name=f"create layer {raster_id}",
             transient_run=True,
         )
-    task_graph.join()
-    task_graph.close()
-    logger.info("All done.")
+        scheduled_tasks += 1
+        scheduled_layers += 1
 
-    # randomly change the master password first, then the admin password so
-    # it can never be guessed!
+    logger.info(
+        "All tasks scheduled (layers=%d, tasks=%d). Waiting for completion...",
+        scheduled_layers,
+        scheduled_tasks,
+    )
+
+    task_graph.join()
+    logger.info("TaskGraph join complete")
+    task_graph.close()
+    logger.info("TaskGraph closed")
+
+    logger.info("Rotate GeoServer passwords so they cannot be guessed")
     http_jobs = [
         (  # master password
-            f"{geoserver_base_url}/rest/security/self/password",
-            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
-        ),
-        (  # admin password
             f"{geoserver_base_url}/rest/security/masterpw.json",
             {
                 "oldMasterPassword": "geoserver",
                 "newMasterPassword": secrets.token_urlsafe(PASSWORD_LENGTH),
             },
         ),
+        (  # admin password
+            f"{geoserver_base_url}/rest/security/self/password",
+            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
+        ),
     ]
 
     for url, payload in http_jobs:
+        logger.info("PUT %s", url)
         try:
             resp = requests.put(
                 url,
@@ -918,16 +980,24 @@ def main():
             )
             if resp.status_code != 200:
                 logger.error(
-                    f"Failed to update PUT with {url} and {payload} {resp.text}"
+                    "Password update failed: url=%s status=%s body=%s",
+                    url,
+                    resp.status_code,
+                    resp.text,
                 )
-        except Exception as e:
+            else:
+                logger.info("Password update succeeded: url=%s", url)
+        except Exception:
             logger.exception(
-                f"Failed to update PUT with {url} and {payload} {e}"
+                "Password update exception: url=%s payload=%s", url, payload
             )
+
+    logger.info("All done")
 
 
 if __name__ == "__main__":
     try:
+        logging.info("starting up")
         main()
     except Exception:
         logger.exception("Unhandled error during GeoServer configuration")

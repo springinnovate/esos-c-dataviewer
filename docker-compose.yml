@@ -1,5 +1,5 @@
-# docker-compose.yml
-# docker compose up -d
+# This is an example of how you launch this compose
+# docker compose --env-file ./profiles/local_esosc/.env.app up --build -d
 name: essosc-viewer
 
 volumes:
@@ -7,13 +7,16 @@ volumes:
   traefik_letsencrypt:
 
 networks:
-  backend: {}
+  backend:
+    name: essosc-viewer_backend
 
 services:
   traefik:
     image: traefik:v3
     command:
       - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=essosc-viewer_backend
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
 
@@ -47,12 +50,12 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
+    volumes:
+      - ./${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
     environment:
       - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
       - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
       - JAVA_OPTS=${GEOSERVER_JAVA_OPTS}
-    volumes:
-      - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
     networks: [backend]
     labels:
       - traefik.enable=true
@@ -78,7 +81,7 @@ services:
       - LAYERS_YAML_PATH=/app/layers.yml
       - RSTATS_BASE_URL=/rstats
     volumes:
-      - ./layers.yml:/app/layers.yml:ro
+      - ./${LAYERS_YML}:/app/layers.yml:ro
     networks: [backend]
     labels:
       - traefik.enable=true
@@ -126,12 +129,15 @@ services:
     restart: 'no'
     environment:
       - GEOSERVER_INIT_PROCESS_FILES=${GEOSERVER_INIT_PROCESS_FILES}
+      - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
+      - GEOSERVER_INTERNAL_BASE_URL=${GEOSERVER_INTERNAL_BASE_URL}
+      - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
+      - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
-      - ./layers.yml:/app/layers.yml:ro
+      - ${LAYERS_YML}:/app/layers.yml:ro
       - ./.env:/app/.env:ro
-      - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
-      - ./local_data/processed_rasters:${GEOSERVER_LOCAL_DATA_DIR}/processed_rasters
+      - ${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
     command: ['/app/layers.yml']
 
   rstats:
@@ -142,6 +148,7 @@ services:
     environment:
       - RASTERS_YAML_PATH=/app/layers.yml
       - WORKERS=2
+      - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
     volumes:
       - ./layers.yml:/app/layers.yml:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro

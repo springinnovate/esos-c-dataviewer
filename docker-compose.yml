@@ -7,7 +7,8 @@ volumes:
   traefik_letsencrypt:
 
 networks:
-  backend: {}
+  backend:
+    name: essosc-viewer_backend
 
 services:
   traefik:
@@ -15,7 +16,7 @@ services:
     command:
       - --providers.docker
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=backend
+      - --providers.docker.network=essosc-viewer_backend
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
 

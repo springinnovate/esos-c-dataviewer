@@ -949,27 +949,23 @@ def main():
         scheduled_tasks,
     )
 
-    try:
-        task_graph.join()
-        logger.info("TaskGraph join complete")
-    finally:
-        task_graph.close()
-        logger.info("TaskGraph closed")
+    task_graph.join()
+    logger.info("TaskGraph join complete")
+    task_graph.close()
+    logger.info("TaskGraph closed")
 
-    logger.info("Raster/layer provisioning complete")
-
-    logger.info("Rotating GeoServer passwords via REST")
+    logger.info("Rotate GeoServer passwords so they cannot be guessed")
     http_jobs = [
-        (
-            f"{geoserver_base_url}/rest/security/self/password",
-            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
-        ),
-        (
+        (  # master password
             f"{geoserver_base_url}/rest/security/masterpw.json",
             {
                 "oldMasterPassword": "geoserver",
                 "newMasterPassword": secrets.token_urlsafe(PASSWORD_LENGTH),
             },
+        ),
+        (  # admin password
+            f"{geoserver_base_url}/rest/security/self/password",
+            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
         ),
     ]
 

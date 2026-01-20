@@ -58,7 +58,10 @@ import yaml
 
 load_dotenv()
 
-RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
+# this will be mounted in the docker container when it is launched to always
+# point at this yaml
+RASTERS_YAML_PATH = Path("/app/layers.yml")
+
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -398,7 +401,7 @@ def _load_registry() -> dict:
 
     """
     if not RASTERS_YAML_PATH.exists():
-        raise RuntimeError("rasters.yml not found")
+        raise RuntimeError(f"{RASTERS_YAML_PATH} not found")
     raw_yaml = RASTERS_YAML_PATH.read_text()
     expanded_yaml = os.path.expandvars(raw_yaml)
     y = yaml.safe_load(expanded_yaml)
@@ -548,6 +551,31 @@ def rasters():
     return {"rasters": list(REGISTRY.keys())}
 
 
+def get_best_overview(band):
+    """Returns the highest-resolution overview that fits within a memory budget.
+
+    This scans overviews for band 1 (from highest to lowest resolution) and returns
+    the first overview whose pixel count fits within 2*28 bytes assuming
+    4 bytes per pixel.
+
+    Args:
+      raster: A GDAL rasterband.
+
+    Returns:
+      A GDAL RasterBand overview (RasterBand) for band 1 that fits the budget, or
+      None if no available overview fits.
+    """
+    max_bytes = 2**28
+    element_bytesize = 4
+    max_elements = max_bytes / element_bytesize
+
+    for i in range(band.GetOverviewCount()):
+        print(f"trying {i}")
+        overview = band.GetOverview(i)
+        if overview.XSize * overview.YSize < max_elements:
+            return overview
+
+
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)
 def minmax_stats(r: RasterMinMaxIn):
     """Compute approximate 5th and 95th percentile values for a raster.
@@ -574,8 +602,7 @@ def minmax_stats(r: RasterMinMaxIn):
         logger.debug(f"stats on this file: {file_path}")
         raster = gdal.Open(file_path, gdal.GA_ReadOnly)
         band = raster.GetRasterBand(1)
-        n_ovr = band.GetOverviewCount()
-        overview = band.GetOverview(n_ovr - 1)
+        overview = get_best_overview(band)
         array = overview.ReadAsArray()
         nodata = band.GetNoDataValue()
         if nodata is not None:

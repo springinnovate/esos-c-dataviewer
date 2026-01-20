@@ -894,7 +894,7 @@ def main():
         logger.debug("Layer definition (%s): %s", raster_id, layer_def)
 
         file_path = Path(layer_def["file_path"])
-        target_path = local_working_dir / Path(file_path).name
+        target_path = file_path
 
         logger.info(
             "Layer %s file_path=%s target_path=%s",

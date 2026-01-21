@@ -17,9 +17,9 @@ RUN node -e "console.log('vite=', require('vite/package.json').version)" && [ -f
 # Choose one of these builds only:
 
 #This is for production
-RUN npm run build && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
+#RUN npm run build && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
 # This is for dev
-#RUN npx vite build --minify=false --sourcemap && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
+RUN npx vite build --minify=false --sourcemap && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
 
 
 

@@ -1,4 +1,3 @@
-// static/app.js
 import 'leaflet/dist/leaflet.css'
 import './style.css'
 
@@ -49,6 +48,10 @@ const state = {
   outlineLayer: null,
   lastStats: null,
   didInitialCenter: false,
+  didInitialRasterFit: false,
+  _wmsCapsXml: null,
+  _wmsCapsPromise: null,
+  _wmsLayerBoundsCache: new Map(),
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
@@ -641,8 +644,8 @@ function populateLayerSelects() {
     state.availableLayers.forEach((lyr, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
-      opt.textContent = lyr.title;
-      opt.title = lyr.description;
+      opt.textContent = layerLabel(lyr);
+      opt.title = layerDesc(lyr);
       sel.appendChild(opt);
     });
   };
@@ -700,6 +703,103 @@ function addWmsLayer(qualifiedName, slot, className) {
 
 }
 
+function _xmlLocalName(el) {
+  return String(el?.localName || el?.tagName || '').toLowerCase()
+}
+
+function _xmlChild(el, localName) {
+  const want = String(localName).toLowerCase()
+  return Array.from(el?.children || []).find(c => _xmlLocalName(c) === want) || null
+}
+
+function _xmlChildren(el, localName) {
+  const want = String(localName).toLowerCase()
+  return Array.from(el?.children || []).filter(c => _xmlLocalName(c) === want)
+}
+
+async function _getWmsCapsXml() {
+  if (state._wmsCapsXml) return state._wmsCapsXml
+  if (state._wmsCapsPromise) return state._wmsCapsPromise
+  const url = `${state.geoserverBaseUrl}/wms?service=WMS&request=GetCapabilities&version=1.1.1`
+  state._wmsCapsPromise = fetch(url)
+    .then(r => r.ok ? r.text() : r.text().then(t => Promise.reject(new Error(t))))
+    .then(txt => new DOMParser().parseFromString(txt, 'text/xml'))
+    .then(xml => {
+      state._wmsCapsXml = xml
+      state._wmsCapsPromise = null
+      return xml
+    })
+    .catch(e => {
+      state._wmsCapsPromise = null
+      throw e
+    })
+  return state._wmsCapsPromise
+}
+
+function _findWmsLayerElByName(xml, qualifiedName) {
+  const layers = Array.from(xml.getElementsByTagNameNS('*', 'Layer'))
+  for (const layerEl of layers) {
+    const nameEl = _xmlChild(layerEl, 'Name')
+    if (nameEl && String(nameEl.textContent || '').trim() === qualifiedName) return layerEl
+  }
+  return null
+}
+
+function _extractLayerLatLngBounds(layerEl) {
+  if (!layerEl || !state.map) return null
+  const crs = state.map.options.crs
+  const mapCrsCode = String(crs?.code || '').toUpperCase()
+
+  const bboxEls = _xmlChildren(layerEl, 'BoundingBox')
+  for (const bb of bboxEls) {
+    const srs = String(bb.getAttribute('SRS') || bb.getAttribute('CRS') || '').toUpperCase()
+    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue
+    const minx = parseFloat(bb.getAttribute('minx'))
+    const miny = parseFloat(bb.getAttribute('miny'))
+    const maxx = parseFloat(bb.getAttribute('maxx'))
+    const maxy = parseFloat(bb.getAttribute('maxy'))
+    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue
+    const sw = crs.unproject(L.point(minx, miny))
+    const ne = crs.unproject(L.point(maxx, maxy))
+    return L.latLngBounds(sw, ne)
+  }
+
+  const ll = _xmlChild(layerEl, 'LatLonBoundingBox')
+  if (ll) {
+    const minx = parseFloat(ll.getAttribute('minx'))
+    const miny = parseFloat(ll.getAttribute('miny'))
+    const maxx = parseFloat(ll.getAttribute('maxx'))
+    const maxy = parseFloat(ll.getAttribute('maxy'))
+    if ([minx, miny, maxx, maxy].every(Number.isFinite)) {
+      return L.latLngBounds([miny, minx], [maxy, maxx])
+    }
+  }
+
+  const ex = _xmlChild(layerEl, 'EX_GeographicBoundingBox')
+  if (ex) {
+    const west = parseFloat(String(_xmlChild(ex, 'westBoundLongitude')?.textContent || '').trim())
+    const east = parseFloat(String(_xmlChild(ex, 'eastBoundLongitude')?.textContent || '').trim())
+    const south = parseFloat(String(_xmlChild(ex, 'southBoundLatitude')?.textContent || '').trim())
+    const north = parseFloat(String(_xmlChild(ex, 'northBoundLatitude')?.textContent || '').trim())
+    if ([west, east, south, north].every(Number.isFinite)) {
+      return L.latLngBounds([south, west], [north, east])
+    }
+  }
+
+  return null
+}
+
+async function _getWmsLayerLatLngBounds(qualifiedName) {
+  if (!qualifiedName) return null
+  if (state._wmsLayerBoundsCache.has(qualifiedName)) return state._wmsLayerBoundsCache.get(qualifiedName)
+  const xml = await _getWmsCapsXml()
+  const layerEl = _findWmsLayerElByName(xml, qualifiedName)
+  const b = _extractLayerLatLngBounds(layerEl)
+  state._wmsLayerBoundsCache.set(qualifiedName, b)
+  return b
+}
+
+
 /**
  * Handle layer change from a <select>.
  * Updates stats + dynamic styling for layer A or B.
@@ -709,6 +809,9 @@ function addWmsLayer(qualifiedName, slot, className) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.availableLayers[idx]
+  const doInitialFit = !state.didInitialRasterFit && !!lyr?.name
+  if (doInitialFit) state.didInitialRasterFit = true
+  const initialFitBoundsPromise = doInitialFit ? _getWmsLayerLatLngBounds(lyr.name) : null
   renderLayerMeta(layerId, lyr)
   const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
     method: 'POST',
@@ -741,6 +844,12 @@ async function onLayerChange(e, layerId) {
   const url = new URL(window.location.href)
   url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name)
   history.replaceState(null, '', url.toString())
+  if (initialFitBoundsPromise) {
+    try {
+      const b = await initialFitBoundsPromise
+      if (b && b.isValid()) state.map.fitBounds(b, { padding: [24, 24] })
+    } catch {}
+  }
 }
 
 /**
@@ -2640,8 +2749,8 @@ async function setAOIAndRenderOverlay(featureCollection) {
   const areaM2 = turf.area(featureCollection);
   const areaKm2 = areaM2 / 1e6;
   await renderScatterOverlay({
-    rasterX: layerX?.name,
-    rasterY: layerY?.name,
+    rasterX: layerLabel(layerX),
+    rasterY: layerLabel(layerY),
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
@@ -2763,8 +2872,8 @@ async function sampleAndRenderSampleBox(latlng) {
   }
 
   await renderScatterOverlay({
-    rasterX: layerUiName(lyrA),
-    rasterY: layerUiName(lyrB),
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -2778,8 +2887,8 @@ async function sampleAndRenderSampleBox(latlng) {
   );
 
   await renderScatterOverlay({
-    rasterX: lyrA.title,
-    rasterY: lyrB.title,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,

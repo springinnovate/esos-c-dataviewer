@@ -925,6 +925,7 @@ def main():
                 "Skipping processing for %s (GEOSERVER_INIT_PROCESS_FILES=false)",
                 raster_id,
             )
+            target_path = file_path
 
         logger.info("Adding create-layer task for %s", raster_id)
         task_graph.add_task(

@@ -1,4 +1,3 @@
-// static/app.js
 import 'leaflet/dist/leaflet.css'
 import './style.css'
 
@@ -30,6 +29,9 @@ const CRS3347 = new L.Proj.CRS(
     ]
   }
 )
+// once the new CRS is defined we register it with leaflet's CRS
+L.CRS.EPSG3347 = CRS3347
+
 
 const state = {
   map: null,
@@ -46,6 +48,10 @@ const state = {
   outlineLayer: null,
   lastStats: null,
   didInitialCenter: false,
+  didInitialRasterFit: false,
+  _wmsCapsXml: null,
+  _wmsCapsPromise: null,
+  _wmsLayerBoundsCache: new Map(),
   visibility: { A: true, B: true },
   lastScatterOpts: null,
   scatterObj: null,
@@ -376,16 +382,129 @@ async function loadConfig() {
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
  */
-function initMap() {
+function initMap(crsCode) {
+  const leafletCRS = L.CRS[String(crsCode).trim().toUpperCase().replace(':', '')];
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
-    crs: CRS3347,
+    crs: leafletCRS,
     center: CANADA_CENTER,
     zoom: INITIAL_ZOOM,
     zoomControl: false,
   })
   state.map = map
+  if (Array.isArray(leafletCRS?.wrapLng) && leafletCRS?.projection?.bounds) {
+    const projectedBounds = leafletCRS.projection.bounds
+    const southWest = leafletCRS.unproject(projectedBounds.min)
+    const northEast = leafletCRS.unproject(projectedBounds.max)
+    map.setMaxBounds(L.latLngBounds(southWest, northEast))
+    map.options.maxBoundsViscosity = 1.0
+  }
 }
+
+/**
+ * Infer whether a Leaflet CRS operates in geographic degrees or projected meters.
+ *
+ * This attempts several heuristics, in order:
+ * 1) Read a declared `units` string from proj4leaflet / proj4 metadata.
+ * 2) Fall back to inspecting the CRS code for common geographic CRS identifiers.
+ * 3) As a last resort, project two very small latitude/longitude offsets and
+ *    check whether the projected delta is "tiny" (suggesting degree-based coordinates)
+ *    rather than meter-scaled coordinates.
+ *
+ * Returns `'degrees'` when the CRS appears geographic (e.g., EPSG:4326),
+ * otherwise returns `'meters'` for projected CRSs.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance (may be a proj4leaflet CRS).
+ * @returns {'degrees'|'meters'} Unit kind inferred for the CRS.
+ */
+function _detectCrsUnitKind(crs) {
+  const declaredUnits =
+    crs?.projection?._proj?.oProj?.units ??
+    crs?.projection?._proj?.units ??
+    null
+
+  if (typeof declaredUnits === 'string') {
+    const unitsLower = declaredUnits.toLowerCase()
+    if (unitsLower.includes('degree')) return 'degrees'
+    if (unitsLower === 'm' || unitsLower.includes('meter')) return 'meters'
+  }
+
+  const crsCodeUpper = String(crs?.code || '').toUpperCase()
+  const looksGeographicByCode =
+    crsCodeUpper.includes('4326') ||
+    crsCodeUpper.includes('4269') ||
+    crsCodeUpper.includes('4258') ||
+    crsCodeUpper.includes('CRS:84') ||
+    crsCodeUpper.includes('CRS84')
+
+  if (looksGeographicByCode) return 'degrees'
+
+  try {
+    const referenceLatLng =
+      state.lastMouseLatLng ||
+      state.map?.getCenter?.() ||
+      L.latLng(0, 0)
+
+    const projectedReference = crs.project(referenceLatLng)
+    const projectedLatOffset = crs.project(L.latLng(referenceLatLng.lat + 0.01, referenceLatLng.lng))
+    const projectedLngOffset = crs.project(L.latLng(referenceLatLng.lat, referenceLatLng.lng + 0.01))
+
+    const deltaX = Math.abs(projectedLngOffset.x - projectedReference.x)
+    const deltaY = Math.abs(projectedLatOffset.y - projectedReference.y)
+
+    if (deltaX < 1 && deltaY < 1) return 'degrees'
+  } catch {}
+
+  return 'meters'
+}
+
+
+/**
+ * Convert a window size expressed in kilometers into "half side length" in the map CRS units.
+ *
+ * The sampler UI expresses the square window side length in kilometers. To draw that square
+ * in the current CRS, we need the half-side length in the CRS' native coordinate units:
+ *
+ * - If the CRS is projected in meters, the conversion is straightforward:
+ *     halfSide = (windowSizeKm * 1000) / 2
+ *
+ * - If the CRS is geographic in degrees, we approximate a degree-based half-side length
+ *   using the current latitude:
+ *     - 1 degree of latitude is ~110.574 km (roughly constant)
+ *     - 1 degree of longitude is ~111.320 * cos(latitude) km (shrinks toward the poles)
+ *   We then compute a single "km per degree" scalar using the geometric mean of the
+ *   lat/lon scales to keep the square reasonably area-consistent in degree space.
+ *
+ * The inferred CRS unit kind is cached on `state._crsUnitKind`.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance used by the map.
+ * @param {number} windowSizeKilometers - Desired square side length in kilometers.
+ * @returns {number} Half the window side length expressed in CRS coordinate units
+ *   (degrees or meters depending on CRS).
+ */
+function _halfSizeInCrsUnits(crs, windowSizeKilometers) {
+  if (!state._crsUnitKind) state._crsUnitKind = _detectCrsUnitKind(crs)
+
+  if (state._crsUnitKind === 'degrees') {
+    const latitudeDegrees = (
+      state.lastMouseLatLng ||
+      state.map?.getCenter?.() ||
+      { lat: 0 }
+    ).lat
+
+    const kilometersPerDegreeLatitude = 110.574
+    const kilometersPerDegreeLongitude =
+      111.320 * Math.max(1e-9, Math.cos(latitudeDegrees * Math.PI / 180))
+
+    const kilometersPerDegree =
+      Math.sqrt(kilometersPerDegreeLatitude * kilometersPerDegreeLongitude)
+
+    return (windowSizeKilometers / kilometersPerDegree) / 2
+  }
+
+  return (windowSizeKilometers * 1000) / 2
+}
+
 
 /**
  * Creates a non-interactive square polygon centered at a given geographic coordinate.
@@ -401,15 +520,16 @@ function initMap() {
  */
 function squarePolygonAt(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs
-  const half = windowSizeKm * 1000 / 2
+  const half = _halfSizeInCrsUnits(crs, windowSizeKm)
   const p = crs.project(centerLatLng)
+
   const corners = [
     L.point(p.x - half, p.y - half),
     L.point(p.x + half, p.y - half),
     L.point(p.x + half, p.y + half),
     L.point(p.x - half, p.y + half),
   ].map(pt => crs.unproject(pt))
-  // strong orange color to follow the cursor
+
   return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
 
@@ -504,6 +624,10 @@ function wireSquareSamplerControls() {
 
 }
 
+const layerLabel = (lyr) => (lyr?.title && String(lyr.title).trim()) ? String(lyr.title).trim() : lyr?.name
+const layerDesc = (lyr) => (lyr?.description && String(lyr.description).trim()) ? String(lyr.description).trim() : ''
+
+
 /**
  * Populate both layer <select> elements with available WMS layers and wire change handlers.
  * Reads state.availableLayers and updates the DOM.
@@ -520,7 +644,8 @@ function populateLayerSelects() {
     state.availableLayers.forEach((lyr, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
-      opt.textContent = lyr.name;
+      opt.textContent = layerLabel(lyr);
+      opt.title = layerDesc(lyr);
       sel.appendChild(opt);
     });
   };
@@ -537,6 +662,10 @@ function populateLayerSelects() {
       return;
     }
     sel.value = String(idx);
+    sel.addEventListener('input', e => {
+      const idx = parseInt(e.target.value, 10)
+      renderLayerMeta(layerId, state.availableLayers[idx])
+    })
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
@@ -558,6 +687,7 @@ function addWmsLayer(qualifiedName, slot, className) {
     tiled: true,
     version: '1.1.1',
     className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
+    noWrap: true,
   }
   const l = L.tileLayer.wms(wmsUrl, params)
   ;['A', 'B'].forEach(layerSlot => {
@@ -573,6 +703,103 @@ function addWmsLayer(qualifiedName, slot, className) {
 
 }
 
+function _xmlLocalName(el) {
+  return String(el?.localName || el?.tagName || '').toLowerCase()
+}
+
+function _xmlChild(el, localName) {
+  const want = String(localName).toLowerCase()
+  return Array.from(el?.children || []).find(c => _xmlLocalName(c) === want) || null
+}
+
+function _xmlChildren(el, localName) {
+  const want = String(localName).toLowerCase()
+  return Array.from(el?.children || []).filter(c => _xmlLocalName(c) === want)
+}
+
+async function _getWmsCapsXml() {
+  if (state._wmsCapsXml) return state._wmsCapsXml
+  if (state._wmsCapsPromise) return state._wmsCapsPromise
+  const url = `${state.geoserverBaseUrl}/wms?service=WMS&request=GetCapabilities&version=1.1.1`
+  state._wmsCapsPromise = fetch(url)
+    .then(r => r.ok ? r.text() : r.text().then(t => Promise.reject(new Error(t))))
+    .then(txt => new DOMParser().parseFromString(txt, 'text/xml'))
+    .then(xml => {
+      state._wmsCapsXml = xml
+      state._wmsCapsPromise = null
+      return xml
+    })
+    .catch(e => {
+      state._wmsCapsPromise = null
+      throw e
+    })
+  return state._wmsCapsPromise
+}
+
+function _findWmsLayerElByName(xml, qualifiedName) {
+  const layers = Array.from(xml.getElementsByTagNameNS('*', 'Layer'))
+  for (const layerEl of layers) {
+    const nameEl = _xmlChild(layerEl, 'Name')
+    if (nameEl && String(nameEl.textContent || '').trim() === qualifiedName) return layerEl
+  }
+  return null
+}
+
+function _extractLayerLatLngBounds(layerEl) {
+  if (!layerEl || !state.map) return null
+  const crs = state.map.options.crs
+  const mapCrsCode = String(crs?.code || '').toUpperCase()
+
+  const bboxEls = _xmlChildren(layerEl, 'BoundingBox')
+  for (const bb of bboxEls) {
+    const srs = String(bb.getAttribute('SRS') || bb.getAttribute('CRS') || '').toUpperCase()
+    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue
+    const minx = parseFloat(bb.getAttribute('minx'))
+    const miny = parseFloat(bb.getAttribute('miny'))
+    const maxx = parseFloat(bb.getAttribute('maxx'))
+    const maxy = parseFloat(bb.getAttribute('maxy'))
+    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue
+    const sw = crs.unproject(L.point(minx, miny))
+    const ne = crs.unproject(L.point(maxx, maxy))
+    return L.latLngBounds(sw, ne)
+  }
+
+  const ll = _xmlChild(layerEl, 'LatLonBoundingBox')
+  if (ll) {
+    const minx = parseFloat(ll.getAttribute('minx'))
+    const miny = parseFloat(ll.getAttribute('miny'))
+    const maxx = parseFloat(ll.getAttribute('maxx'))
+    const maxy = parseFloat(ll.getAttribute('maxy'))
+    if ([minx, miny, maxx, maxy].every(Number.isFinite)) {
+      return L.latLngBounds([miny, minx], [maxy, maxx])
+    }
+  }
+
+  const ex = _xmlChild(layerEl, 'EX_GeographicBoundingBox')
+  if (ex) {
+    const west = parseFloat(String(_xmlChild(ex, 'westBoundLongitude')?.textContent || '').trim())
+    const east = parseFloat(String(_xmlChild(ex, 'eastBoundLongitude')?.textContent || '').trim())
+    const south = parseFloat(String(_xmlChild(ex, 'southBoundLatitude')?.textContent || '').trim())
+    const north = parseFloat(String(_xmlChild(ex, 'northBoundLatitude')?.textContent || '').trim())
+    if ([west, east, south, north].every(Number.isFinite)) {
+      return L.latLngBounds([south, west], [north, east])
+    }
+  }
+
+  return null
+}
+
+async function _getWmsLayerLatLngBounds(qualifiedName) {
+  if (!qualifiedName) return null
+  if (state._wmsLayerBoundsCache.has(qualifiedName)) return state._wmsLayerBoundsCache.get(qualifiedName)
+  const xml = await _getWmsCapsXml()
+  const layerEl = _findWmsLayerElByName(xml, qualifiedName)
+  const b = _extractLayerLatLngBounds(layerEl)
+  state._wmsLayerBoundsCache.set(qualifiedName, b)
+  return b
+}
+
+
 /**
  * Handle layer change from a <select>.
  * Updates stats + dynamic styling for layer A or B.
@@ -582,6 +809,10 @@ function addWmsLayer(qualifiedName, slot, className) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.availableLayers[idx]
+  const doInitialFit = !state.didInitialRasterFit && !!lyr?.name
+  if (doInitialFit) state.didInitialRasterFit = true
+  const initialFitBoundsPromise = doInitialFit ? _getWmsLayerLatLngBounds(lyr.name) : null
+  renderLayerMeta(layerId, lyr)
   const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -613,6 +844,12 @@ async function onLayerChange(e, layerId) {
   const url = new URL(window.location.href)
   url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name)
   history.replaceState(null, '', url.toString())
+  if (initialFitBoundsPromise) {
+    try {
+      const b = await initialFitBoundsPromise
+      if (b && b.isValid()) state.map.fitBounds(b, { padding: [24, 24] })
+    } catch {}
+  }
 }
 
 /**
@@ -1966,6 +2203,9 @@ function blendScreenRGB(a, b) {
   ];
 }
 
+const layerId = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
+const layerUiName = (idx) => layerLabel(state.availableLayers?.[idx]) ?? layerId(idx)
+
 /**
  * Wire a pixel probe that follows the mouse and displays live raster values.
  *
@@ -2048,7 +2288,6 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
-  const layerName = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
   let inFlight = null
@@ -2126,8 +2365,10 @@ function wirePixelProbe() {
 
     const aIdx = state.activeLayerIdxA
     const bIdx = state.activeLayerIdxB
-    const nameA = layerName(aIdx)
-    const nameB = layerName(bIdx)
+    const idA = layerId(aIdx)
+    const idB = layerId(bIdx)
+    const uiA = layerUiName(aIdx)
+    const uiB = layerUiName(bIdx)
 
     let valA = null
     let valB = null
@@ -2136,12 +2377,12 @@ function wirePixelProbe() {
       const jobs = []
       if (Number.isInteger(aIdx)) {
         jobs.push(
-          fetchPixelVal(nameA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
+          fetchPixelVal(idA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
         )
       }
       if (Number.isInteger(bIdx)) {
         jobs.push(
-          fetchPixelVal(nameB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
+          fetchPixelVal(idB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
         )
       }
       await Promise.all(jobs)
@@ -2153,8 +2394,8 @@ function wirePixelProbe() {
 
     const lines = [
       `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '-' : String(valA)}` : null,
-      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '-' : String(valB)}` : null,
+      Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
@@ -2165,7 +2406,7 @@ function wirePixelProbe() {
       state.lastPixelPoint = {
         x: valA,
         y: valB,
-        label: `${nameA}: ${valA} • ${nameB}: ${valB}`
+        label: `${uiA}: ${valA} * ${uiB}: ${valB}`
       }
       // if scatter is visible, refresh to draw marker
       if (state.lastScatterOpts && state.scatterObj) {
@@ -2508,8 +2749,8 @@ async function setAOIAndRenderOverlay(featureCollection) {
   const areaM2 = turf.area(featureCollection);
   const areaKm2 = areaM2 / 1e6;
   await renderScatterOverlay({
-    rasterX: layerX?.name,
-    rasterY: layerY?.name,
+    rasterX: layerLabel(layerX),
+    rasterY: layerLabel(layerY),
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
@@ -2631,8 +2872,8 @@ async function sampleAndRenderSampleBox(latlng) {
   }
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -2646,8 +2887,8 @@ async function sampleAndRenderSampleBox(latlng) {
   );
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -2782,11 +3023,30 @@ function wireCollapsibleTopBar() {
   window.addEventListener('resize', onResize);
 }
 
+function renderLayerMeta(layerId, lyr) {
+  const el = document.getElementById(`layerMeta${layerId}`)
+  if (!el) return
+
+  el.innerHTML = ''
+
+  const t = document.createElement('div')
+  t.className = 'layer-meta-title'
+  t.textContent = layerLabel(lyr) || ''
+
+  const d = document.createElement('div')
+  d.className = 'layer-meta-desc'
+  d.textContent = layerDesc(lyr) || ''
+
+  el.append(t, d)
+}
+
 /**
  * App entrypoint.
  */
 ;(async function main() {
-  initMap()
+  const cfg = await loadConfig()
+  const global_crs = cfg.global_crs;
+  initMap(cfg.global_crs)
   wireSquareSamplerControls()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
@@ -2800,7 +3060,6 @@ function wireCollapsibleTopBar() {
   wireCollapsibleTopBar()
   setSamplingMode('window')
 
-  const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url
   state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url

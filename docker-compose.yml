@@ -80,6 +80,7 @@ services:
       - GEOSERVER_BASE_URL=/geoserver
       - LAYERS_YAML_PATH=/app/layers.yml
       - RSTATS_BASE_URL=/rstats
+      - GLOBAL_CRS=${GLOBAL_CRS}
     volumes:
       - ./${LAYERS_YML}:/app/layers.yml:ro
     networks: [backend]
@@ -138,6 +139,7 @@ services:
       - ${LAYERS_YML}:/app/layers.yml:ro
       - ./.env:/app/.env:ro
       - ${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ./styles:/app/styles
     command: ['/app/layers.yml']
 
   rstats:
@@ -146,12 +148,11 @@ services:
       dockerfile: Dockerfile.rstats
     restart: unless-stopped
     environment:
-      - RASTERS_YAML_PATH=/app/layers.yml
       - WORKERS=2
       - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
     volumes:
-      - ./layers.yml:/app/layers.yml:ro
-      - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ${LAYERS_YML}:/app/layers.yml:ro
+      - ${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
       - ./.env:/app/.env:ro
     networks: [backend]
     labels:

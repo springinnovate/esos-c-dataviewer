@@ -40,6 +40,7 @@
             {% for layer_id in ['A', 'B'] %}
             <div class='layer-group'>
               <label class='layer-label'>Select a layer to display ({{ layer_id }})</label>
+              <div id="layerMeta{{ layer_id}}" class="layer-meta"></div>
               <select id='layerSelect{{ layer_id }}' data-default='{{ initial_layers.get(layer_id, "") }}'>
               </select>
               <label class='vis-label'>

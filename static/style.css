@@ -616,3 +616,26 @@ header.is-collapsed .topbar-content {
 .overlay-header .link-btn:hover { color: var(--brand-hover); }
 .overlay-row .link-btn:focus-visible,
 .overlay-header .link-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.layer-meta {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(17, 21, 28, 0.6);
+  color: #cbd5e1;
+}
+
+.layer-meta-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin-bottom: 4px;
+}
+
+.layer-meta-desc {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}

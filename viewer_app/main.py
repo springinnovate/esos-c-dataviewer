@@ -93,16 +93,16 @@ def _collect_layers(config: dict) -> list:
     """
     layers = []
     workspace_id = config["workspace_id"]
-    for layer in config.get("layers", []).values():
-        layer_name = Path(layer["file_path"]).stem
+    for layer in config.get("layers", {}).values():
         layers.append(
             {
                 "workspace": workspace_id,
-                # the geoserver inserts these as lowercase
-                "name": layer_name.lower(),
+                # we push this lower because geoserver lowercases all ids
+                "name": Path(layer["file_path"]).stem.lower(),
+                "title": layer.get("title"),
+                "description": layer.get("description"),
             }
         )
-    logging.debug(f"layers: {layers}")
     return layers
 
 
@@ -172,9 +172,6 @@ def api_config():
         HTTPException: If the configuration file is missing or unreadable.
     """
     config_path = os.getenv("LAYERS_YAML_PATH")
-    geoserver_base_url = os.getenv("GEOSERVER_BASE_URL").rstrip("/")
-    rstats_base_url = os.getenv("RSTATS_BASE_URL").rstrip()
-    logger.debug(f"{config_path}  {geoserver_base_url}  {rstats_base_url}")
     try:
         config = _load_layers_config(config_path)
     except FileNotFoundError:
@@ -182,7 +179,8 @@ def api_config():
             status_code=500, detail=f"layers.yml not found at {config_path}"
         )
     return {
-        "geoserver_base_url": geoserver_base_url,
+        "geoserver_base_url": os.getenv("GEOSERVER_BASE_URL").rstrip("/"),
         "layers": _collect_layers(config),
-        "rstats_base_url": rstats_base_url,
+        "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
+        "global_crs": os.getenv("GLOBAL_CRS").strip(),
     }

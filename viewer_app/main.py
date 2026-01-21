@@ -83,6 +83,14 @@ def _load_layers_config(config_path: str) -> dict:
 
 
 def _collect_layers(config: dict) -> list:
+    """Collect raster GeoTIFF layer metadata from configuration.
+
+    Args:
+        config (dict): Loaded configuration data.
+
+    Returns:
+        list: List of layer metadata dictionaries.
+    """
     layers = []
     workspace_id = config["workspace_id"]
     for layer in config.get("layers", {}).values():

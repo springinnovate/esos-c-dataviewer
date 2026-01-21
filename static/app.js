@@ -388,6 +388,13 @@ function initMap(crsCode) {
     zoomControl: false,
   })
   state.map = map
+  if (Array.isArray(leafletCRS?.wrapLng) && leafletCRS?.projection?.bounds) {
+    const projectedBounds = leafletCRS.projection.bounds
+    const southWest = leafletCRS.unproject(projectedBounds.min)
+    const northEast = leafletCRS.unproject(projectedBounds.max)
+    map.setMaxBounds(L.latLngBounds(southWest, northEast))
+    map.options.maxBoundsViscosity = 1.0
+  }
 }
 
 /**
@@ -667,6 +674,7 @@ function addWmsLayer(qualifiedName, slot, className) {
     tiled: true,
     version: '1.1.1',
     className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
+    noWrap: true,
   }
   const l = L.tileLayer.wms(wmsUrl, params)
   ;['A', 'B'].forEach(layerSlot => {

@@ -30,6 +30,8 @@ const CRS3347 = new L.Proj.CRS(
     ]
   }
 )
+L.CRS.EPSG3347 = CRS3347
+
 
 const state = {
   map: null,
@@ -376,16 +378,122 @@ async function loadConfig() {
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
  */
-function initMap() {
+function initMap(crsCode) {
+  const leafletCRS = L.CRS[String(crsCode).trim().toUpperCase().replace(':', '')];
   const mapDiv = document.getElementById('map')
   const map = L.map(mapDiv, {
-    crs: CRS3347,
+    crs: leafletCRS,
     center: CANADA_CENTER,
     zoom: INITIAL_ZOOM,
     zoomControl: false,
   })
   state.map = map
 }
+
+/**
+ * Infer whether a Leaflet CRS operates in geographic degrees or projected meters.
+ *
+ * This attempts several heuristics, in order:
+ * 1) Read a declared `units` string from proj4leaflet / proj4 metadata.
+ * 2) Fall back to inspecting the CRS code for common geographic CRS identifiers.
+ * 3) As a last resort, project two very small latitude/longitude offsets and
+ *    check whether the projected delta is "tiny" (suggesting degree-based coordinates)
+ *    rather than meter-scaled coordinates.
+ *
+ * Returns `'degrees'` when the CRS appears geographic (e.g., EPSG:4326),
+ * otherwise returns `'meters'` for projected CRSs.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance (may be a proj4leaflet CRS).
+ * @returns {'degrees'|'meters'} Unit kind inferred for the CRS.
+ */
+function _detectCrsUnitKind(crs) {
+  const declaredUnits =
+    crs?.projection?._proj?.oProj?.units ??
+    crs?.projection?._proj?.units ??
+    null
+
+  if (typeof declaredUnits === 'string') {
+    const unitsLower = declaredUnits.toLowerCase()
+    if (unitsLower.includes('degree')) return 'degrees'
+    if (unitsLower === 'm' || unitsLower.includes('meter')) return 'meters'
+  }
+
+  const crsCodeUpper = String(crs?.code || '').toUpperCase()
+  const looksGeographicByCode =
+    crsCodeUpper.includes('4326') ||
+    crsCodeUpper.includes('4269') ||
+    crsCodeUpper.includes('4258') ||
+    crsCodeUpper.includes('CRS:84') ||
+    crsCodeUpper.includes('CRS84')
+
+  if (looksGeographicByCode) return 'degrees'
+
+  try {
+    const referenceLatLng =
+      state.lastMouseLatLng ||
+      state.map?.getCenter?.() ||
+      L.latLng(0, 0)
+
+    const projectedReference = crs.project(referenceLatLng)
+    const projectedLatOffset = crs.project(L.latLng(referenceLatLng.lat + 0.01, referenceLatLng.lng))
+    const projectedLngOffset = crs.project(L.latLng(referenceLatLng.lat, referenceLatLng.lng + 0.01))
+
+    const deltaX = Math.abs(projectedLngOffset.x - projectedReference.x)
+    const deltaY = Math.abs(projectedLatOffset.y - projectedReference.y)
+
+    if (deltaX < 1 && deltaY < 1) return 'degrees'
+  } catch {}
+
+  return 'meters'
+}
+
+
+/**
+ * Convert a window size expressed in kilometers into "half side length" in the map CRS units.
+ *
+ * The sampler UI expresses the square window side length in kilometers. To draw that square
+ * in the current CRS, we need the half-side length in the CRS' native coordinate units:
+ *
+ * - If the CRS is projected in meters, the conversion is straightforward:
+ *     halfSide = (windowSizeKm * 1000) / 2
+ *
+ * - If the CRS is geographic in degrees, we approximate a degree-based half-side length
+ *   using the current latitude:
+ *     - 1 degree of latitude is ~110.574 km (roughly constant)
+ *     - 1 degree of longitude is ~111.320 * cos(latitude) km (shrinks toward the poles)
+ *   We then compute a single "km per degree" scalar using the geometric mean of the
+ *   lat/lon scales to keep the square reasonably area-consistent in degree space.
+ *
+ * The inferred CRS unit kind is cached on `state._crsUnitKind`.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance used by the map.
+ * @param {number} windowSizeKilometers - Desired square side length in kilometers.
+ * @returns {number} Half the window side length expressed in CRS coordinate units
+ *   (degrees or meters depending on CRS).
+ */
+function _halfSizeInCrsUnits(crs, windowSizeKilometers) {
+  if (!state._crsUnitKind) state._crsUnitKind = _detectCrsUnitKind(crs)
+
+  if (state._crsUnitKind === 'degrees') {
+    const latitudeDegrees = (
+      state.lastMouseLatLng ||
+      state.map?.getCenter?.() ||
+      { lat: 0 }
+    ).lat
+
+    const kilometersPerDegreeLatitude = 110.574
+    const kilometersPerDegreeLongitude =
+      111.320 * Math.max(1e-9, Math.cos(latitudeDegrees * Math.PI / 180))
+
+    const kilometersPerDegree =
+      Math.sqrt(kilometersPerDegreeLatitude * kilometersPerDegreeLongitude)
+
+    return (windowSizeKilometers / kilometersPerDegree) / 2
+  }
+
+  return (windowSizeKilometers * 1000) / 2
+}
+
 
 /**
  * Creates a non-interactive square polygon centered at a given geographic coordinate.
@@ -401,15 +509,16 @@ function initMap() {
  */
 function squarePolygonAt(centerLatLng, windowSizeKm) {
   const crs = state.map.options.crs
-  const half = windowSizeKm * 1000 / 2
+  const half = _halfSizeInCrsUnits(crs, windowSizeKm)
   const p = crs.project(centerLatLng)
+
   const corners = [
     L.point(p.x - half, p.y - half),
     L.point(p.x + half, p.y - half),
     L.point(p.x + half, p.y + half),
     L.point(p.x - half, p.y + half),
   ].map(pt => crs.unproject(pt))
-  // strong orange color to follow the cursor
+
   return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
 }
 
@@ -2786,7 +2895,9 @@ function wireCollapsibleTopBar() {
  * App entrypoint.
  */
 ;(async function main() {
-  initMap()
+  const cfg = await loadConfig()
+  const global_crs = cfg.global_crs;
+  initMap(cfg.global_crs)
   wireSquareSamplerControls()
   enableAltWheelSlider()
   disableLeafletScrollOnAlt()
@@ -2800,7 +2911,6 @@ function wireCollapsibleTopBar() {
   wireCollapsibleTopBar()
   setSamplingMode('window')
 
-  const cfg = await loadConfig()
   state.geoserverBaseUrl = cfg.geoserver_base_url
   state.availableLayers = cfg.layers
   state.baseStatsUrl = cfg.rstats_base_url

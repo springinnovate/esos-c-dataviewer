@@ -80,6 +80,7 @@ services:
       - GEOSERVER_BASE_URL=/geoserver
       - LAYERS_YAML_PATH=/app/layers.yml
       - RSTATS_BASE_URL=/rstats
+      - GLOBAL_CRS=${GLOBAL_CRS}
     volumes:
       - ./${LAYERS_YML}:/app/layers.yml:ro
     networks: [backend]

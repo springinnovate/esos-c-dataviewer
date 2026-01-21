@@ -30,6 +30,7 @@ const CRS3347 = new L.Proj.CRS(
     ]
   }
 )
+// once the new CRS is defined we register it with leaflet's CRS
 L.CRS.EPSG3347 = CRS3347
 
 

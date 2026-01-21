@@ -893,8 +893,8 @@ def main():
         logger.info("Scheduling layer: %s", raster_id)
         logger.debug("Layer definition (%s): %s", raster_id, layer_def)
 
-        target_path = Path(layer_def["file_path"])
-        file_path = local_working_dir / Path(file_path).name
+        file_path = Path(layer_def["file_path"])
+        target_path = local_working_dir / Path(file_path).name
 
         logger.info(
             "Layer %s file_path=%s target_path=%s",

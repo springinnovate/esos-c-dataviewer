@@ -97,12 +97,12 @@ def _collect_layers(config: dict) -> list:
         layers.append(
             {
                 "workspace": workspace_id,
+                # we push this lower because geoserver lowercases all ids
                 "name": Path(layer["file_path"]).stem.lower(),
                 "title": layer.get("title"),
                 "description": layer.get("description"),
             }
         )
-    logging.debug(f"layers: {layers}")
     return layers
 
 

@@ -620,6 +620,10 @@ function wireSquareSamplerControls() {
 
 }
 
+const layerLabel = (lyr) => (lyr?.title && String(lyr.title).trim()) ? String(lyr.title).trim() : lyr?.name
+const layerDesc = (lyr) => (lyr?.description && String(lyr.description).trim()) ? String(lyr.description).trim() : ''
+
+
 /**
  * Populate both layer <select> elements with available WMS layers and wire change handlers.
  * Reads state.availableLayers and updates the DOM.
@@ -636,7 +640,8 @@ function populateLayerSelects() {
     state.availableLayers.forEach((lyr, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
-      opt.textContent = lyr.name;
+      opt.textContent = lyr.title;
+      opt.title = lyr.description;
       sel.appendChild(opt);
     });
   };
@@ -653,6 +658,10 @@ function populateLayerSelects() {
       return;
     }
     sel.value = String(idx);
+    sel.addEventListener('input', e => {
+      const idx = parseInt(e.target.value, 10)
+      renderLayerMeta(layerId, state.availableLayers[idx])
+    })
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
@@ -699,6 +708,7 @@ function addWmsLayer(qualifiedName, slot, className) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10)
   const lyr = state.availableLayers[idx]
+  renderLayerMeta(layerId, lyr)
   const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -2083,6 +2093,9 @@ function blendScreenRGB(a, b) {
   ];
 }
 
+const layerId = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
+const layerUiName = (idx) => layerLabel(state.availableLayers?.[idx]) ?? layerId(idx)
+
 /**
  * Wire a pixel probe that follows the mouse and displays live raster values.
  *
@@ -2165,7 +2178,6 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
-  const layerName = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
 
   let lastFetchTs = 0
   let inFlight = null
@@ -2243,8 +2255,10 @@ function wirePixelProbe() {
 
     const aIdx = state.activeLayerIdxA
     const bIdx = state.activeLayerIdxB
-    const nameA = layerName(aIdx)
-    const nameB = layerName(bIdx)
+    const idA = layerId(aIdx)
+    const idB = layerId(bIdx)
+    const uiA = layerUiName(aIdx)
+    const uiB = layerUiName(bIdx)
 
     let valA = null
     let valB = null
@@ -2253,12 +2267,12 @@ function wirePixelProbe() {
       const jobs = []
       if (Number.isInteger(aIdx)) {
         jobs.push(
-          fetchPixelVal(nameA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
+          fetchPixelVal(idA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
         )
       }
       if (Number.isInteger(bIdx)) {
         jobs.push(
-          fetchPixelVal(nameB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
+          fetchPixelVal(idB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
         )
       }
       await Promise.all(jobs)
@@ -2270,8 +2284,8 @@ function wirePixelProbe() {
 
     const lines = [
       `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '-' : String(valA)}` : null,
-      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '-' : String(valB)}` : null,
+      Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
+      Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
     ].filter(Boolean)
 
     probe.textContent = lines.join('\n')
@@ -2282,7 +2296,7 @@ function wirePixelProbe() {
       state.lastPixelPoint = {
         x: valA,
         y: valB,
-        label: `${nameA}: ${valA} • ${nameB}: ${valB}`
+        label: `${uiA}: ${valA} * ${uiB}: ${valB}`
       }
       // if scatter is visible, refresh to draw marker
       if (state.lastScatterOpts && state.scatterObj) {
@@ -2748,8 +2762,8 @@ async function sampleAndRenderSampleBox(latlng) {
   }
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerUiName(lyrA),
+    rasterY: layerUiName(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -2763,8 +2777,8 @@ async function sampleAndRenderSampleBox(latlng) {
   );
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: lyrA.title,
+    rasterY: lyrB.title,
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -2897,6 +2911,23 @@ function wireCollapsibleTopBar() {
     setExpanded(!expanded);
   });
   window.addEventListener('resize', onResize);
+}
+
+function renderLayerMeta(layerId, lyr) {
+  const el = document.getElementById(`layerMeta${layerId}`)
+  if (!el) return
+
+  el.innerHTML = ''
+
+  const t = document.createElement('div')
+  t.className = 'layer-meta-title'
+  t.textContent = layerLabel(lyr) || ''
+
+  const d = document.createElement('div')
+  d.className = 'layer-meta-desc'
+  d.textContent = layerDesc(lyr) || ''
+
+  el.append(t, d)
 }
 
 /**

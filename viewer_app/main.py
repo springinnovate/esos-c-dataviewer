@@ -83,23 +83,15 @@ def _load_layers_config(config_path: str) -> dict:
 
 
 def _collect_layers(config: dict) -> list:
-    """Collect raster GeoTIFF layer metadata from configuration.
-
-    Args:
-        config (dict): Loaded configuration data.
-
-    Returns:
-        list: List of layer metadata dictionaries.
-    """
     layers = []
     workspace_id = config["workspace_id"]
-    for layer in config.get("layers", []).values():
-        layer_name = Path(layer["file_path"]).stem
+    for layer in config.get("layers", {}).values():
         layers.append(
             {
                 "workspace": workspace_id,
-                # the geoserver inserts these as lowercase
-                "name": layer_name.lower(),
+                "name": Path(layer["file_path"]).stem.lower(),
+                "title": layer.get("title"),
+                "description": layer.get("description"),
             }
         )
     logging.debug(f"layers: {layers}")

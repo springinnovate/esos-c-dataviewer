@@ -157,6 +157,7 @@ async def index(
             "main_js": _asset_path("app.js"),
             "main_css_list": _css_paths("app.js"),
             "app_version": _read_version(),
+            "app_title": os.getenv("APP_TITLE"),
         },
     )
 

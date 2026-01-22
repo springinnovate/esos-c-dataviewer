@@ -81,6 +81,7 @@ services:
       - LAYERS_YAML_PATH=/app/layers.yml
       - RSTATS_BASE_URL=/rstats
       - GLOBAL_CRS=${GLOBAL_CRS}
+      - APP_TITLE=${APP_TITLE}
     volumes:
       - ./${LAYERS_YML}:/app/layers.yml:ro
     networks: [backend]

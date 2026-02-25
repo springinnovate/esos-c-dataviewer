@@ -663,26 +663,20 @@ def check_for_valid_projection_and_overviews(
     """Validate that a raster matches a target projection and report issues.
 
     This function checks whether the source raster has a defined CRS and
-    whether it matches the provided target projection string. It does not
-    perform reprojection or build overviews. Instead, it collects descriptive
-    error messages that can be logged or handled by the caller.
-
-    The function always returns a list of error message strings. If the list
+    whether it matches the provided target projection string.
+    The function returns an error message string if a raster was not
+    in the right projection and/or has overviews built. If the list
     is empty, the raster CRS exists and matches the target projection.
 
     Args:
         src_path (Path): Path to the source raster file to validate.
         target_projection (str): Target projection expressed in any format
-            accepted by ``rasterio.CRS.from_user_input`` (e.g., ``'EPSG:4326'``).
+            accepted by ``rasterio.CRS.from_user_input``
+            (e.g., ``'EPSG:4326'``).
 
     Returns:
         list[str]: A list of descriptive error messages. The list is empty if
         the raster has a valid CRS and it matches ``target_projection``.
-
-    Raises:
-        rasterio.errors.RasterioIOError: If the raster cannot be opened.
-        rasterio.errors.CRSError: If ``target_projection`` is not a valid CRS
-        definition.
     """
     logger.debug(f"validating projection and overviews of {src_path}")
     error_messages = []

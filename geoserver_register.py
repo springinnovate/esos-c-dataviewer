@@ -760,7 +760,7 @@ def main():
         logger.info("Expanded environment variables in config YAML")
 
     config_data = yaml.safe_load(expanded_yaml)
-    logger.info("Parsed YAML config")
+    logger.info(f"Parsed YAML config from {expanded_yaml}")
     logger.info(config_data)
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]

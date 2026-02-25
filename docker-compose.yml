@@ -130,17 +130,20 @@ services:
     networks: [backend]
     restart: 'no'
     environment:
-      - GEOSERVER_INIT_PROCESS_FILES=${GEOSERVER_INIT_PROCESS_FILES}
       - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
       - GEOSERVER_INTERNAL_BASE_URL=${GEOSERVER_INTERNAL_BASE_URL}
       - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
       - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
+      - STYLE_PATH=/app/styles/dynamic_style.sld
+      - GLOBAL_CRS=${GLOBAL_CRS}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
       - ${LAYERS_YML}:/app/layers.yml:ro
       - ./.env:/app/.env:ro
       - ${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
-      - ./styles:/app/styles
+      # note /app/styles/dynamic_style.sld is duplicated from STYLE_PATH above
+      # because docker-compose can't make its own environment variables
+      - ./styles/dynamic_style.sld:/app/styles/dynamic_style.sld
     command: ['/app/layers.yml']
 
   rstats:

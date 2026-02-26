@@ -1298,19 +1298,8 @@ async function renderScatterOverlay(opts) {
         </div>
         <div class='layer-group'>
           <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-          <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
+          <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
           <input id='percentiles' type='text' value="${(state.percentiles)}"/>
-        </div>
-        <div>
-          <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
-            <div class='stats-grid'>
-              <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
-              <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
-              <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
-              <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-              <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
-              <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-          </div>
         </div>
       </div>
      `

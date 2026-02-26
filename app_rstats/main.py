@@ -134,7 +134,6 @@ class ScatterOut(BaseModel):
 
     raster_id_x: Optional[str]
     raster_id_y: Optional[str]
-    n_pairs: int
     x: Optional[List[float]] = None
     y: Optional[List[float]] = None
     hist2d: Optional[List[List[int]]] = None
@@ -145,9 +144,7 @@ class ScatterOut(BaseModel):
     pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
-    pixels_sampled: Optional[int] = None
     valid_pixels: Optional[int] = None
-    coverage_ratio: Optional[float] = None
     geometry: dict
 
 
@@ -798,10 +795,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             results["y"]["edges"] if results["y"]["edges"] is not None else None
         )
         x_plot, y_plot = None, None
-        pearson_r, slope, intercept = None, None, None
 
         # compute 2D histogram on overlapping pixels if both are valid
-        n_pairs = 0
         if x_valid and y_valid:
             x_arr = results["x"]["arr"]
             x_affine = results["x"]["affine"]
@@ -890,13 +885,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 x_std = float(np.std(x_pairs))
                 y_std = float(np.std(y_pairs))
                 if x_std != 0.0 and y_std != 0.0:
-                    corr = np.corrcoef(x_pairs, y_pairs)[0, 1]
-                    pearson_r = float(corr) if np.isfinite(corr) else None
                     design = np.vstack([x_pairs, np.ones_like(x_pairs)]).T
                     slope_val, intercept_val = np.linalg.lstsq(
                         design, y_pairs, rcond=None
                     )[0]
-                    slope, intercept = float(slope_val), float(intercept_val)
 
         # if only one is valid, prepare 1D scatter arrays directly from that raster
         if x_valid ^ y_valid:  # XOR
@@ -921,24 +913,19 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot, y_plot = None, None
 
         # coverage metrics
+        logger.debug(f"calculating coverage metrics with {results}")
         if x_valid:
             total_mask_pixels = int(np.count_nonzero(results["x"]["mask"]))
+            logger.debug(total_mask_pixels)
         elif y_valid:
             total_mask_pixels = int(np.count_nonzero(results["y"]["mask"]))
+            logger.debug(total_mask_pixels)
         else:
             total_mask_pixels = 0
-
-        valid_pixels = int(n_pairs)
-        coverage_ratio = (
-            float(valid_pixels / total_mask_pixels)
-            if total_mask_pixels
-            else 0.0
-        )
 
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
-            n_pairs=valid_pixels,
             x=x_plot.tolist() if x_plot is not None else None,
             y=y_plot.tolist() if y_plot is not None else None,
             hist2d=hist2d.tolist() if hist2d is not None else None,
@@ -962,12 +949,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if results["y"]["hist"] is not None
                 else None
             ),
-            pearson_r=pearson_r,
-            slope=slope,
-            intercept=intercept,
-            pixels_sampled=total_mask_pixels,
-            valid_pixels=valid_pixels,
-            coverage_ratio=coverage_ratio,
             geometry=scatter_request.geometry,
         )
 

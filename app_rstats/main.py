@@ -117,7 +117,6 @@ class ScatterOut(BaseModel):
     Attributes:
         raster_id_x (str): Identifier for the X-axis raster layer.
         raster_id_y (str): Identifier for the Y-axis raster layer.
-        n_pairs (int): Total number of paired pixel values sampled.
         x (Optional[List[float]]): List of X-axis pixel values, or None if unavailable.
         y (Optional[List[float]]): List of Y-axis pixel values, or None if unavailable.
         hist2d (Optional[List[List[int]]]): 2D histogram counts, or None if unavailable.
@@ -126,9 +125,7 @@ class ScatterOut(BaseModel):
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
-        pixels_sampled (Optional[int]): Number of pixels included in the window mask, or None if not applicable.
         valid_pixels (Optional[int]): Number of valid (non-null) paired pixels, or None if not available.
-        coverage_ratio (Optional[float]): Ratio of valid pixels to total mask pixels, or None if not available.
         geometry (dict): GeoJSON-like geometry defining the analysis window.
     """
 
@@ -909,7 +906,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot = sampled if side == "x" else None
             y_plot = sampled if side == "y" else None
         else:
-            n_pairs = 0
             x_plot, y_plot = None, None
 
         # coverage metrics

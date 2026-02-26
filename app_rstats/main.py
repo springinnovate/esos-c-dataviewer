@@ -909,13 +909,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot, y_plot = None, None
 
         # coverage metrics
-        logger.debug(f"calculating coverage metrics with {results}")
         if x_valid:
             total_mask_pixels = int(np.count_nonzero(results["x"]["mask"]))
-            logger.debug(total_mask_pixels)
         elif y_valid:
             total_mask_pixels = int(np.count_nonzero(results["y"]["mask"]))
-            logger.debug(total_mask_pixels)
         else:
             total_mask_pixels = 0
 

@@ -399,6 +399,12 @@ function initMap(crsCode) {
     map.setMaxBounds(L.latLngBounds(southWest, northEast))
     map.options.maxBoundsViscosity = 1.0
   }
+  // this watches the map to see if it ever resizes so it fixes the issue with
+  // Leaflet not being able to
+  const mapContainer = map.getContainer()
+  const mapResizeObserver = new ResizeObserver(() => map.invalidateSize({ pan: false }))
+  mapResizeObserver.observe(mapContainer)
+  state.mapResizeObserver = mapResizeObserver
 }
 
 /**

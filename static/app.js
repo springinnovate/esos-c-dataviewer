@@ -574,7 +574,7 @@ function wireSquareSamplerControls() {
   const windowNumber = document.getElementById('windowSizeNumber')
 
   const minKm = 1
-  const maxKm = 400
+  const maxKm = 300
   const stepRange = 1
   const currentKm = 200
 

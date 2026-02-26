@@ -1252,15 +1252,6 @@ async function renderScatterOverlay(opts) {
   const hasData = !!scatterObj
 
   const s = scatterObj || {}
-  const stats = {
-    n: parseInt(s.n_pairs) ?? null,
-    r: s.pearson_r ?? null,
-    slope: s.slope ?? null,
-    intercept: s.intercept ?? null,
-    pixels_sampled: parseInt(s.pixels_sampled) ?? null,
-    valid_pixels: parseInt(s.valid_pixels) ?? null,
-    coverage_ratio: s.coverage_ratio ?? null,
-  }
 
   // check to see if we've rendered this before
   const newRenderKey = JSON.stringify({
@@ -1552,16 +1543,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const axisLabelX = opts.axisLabelX || '';
   const axisLabelY = opts.axisLabelY || '';
 
-  const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === 'string') {
-      const s = p.trim(); if (!s) return null;
-      const num = parseFloat(s);
-      if (!Number.isFinite(num)) return null;
-      return (s.endsWith('%') || num > 1) ? num / 100 : num;
-    }
-    return null;
-  };
+  const parsePercent = p => p / 100;
   const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a,b)=>a-b);
 
   const innerW = Math.max(1, w - pad * 2 - mSize);

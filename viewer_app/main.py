@@ -82,10 +82,11 @@ def _load_layers_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def _collect_layers(config: dict) -> list:
+def _collect_layers(layer_key: str, config: dict) -> list:
     """Collect raster GeoTIFF layer metadata from configuration.
 
     Args:
+        layer_key (str): The layer section in the configuration file.
         config (dict): Loaded configuration data.
 
     Returns:
@@ -93,7 +94,7 @@ def _collect_layers(config: dict) -> list:
     """
     layers = []
     workspace_id = config["workspace_id"]
-    for layer in config.get("layers", {}).values():
+    for layer in config.get(layer_key, {}).values():
         layers.append(
             {
                 "workspace": workspace_id,
@@ -181,7 +182,8 @@ def api_config():
         )
     return {
         "geoserver_base_url": os.getenv("GEOSERVER_BASE_URL").rstrip("/"),
-        "layers": _collect_layers(config),
+        "layers": _collect_layers("layers", config),
+        "baseLayers": _collect_layers("baseLayers", config),
         "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
         "global_crs": os.getenv("GLOBAL_CRS").strip(),
     }

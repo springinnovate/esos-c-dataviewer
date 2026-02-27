@@ -908,14 +908,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         else:
             x_plot, y_plot = None, None
 
-        # coverage metrics
-        if x_valid:
-            total_mask_pixels = int(np.count_nonzero(results["x"]["mask"]))
-        elif y_valid:
-            total_mask_pixels = int(np.count_nonzero(results["y"]["mask"]))
-        else:
-            total_mask_pixels = 0
-
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,

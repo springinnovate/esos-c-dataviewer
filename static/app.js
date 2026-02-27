@@ -656,11 +656,12 @@ const layerDesc = (lyr) =>
     : "";
 
 /**
- * Populate both layer <select> elements with available WMS layers and wire change handlers.
- * Reads state.availableLayers and updates the DOM.
+ * Populate both layer <select> elements, and the base layer, with available
+ * WMS layers and wire change handlers.
+ * Reads state.availableLayers and state.availableBaseLayers updates the DOM.
  */
 function populateLayerSelects() {
-  const fill = (sel) => {
+  const fill = (sel, layers) => {
     sel.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.textContent = "Click here to choose a layer";
@@ -668,7 +669,8 @@ function populateLayerSelects() {
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
-    state.availableLayers.forEach((lyr, i) => {
+
+    layers.forEach((lyr, i) => {
       const opt = document.createElement("option");
       opt.value = String(i);
       opt.textContent = layerLabel(lyr);
@@ -679,21 +681,48 @@ function populateLayerSelects() {
 
   ["A", "B"].forEach((layerId) => {
     const sel = document.getElementById(`layerSelect${layerId}`);
-    fill(sel);
+    fill(sel, state.availableLayers);
+
     const def = sel.dataset.default;
     sel.addEventListener("change", (e) => onLayerChange(e, layerId));
+
     const idx = /^\d+$/.test(def)
       ? parseInt(def, 10)
       : state.availableLayers.findIndex((l) => l.id === def || l.name === def);
-    //layer not enabled yet like when the page loads
-    if (idx < 0) {
-      return;
-    }
+
+    if (idx < 0) return;
+
     sel.value = String(idx);
+
     sel.addEventListener("input", (e) => {
       const idx = parseInt(e.target.value, 10);
       renderLayerMeta(layerId, state.availableLayers[idx]);
     });
+
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  ["Base"].forEach((layerId) => {
+    const sel = document.getElementById(`layerSelect${layerId}`);
+    fill(sel, state.availableBaseLayers);
+
+    const def = sel.dataset.default;
+    sel.addEventListener("change", (e) => onBaseLayerChange(e, layerId));
+
+    const idx = /^\d+$/.test(def)
+      ? parseInt(def, 10)
+      : state.availableBaseLayers.findIndex(
+          (l) => l.id === def || l.name === def,
+        );
+
+    if (idx < 0) return;
+
+    sel.value = String(idx);
+
+    sel.addEventListener("input", (e) => {
+      const idx = parseInt(e.target.value, 10);
+      renderBaseLayerMeta(layerId, state.availableBaseLayers[idx]);
+    });
+
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
@@ -3283,6 +3312,7 @@ function renderLayerMeta(layerId, lyr) {
 
   state.geoserverBaseUrl = cfg.geoserver_base_url;
   state.availableLayers = cfg.layers;
+  state.availableBaseLayers = cfg.baseLayers;
   state.baseStatsUrl = cfg.rstats_base_url;
   ["A", "B"].forEach((layerId) => wireDynamicStyleControls(layerId));
   populateLayerSelects();

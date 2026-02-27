@@ -718,45 +718,68 @@ function populateLayerSelects() {
 
     sel.value = String(idx);
 
-    sel.addEventListener("input", (e) => {
+    /*sel.addEventListener("input", (e) => {
       const idx = parseInt(e.target.value, 10);
       renderBaseLayerMeta(layerId, state.availableBaseLayers[idx]);
-    });
+    });*/
 
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
 /**
- * Add a WMS layer to the map for the given qualified layer name and slot.
- * Replaces any existing layer in that slot. Slot 'A' is above 'B', className
- * adds any additional class to the layer probalby for styling.
+ * Add/replace a WMS layer in a named slot and set z-order.
+ * Slots: 'base' (bottom), 'B' (middle), 'A' (top)
  * @param {string} qualifiedName
- * @param {'A'|'B'} slot
- * @param {string} className
+ * @param {'A'|'B'|'base'} slot
+ * @param {{className?: string, transparent?: boolean, zIndex?: number}} [opts]
  */
-function addWmsLayer(qualifiedName, slot, className) {
+function addWmsLayer(qualifiedName, slot, opts = {}) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`;
-  const params = {
+  const defaultClassName = slot === "A" ? "blend-screen" : "blend-base";
+  const zIndexBySlot = { base: 100, B: 200, A: 300 };
+
+  const layer = L.tileLayer.wms(wmsUrl, {
     layers: qualifiedName,
     format: "image/png",
-    transparent: true,
+    transparent: opts.transparent ?? true,
     tiled: true,
     version: "1.1.1",
-    className: className ?? (slot === "A" ? "blend-screen" : "blend-base"),
+    className: opts.className ?? defaultClassName,
     noWrap: true,
-  };
-  const l = L.tileLayer.wms(wmsUrl, params);
-  ["A", "B"].forEach((layerSlot) => {
-    const key = `wmsLayer${layerSlot}`;
-    if (slot === layerSlot) {
-      if (state[key]) state.map.removeLayer(state[key]);
-      state[key] = l.addTo(state.map);
-    }
   });
 
-  // keep A on top if present
+  const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
+  if (state[stateKey]) state.map.removeLayer(state[stateKey]);
+  state[stateKey] = layer.addTo(state.map);
+
+  const zIndex = opts.zIndex ?? zIndexBySlot[slot] ?? 200;
+  if (state[stateKey].setZIndex) state[stateKey].setZIndex(zIndex);
+
   if (state.wmsLayerA) state.wmsLayerA.bringToFront();
+}
+
+/**
+ * Handle base layer change from a <select>.
+ * Adds/updates the base WMS underneath A/B when the base checkbox is checked.
+ * @param {Event & {target: HTMLSelectElement}} e
+ */
+function onBaseLayerChange(e) {
+  const idx = parseInt(e.target.value, 10);
+  const baseLayer = state.availableBaseLayers[idx];
+
+  //renderBaseLayerMeta("Base", baseLayer);
+
+  state.activeBaseLayerIdx = idx;
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("baseLayer", baseLayer?.name ?? "");
+  history.replaceState(null, "", url.toString());
+
+  const isVisible = document.getElementById("layerVisibleBase")?.checked;
+  if (!isVisible) return;
+
+  addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
 }
 
 function _xmlLocalName(el) {
@@ -3273,6 +3296,7 @@ function wireCollapsibleTopBar() {
   window.addEventListener("resize", onResize);
 }
 
+//TODO: this renderLayerMeta isn't used but it's the placehodler for title and description
 function renderLayerMeta(layerId, lyr) {
   const el = document.getElementById(`layerMeta${layerId}`);
   if (!el) return;

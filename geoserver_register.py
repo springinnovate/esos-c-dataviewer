@@ -808,14 +808,16 @@ def main():
     logger.info("Style ready: %s", style_id)
 
     layers = config_data.get("layers") or {}
-    if not layers:
+    base_layers = config_data.get("baseLayers") or {}
+    all_layers = layers | base_layers
+    if not all_layers:
         logger.warning('No layers found under config_data["layers"]')
 
     scheduled_layers = 0
     scheduled_tasks = 0
 
     error_rasters = []
-    for raster_id, layer_def in layers.items():
+    for raster_id, layer_def in all_layers.items():
         file_path = Path(layer_def["file_path"])
         logger.debug("Checking (%s/%s): %s", raster_id, file_path, layer_def)
         error_message = check_for_valid_projection_and_overviews(
@@ -831,7 +833,7 @@ def main():
             )
             raise ValueError(formatted)
 
-    for raster_id, layer_def in layers.items():
+    for raster_id, layer_def in all_layers.items():
         logger.debug("Layer definition (%s): %s", raster_id, layer_def)
 
         file_path = Path(layer_def["file_path"])

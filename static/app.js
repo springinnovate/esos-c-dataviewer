@@ -39,6 +39,7 @@ const state = {
   availableLayers: null,
   activeLayerIdxA: null,
   activeLayerIdxB: null,
+  baseLayer: null,
   hoverRect: null,
   boxSizeKm: null,
   lastMouseLatLng: null,
@@ -369,6 +370,14 @@ function setLayerVisibility(layerId, visible) {
 
   const cb = document.getElementById(`layerVisible${layerId}`);
   if (cb) cb.checked = !!visible;
+
+  if (layerId == "Base") {
+    if (visible) {
+      state.baseLegendControl.setLayer(state.baseLayer.name);
+    } else {
+      state.baseLegendControl.setLayer(null);
+    }
+  }
 }
 
 /**
@@ -438,6 +447,7 @@ function initMap(crsCode) {
   );
   mapResizeObserver.observe(mapContainer);
   state.mapResizeObserver = mapResizeObserver;
+  state.baseLegendControl = createBaseLegendControl().addTo(state.map);
 }
 
 /**
@@ -790,6 +800,8 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
 function onBaseLayerChange(e) {
   const idx = parseInt(e.target.value, 10);
   const baseLayer = state.availableBaseLayers[idx];
+  state.baseLayer = baseLayer;
+  state.baseLegendControl.setLayer(baseLayer.name);
 
   //renderBaseLayerMeta("Base", baseLayer);
 
@@ -3335,6 +3347,104 @@ function renderLayerMeta(layerId, lyr) {
   d.textContent = layerDesc(lyr) || "";
 
   el.append(t, d);
+}
+
+/**
+ * Builds a WMS GetLegendGraphic URL for a given layer.
+ *
+ * @param {string} layerName - The name of the WMS layer.
+ * @param {Object} [opts={}] - Optional configuration.
+ * @param {number} [opts.width=18] - Legend graphic width in pixels.
+ * @param {number} [opts.height=18] - Legend graphic height in pixels.
+ * @param {string} [opts.style] - Optional WMS style name to apply.
+ * @param {Object.<string, string>} [opts.extraParams] - Additional query parameters to include in the request.
+ * @returns {string} Fully qualified GetLegendGraphic request URL.
+ */
+function getWmsLegendUrl(layerName, opts = {}) {
+  const wmsUrl = `${state.geoserverBaseUrl}/wms`;
+  const params = new URLSearchParams({
+    service: "WMS",
+    request: "GetLegendGraphic",
+    format: "image/png",
+    width: String(opts.width ?? 18),
+    height: String(opts.height ?? 18),
+    layer: layerName,
+    transparent: "true",
+    ...opts.extraParams,
+  });
+
+  if (opts.style) params.set("style", opts.style);
+
+  return `${wmsUrl}?${params.toString()}`;
+}
+
+/**
+ * Creates a Leaflet control for displaying a WMS legend associated with the
+ * currently selected base layer.
+ *
+ * The control renders in the bottom-right corner of the map and is hidden
+ * by default. Calling `setLayer(layerName, styleName)` updates the legend
+ * image using a GeoServer WMS GetLegendGraphic request and sets the legend
+ * title to the provided layer name. Passing a falsy `layerName` clears the
+ * legend content and hides the control.
+ *
+ * The returned control instance exposes:
+ *   - setLayer(layerName: string | null, styleName?: string): void
+ *       Updates the legend image and title, or hides the control if no layer.
+ *   - show(): void
+ *       Makes the legend visible.
+ *   - hide(): void
+ *       Hides the legend.
+ *
+ * @returns {L.Control & {
+ *   setLayer: (layerName: string | null, styleName?: string) => void,
+ *   show: () => void,
+ *   hide: () => void
+ * }} Configured Leaflet legend control instance.
+ */
+function createBaseLegendControl() {
+  const ctrl = L.control({ position: "bottomright" });
+
+  ctrl.onAdd = () => {
+    const div = L.DomUtil.create("div", "legend-control hidden");
+    div.innerHTML = `
+      <div class='legend-title'></div>
+      <div class='legend-body'></div>
+    `;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    ctrl._container = div;
+    return div;
+  };
+
+  ctrl.setLayer = (layerName, styleName) => {
+    const body = ctrl._container.querySelector(".legend-body");
+    const title = ctrl._container.querySelector(".legend-title");
+
+    if (!layerName) {
+      body.innerHTML = "";
+      title.textContent = "";
+      ctrl.hide();
+      return;
+    }
+
+    title.textContent = layerName;
+
+    const url = getWmsLegendUrl(layerName, { style: styleName });
+    body.innerHTML = `<img class='legend-img' src='${url}' />`;
+
+    ctrl.show();
+  };
+
+  ctrl.show = () => {
+    ctrl._container.classList.remove("hidden");
+  };
+
+  ctrl.hide = () => {
+    ctrl._container.classList.add("hidden");
+  };
+
+  return ctrl;
 }
 
 /**

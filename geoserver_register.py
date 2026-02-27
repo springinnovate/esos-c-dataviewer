@@ -553,7 +553,6 @@ def create_categorical_raster_style(
     if not category_definitions:
         raise ValueError("rendering.categories is required")
 
-    nodata_value = rendering_config.get("nodata", None)
     default_opacity = float(rendering_config.get("opacity", 1.0))
 
     def parse_numeric_value(value):
@@ -563,12 +562,6 @@ def create_categorical_raster_style(
             return float(value)
 
     color_map_entries = []
-
-    if nodata_value is not None:
-        color_map_entries.append(
-            f'<ColorMapEntry color="#000000" opacity="0" quantity="{nodata_value}" label="NoData"/>'
-        )
-
     for category_value, category_spec in sorted(
         category_definitions.items(),
         key=lambda item: parse_numeric_value(item[0]),

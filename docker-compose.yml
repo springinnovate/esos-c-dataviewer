@@ -12,7 +12,7 @@ networks:
 
 services:
   traefik:
-    image: traefik:v3
+    image: traefik:v3.6.1
     command:
       - --providers.docker
       - --providers.docker.exposedbydefault=false
@@ -46,7 +46,11 @@ services:
     image: ${GEOSERVER_IMAGE}
     restart: unless-stopped
     healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/geoserver/web/ >/dev/null 2>&1 || exit 1']
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:8080/geoserver/web/ >/dev/null 2>&1 || exit 1",
+        ]
       interval: 15s
       timeout: 5s
       retries: 20
@@ -88,35 +92,26 @@ services:
     labels:
       - traefik.enable=true
 
-      #  shared service
       - traefik.http.services.viewer.loadbalancer.server.port=5173
-      - traefik.http.middlewares.viewer-stripprefix.stripprefix.prefixes=/viewer
 
-      # deploy (HTTPS)
-      - traefik.http.routers.viewer.rule=Host(`${HOST}`) && PathPrefix(`/viewer`)
-      - traefik.http.routers.viewer.entrypoints=websecure
-      - traefik.http.routers.viewer.tls=true
-      - traefik.http.routers.viewer.tls.certresolver=le
-      # prevent caching of HTML entry
-      - traefik.http.routers.viewer.middlewares=viewer-stripprefix@docker,no-store@docker
+      - traefik.http.middlewares.viewer-strip.stripprefix.prefixes=/viewer
 
-      # local (HTTP)
-      - traefik.http.routers.viewer-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer`)
+      # RedirectRegex matches full URL; also preserve query string if present
+      - traefik.http.middlewares.viewer-slash.redirectregex.regex=^(https?://[^/]+)/viewer(\?.*)?$$
+      - traefik.http.middlewares.viewer-slash.redirectregex.replacement=$${1}/viewer/$${2}
+      - traefik.http.middlewares.viewer-slash.redirectregex.permanent=true
+
+      # /viewer  -> redirect to /viewer/
+      - traefik.http.routers.viewer-local-noslash.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && Path(`/viewer`)
+      - traefik.http.routers.viewer-local-noslash.entrypoints=web
+      - traefik.http.routers.viewer-local-noslash.middlewares=viewer-slash@docker
+      - traefik.http.routers.viewer-local-noslash.service=noop@internal
+
+      # /viewer/ -> serve app (and all assets under it)
+      - traefik.http.routers.viewer-local.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer/`)
       - traefik.http.routers.viewer-local.entrypoints=web
-      - traefik.http.routers.viewer-local.middlewares=viewer-stripprefix@docker,no-store@docker
-
-      # HTTPS assets
-      - traefik.http.routers.viewer-assets.rule=Host(`${HOST}`) && PathPrefix(`/viewer`)
-      - traefik.http.routers.viewer-assets.entrypoints=websecure
-      - traefik.http.routers.viewer-assets.tls=true
-      - traefik.http.routers.viewer-assets.tls.certresolver=le
-      - traefik.http.routers.viewer-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
-
-      # HTTP assets
-      - traefik.http.routers.viewer-local-assets.rule=(Host(`localhost`) || Host(`127.0.0.1`)) && PathPrefix(`/viewer`)
-      - traefik.http.routers.viewer-local-assets.entrypoints=web
-      - traefik.http.routers.viewer-local-assets.middlewares=viewer-stripprefix@docker,cache-year@docker
-
+      - traefik.http.routers.viewer-local.middlewares=viewer-strip@docker
+      - traefik.http.routers.viewer-local.service=viewer
 
   geoserver-init:
     build:
@@ -128,7 +123,7 @@ services:
       geoserver:
         condition: service_healthy
     networks: [backend]
-    restart: 'no'
+    restart: "no"
     environment:
       - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
       - GEOSERVER_INTERNAL_BASE_URL=${GEOSERVER_INTERNAL_BASE_URL}
@@ -144,7 +139,7 @@ services:
       # note /app/styles/dynamic_style.sld is duplicated from STYLE_PATH above
       # because docker-compose can't make its own environment variables
       - ./styles/dynamic_style.sld:/app/styles/dynamic_style.sld
-    command: ['/app/layers.yml']
+    command: ["/app/layers.yml"]
 
   rstats:
     build:

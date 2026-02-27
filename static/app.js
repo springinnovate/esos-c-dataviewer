@@ -50,6 +50,7 @@ const state = {
   _wmsCapsPromise: null,
   _wmsLayerBoundsCache: new Map(),
   visibility: { A: true, B: true },
+  baseVisibility: true,
   lastScatterOpts: null,
   scatterObj: null,
   percentiles: "5 50 90",
@@ -353,26 +354,37 @@ function applyBivariateColormapToAB(cmap) {
 
 /**
  * Set the visibility of a specified WMS layer and synchronize its checkbox state.
- * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
- * @param {boolean} visible - Whether the layer should be visible (true) or hidden (false).
+ * @param {'A'|'B'|'Base'} layerId
+ * @param {boolean} visible
  */
 function setLayerVisibility(layerId, visible) {
-  const layer = layerId === "A" ? state.wmsLayerA : state.wmsLayerB;
+  const stateKey = layerId === "Base" ? "wmsLayerBase" : `wmsLayer${layerId}`;
+
+  const layer = state[stateKey];
+  if (!layer) return;
+
   layer.setOpacity(visible ? 1 : 0);
+
   state.visibility[layerId] = visible;
+
   const cb = document.getElementById(`layerVisible${layerId}`);
-  cb.checked = !!visible;
+  if (cb) cb.checked = !!visible;
 }
 
 /**
- * Initialize visibility checkboxes for layers A and B and wire their change events.
- * When a checkbox is toggled, it updates the corresponding layer's visibility.
+ * Initialize visibility checkboxes for layers A, B, and Base
+ * and wire their change events.
  */
 function wireVisibilityCheckboxes() {
-  ["A", "B"].forEach((id) => {
-    const cb = document.getElementById(`layerVisible${id}`);
-    cb.checked = state.visibility[id];
-    cb.addEventListener("change", () => setLayerVisibility(id, cb.checked));
+  ["A", "B", "Base"].forEach((layerId) => {
+    const cb = document.getElementById(`layerVisible${layerId}`);
+    if (!cb) return;
+
+    cb.checked = !!state.visibility[layerId];
+
+    cb.addEventListener("change", () => {
+      setLayerVisibility(layerId, cb.checked);
+    });
   });
 }
 
@@ -787,10 +799,9 @@ function onBaseLayerChange(e) {
   url.searchParams.set("baseLayer", baseLayer?.name ?? "");
   history.replaceState(null, "", url.toString());
 
-  const isVisible = document.getElementById("layerVisibleBase")?.checked;
-  if (!isVisible) return;
-
+  document.getElementById("layerVisibleBase").checked = true;
   addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
+  state.baseVisibility = true;
 }
 
 function _xmlLocalName(el) {
@@ -940,6 +951,7 @@ async function onLayerChange(e, layerId) {
   // update state and map layer
   state[`activeLayerIdx${layerId}`] = idx;
   const className = layerId === "A" ? "blend-screen" : "blend-base";
+  document.getElementById(`layerVisible${layerId}`).checked = true;
   addWmsLayer(lyr.name, layerId, className);
   applyDynamicStyle(layerId);
   if (!state.sampleMode) {

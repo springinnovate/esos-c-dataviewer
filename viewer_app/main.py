@@ -149,6 +149,7 @@ async def index(
         TemplateResponse: Rendered 'index.html' with initial layer state,
         asset paths, and application version.
     """
+    logger.info(f"rendering {request} {layerA} {layerB}")
     initial_layers = {"A": layerA or "", "B": layerB or ""}
     return templates.TemplateResponse(
         "index.html",

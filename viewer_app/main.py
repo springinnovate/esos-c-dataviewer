@@ -131,7 +131,10 @@ def _read_version():
 
 @app.get("/")
 async def index(
-    request: Request, layerA: Optional[str] = None, layerB: Optional[str] = None
+    request: Request,
+    layerA: Optional[str] = None,
+    layerB: Optional[str] = None,
+    baseLayer: Optional[str] = None,
 ):
     """Render the main viewer page.
 
@@ -150,7 +153,7 @@ async def index(
         asset paths, and application version.
     """
     logger.info(f"rendering {request} {layerA} {layerB}")
-    initial_layers = {"A": layerA or "", "B": layerB or ""}
+    initial_layers = {"A": layerA or "", "B": layerB or "", "Base": baseLayer}
     return templates.TemplateResponse(
         "index.html",
         {

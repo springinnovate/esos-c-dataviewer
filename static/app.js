@@ -401,6 +401,15 @@ function initMap(crsCode) {
     zoom: INITIAL_ZOOM,
     zoomControl: false,
   });
+
+  // make two panes, one for layers that blend, the other for the base layer
+  // that does not
+  map.createPane("basePane");
+  map.getPane("basePane").style.zIndex = 100;
+
+  map.createPane("blendPane");
+  map.getPane("blendPane").style.zIndex = 200;
+  map.getPane("blendPane").style.isolation = "isolate";
   state.map = map;
   if (Array.isArray(leafletCRS?.wrapLng) && leafletCRS?.projection?.bounds) {
     const projectedBounds = leafletCRS.projection.bounds;
@@ -738,6 +747,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`;
   const defaultClassName = slot === "A" ? "blend-screen" : "blend-base";
   const zIndexBySlot = { base: 100, B: 200, A: 300 };
+  const paneBySlot = { base: "basePane", B: "blendPane", A: "blendPane" };
 
   const layer = L.tileLayer.wms(wmsUrl, {
     layers: qualifiedName,
@@ -747,6 +757,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     version: "1.1.1",
     className: opts.className ?? defaultClassName,
     noWrap: true,
+    pane: paneBySlot[slot],
   });
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;

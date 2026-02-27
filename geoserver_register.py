@@ -1018,7 +1018,6 @@ def main():
     logger.info("Rotate GeoServer passwords so they cannot be guessed")
     new_master_password = secrets.token_urlsafe(PASSWORD_LENGTH)
     new_admin_password = secrets.token_urlsafe(PASSWORD_LENGTH)
-    logger.info(f"******** NEW PASSWORD {new_admin_password}")
     http_jobs = [
         (  # master password
             f"{geoserver_base_url}/rest/security/masterpw.json",

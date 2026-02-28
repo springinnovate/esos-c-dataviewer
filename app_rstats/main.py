@@ -978,7 +978,7 @@ def pixel_val(req: PixelValIn):
         v = float(arr[0, 0])
 
         if (nodata is not None and np.isclose(v, nodata)) or (not np.isfinite(v)):
-            val: Optional[Union[float, str]] = None
+            val = None
         else:
             val = v
 

@@ -401,7 +401,6 @@ def _load_registry() -> dict:
         for k, v in (y.get(section_key, {}) or {}).items():
             layers_dict[k.lower()] = v
 
-    logger.warning("this is a hack to use the processed layers, fix in issue #57")
     for layer_name, layer_dict in layers_dict.items():
         rendering = layer_dict.get("rendering") or {}
         categories = rendering.get("categories") or {}

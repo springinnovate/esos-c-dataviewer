@@ -2686,11 +2686,11 @@ async function queryAndRender(latlng, clientX, clientY) {
 
   const lines = [
     `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
+    Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
+    Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
     Number.isInteger(baseIdx)
       ? `${uiBase}: ${valBase == null ? '-' : String(valBase)}`
       : null,
-    Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
-    Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
   ].filter(Boolean);
 
   probe.textContent = lines.join('\n');

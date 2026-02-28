@@ -1150,17 +1150,7 @@ function buildHistogramSVG(edges, hist, layerId) {
   const percentilesRaw = Array.isArray(state.percentiles)
     ? state.percentiles
     : [];
-  const parsePercent = (p) => {
-    if (typeof p === "number" && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === "string") {
-      const s = p.trim();
-      if (!s) return null;
-      const num = parseFloat(s);
-      if (!Number.isFinite(num)) return null;
-      return s.endsWith("%") || num > 1 ? num / 100 : num;
-    }
-    return null;
-  };
+  const parsePercent = (p) => p / 100;
   const percentiles = [
     ...new Set(
       percentilesRaw

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 import logging
 import os
 import shutil
@@ -171,7 +171,7 @@ class PixelValOut(BaseModel):
         row (Optional[int]): Raster row index (0-based) if within bounds, else None.
         col (Optional[int]): Raster column index (0-based) if within bounds, else None.
         in_bounds (bool): Whether the projected coordinate fell inside raster bounds.
-        value (Optional[float]): Pixel value or None if nodata/out-of-bounds/non-finite.
+        value (Optional[Union[float, str]]): Pixel value or None if nodata/out-of-bounds/non-finite.
     """
 
     raster_id: str
@@ -180,7 +180,7 @@ class PixelValOut(BaseModel):
     row: Optional[int] = None
     col: Optional[int] = None
     in_bounds: bool = False
-    value: Optional[float] = None
+    value: Optional[Union[float, str]] = None
 
 
 class ClipIn(BaseModel):
@@ -956,14 +956,12 @@ def pixel_val(req: PixelValIn):
     try:
         ds, nodata = _open_raster(req.raster_id)
 
-        # project input coordinate to raster CRS if needed
         if req.from_crs and ds.crs and req.from_crs != ds.crs.to_string():
             tf = Transformer.from_crs(req.from_crs, ds.crs, always_xy=True)
             x, y = tf.transform(req.lon, req.lat)
         else:
             x, y = req.lon, req.lat
 
-        # compute row/col and check bounds
         r, c = rasterio.transform.rowcol(ds.transform, x, y)
         if r < 0 or c < 0 or r >= ds.height or c >= ds.width:
             return PixelValOut(
@@ -976,16 +974,23 @@ def pixel_val(req: PixelValIn):
                 value=None,
             )
 
-        # read single pixel
         win = Window(c, r, 1, 1)
         arr = ds.read(1, window=win, masked=False)
         v = float(arr[0, 0])
 
-        # nodata / non-finite -> None
         if (nodata is not None and np.isclose(v, nodata)) or (not np.isfinite(v)):
-            val = None
+            val: Optional[Union[float, str]] = None
         else:
             val = v
+
+        layer_cfg = REGISTRY.get(req.raster_id.lower(), {})
+        category_labels = (layer_cfg.get("rendering") or {}).get(
+            "category_labels"
+        ) or {}
+        if val is not None and category_labels:
+            label = category_labels.get(int(val))
+            if label is not None:
+                val = label
 
         return PixelValOut(
             raster_id=req.raster_id,

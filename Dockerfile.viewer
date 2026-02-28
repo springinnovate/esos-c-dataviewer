@@ -3,25 +3,18 @@
 FROM alpine:3.20 AS versioner
 RUN apk add --no-cache git
 WORKDIR /src
-# compute version from repo without copying .git into the image
 RUN --mount=type=bind,source=.git,target=/src/.git,ro \
     git describe --tags --always > /version
 
 FROM node:20-slim AS build
 WORKDIR /build
-COPY static/ ./
-RUN npm install
+
+COPY static/package.json static/package-lock.json ./
+RUN --mount=type=cache,id=npm-cache,target=/root/.npm npm ci --no-audit --no-fund
+
 COPY static/ ./
 RUN node -e "console.log('vite=', require('vite/package.json').version)" && [ -f vite.config.js ] || (echo 'vite.config.js missing' && exit 1)
-
-# Choose one of these builds only:
-
-#This is for production
-#RUN npm run build && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
-# This is for dev
 RUN npx vite build --minify=false --sourcemap && ls -la dist && [ -f dist/manifest.json ] || (echo 'manifest missing' && exit 2)
-
-
 
 FROM python:3.11-slim
 WORKDIR /app

@@ -40,6 +40,8 @@ import os
 import secrets
 import sys
 import time
+from xml.sax.saxutils import escape
+
 
 from dotenv import load_dotenv
 from ecoshard import taskgraph
@@ -537,6 +539,117 @@ def create_style_if_not_exists(
         )
 
 
+def create_categorical_raster_style(
+    geoserver_client,
+    workspace_name: str,
+    style_name: str,
+    layer_config: dict,
+) -> None:
+    rendering_config = layer_config.get("rendering") or {}
+    if (rendering_config.get("type") or "").lower() != "categorical":
+        raise ValueError("rendering.type must be categorical")
+
+    category_definitions = rendering_config.get("categories") or {}
+    if not category_definitions:
+        raise ValueError("rendering.categories is required")
+
+    default_opacity = float(rendering_config.get("opacity", 1.0))
+
+    def parse_numeric_value(value):
+        try:
+            return int(value)
+        except Exception:
+            return float(value)
+
+    color_map_entries = []
+    for category_value, category_spec in sorted(
+        category_definitions.items(),
+        key=lambda item: parse_numeric_value(item[0]),
+    ):
+        category_color = str(category_spec["color"]).strip()
+        category_label = escape(str(category_spec.get("label", category_value)))
+        category_opacity = float(category_spec.get("opacity", default_opacity))
+
+        color_map_entries.append(
+            f'<ColorMapEntry color="{category_color}" '
+            f'opacity="{category_opacity}" '
+            f'quantity="{category_value}" '
+            f'label="{category_label}"/>'
+        )
+
+    color_map_entries_xml = "\n              ".join(color_map_entries)
+
+    sld_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<sld:StyledLayerDescriptor xmlns="http://www.opengis.net/sld"
+  xmlns:sld="http://www.opengis.net/sld"
+  xmlns:ogc="http://www.opengis.net/ogc"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  version="1.0.0">
+  <sld:NamedLayer>
+    <sld:Name>{escape(style_name)}</sld:Name>
+    <sld:UserStyle>
+      <sld:Title>{escape(style_name)}</sld:Title>
+      <sld:FeatureTypeStyle>
+        <sld:Rule>
+          <sld:RasterSymbolizer>
+            <sld:Opacity>{default_opacity}</sld:Opacity>
+            <sld:ColorMap type="values">
+              {color_map_entries_xml}
+            </sld:ColorMap>
+          </sld:RasterSymbolizer>
+        </sld:Rule>
+      </sld:FeatureTypeStyle>
+    </sld:UserStyle>
+  </sld:NamedLayer>
+</sld:StyledLayerDescriptor>
+"""
+
+    get_style_response = geoserver_client.get(
+        f"/rest/workspaces/{workspace_name}/styles/{style_name}.json"
+    )
+
+    if get_style_response.status_code != 200:
+        style_creation_payload = {
+            "style": {
+                "name": style_name,
+                "filename": f"{style_name}.sld",
+                "format": "sld",
+            }
+        }
+
+        create_style_response = geoserver_client.post(
+            f"/rest/workspaces/{workspace_name}/styles",
+            style_creation_payload,
+        )
+
+        if create_style_response.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to create style {workspace_name}:{style_name}: "
+                f"{create_style_response.status_code} {create_style_response.text}\n"
+                f"Payload: {style_creation_payload}"
+            )
+
+    style_upload_url = geoserver_client._url(
+        f"/rest/workspaces/{workspace_name}/styles/{style_name}.sld?raw=true"
+    )
+
+    upload_response = requests.put(
+        style_upload_url,
+        auth=geoserver_client.auth,
+        headers={"Content-Type": "application/vnd.ogc.sld+xml"},
+        data=sld_body.encode("utf-8"),
+        timeout=geoserver_client.timeout,
+        verify=False,
+    )
+
+    if upload_response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Failed to upload style {workspace_name}:{style_name}: "
+            f"{upload_response.status_code} {upload_response.text}"
+        )
+
+
 def _pick_resampling(
     dtype: str, explicit: Resampling | None = None
 ) -> Resampling:
@@ -758,7 +871,7 @@ def main():
     logger.info(config_data)
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
-    geoserver_password = config_data["geoserver"]["password"]
+    geoserver_base_password = config_data["geoserver"]["password"]
 
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
@@ -775,7 +888,10 @@ def main():
 
     timeout_seconds = 30
     geoserver_client = Gs(
-        geoserver_base_url, geoserver_user, geoserver_password, timeout_seconds
+        geoserver_base_url,
+        geoserver_user,
+        geoserver_base_password,
+        timeout_seconds,
     )
     logger.info(
         "GeoServer REST client initialized (timeout=%ss)", timeout_seconds
@@ -796,26 +912,30 @@ def main():
     logger.info("Workspace ready: %s", workspace_id)
 
     style_path = os.environ["STYLE_PATH"]
-    style_id = Path(style_path).stem
-    logger.info("Ensuring style exists: %s (path=%s)", style_id, style_path)
+    base_style_id = Path(style_path).stem
+    logger.info(
+        "Ensuring style exists: %s (path=%s)", base_style_id, style_path
+    )
     create_style_if_not_exists(
         geoserver_client,
         workspace_id,
-        style_id,
+        base_style_id,
         "sld",
         style_path,
     )
-    logger.info("Style ready: %s", style_id)
+    logger.info("Style ready: %s", base_style_id)
 
     layers = config_data.get("layers") or {}
-    if not layers:
+    base_layers = config_data.get("baseLayers") or {}
+    all_layers = layers | base_layers
+    if not all_layers:
         logger.warning('No layers found under config_data["layers"]')
 
     scheduled_layers = 0
     scheduled_tasks = 0
 
     error_rasters = []
-    for raster_id, layer_def in layers.items():
+    for raster_id, layer_def in all_layers.items():
         file_path = Path(layer_def["file_path"])
         logger.debug("Checking (%s/%s): %s", raster_id, file_path, layer_def)
         error_message = check_for_valid_projection_and_overviews(
@@ -831,7 +951,7 @@ def main():
             )
             raise ValueError(formatted)
 
-    for raster_id, layer_def in layers.items():
+    for raster_id, layer_def in all_layers.items():
         logger.debug("Layer definition (%s): %s", raster_id, layer_def)
 
         file_path = Path(layer_def["file_path"])
@@ -843,6 +963,23 @@ def main():
             str(file_path),
             str(target_path),
         )
+
+        if "rendering" in layer_def:
+            style_id = f"{raster_id}_categorical"
+            categorical_raster_style_task = task_graph.add_task(
+                func=create_categorical_raster_style,
+                args=(
+                    geoserver_client,
+                    workspace_id,
+                    style_id,
+                    layer_def,
+                ),
+                task_name=f"make style -- {style_id}",
+                transient_run=True,
+            )
+            categorical_raster_style_task.join()
+        else:
+            style_id = base_style_id
 
         logger.info("Adding create-layer task for %s", raster_id)
         task_graph.add_task(
@@ -872,17 +1009,19 @@ def main():
     logger.info("TaskGraph closed")
 
     logger.info("Rotate GeoServer passwords so they cannot be guessed")
+    new_master_password = secrets.token_urlsafe(PASSWORD_LENGTH)
+    new_admin_password = secrets.token_urlsafe(PASSWORD_LENGTH)
     http_jobs = [
         (  # master password
             f"{geoserver_base_url}/rest/security/masterpw.json",
             {
                 "oldMasterPassword": "geoserver",
-                "newMasterPassword": secrets.token_urlsafe(PASSWORD_LENGTH),
+                "newMasterPassword": new_master_password,
             },
         ),
         (  # admin password
             f"{geoserver_base_url}/rest/security/self/password",
-            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
+            {"newPassword": new_admin_password},
         ),
     ]
 
@@ -892,7 +1031,7 @@ def main():
             resp = requests.put(
                 url,
                 json=payload,
-                auth=HTTPBasicAuth(geoserver_user, geoserver_password),
+                auth=HTTPBasicAuth(geoserver_user, geoserver_base_password),
                 timeout=30,
             )
             if resp.status_code != 200:

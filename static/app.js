@@ -2468,8 +2468,11 @@ function blendScreenRGB(a, b) {
 }
 
 const layerId = (idx) => state.availableLayers?.[idx]?.name ?? "(none)";
+const baseLayerId = (idx) => state.availableBaseLayers?.[idx]?.name ?? "(none)";
 const layerUiName = (idx) =>
   layerLabel(state.availableLayers?.[idx]) ?? layerId(idx);
+const baseLayerUiName = (idx) =>
+  layerLabel(state.availableBaseLayers?.[idx]) ?? layerId(idx);
 
 /**
  * Wire a pixel probe that follows the mouse and displays live raster values.
@@ -2610,92 +2613,107 @@ function wirePixelProbe() {
     return res.json();
   }
 
-  /**
-   * Query the backend for pixel values under the cursor and update the probe.
-   *
-   * Requests current values from active rasters (A and/or B) using `fetchPixelVal`,
-   * updates the `.pixel-probe` tooltip with results, and-if both values are
-   * finite-records the coordinate in `state.lastPixelPoint` for plotting on
-   * the scatterplot. Handles throttling, aborting prior requests, and tooltip
-   * placement relative to the mouse.
-   *
-   * @async
-   * @param {L.LatLng} latlng - Leaflet latitude/longitude of the cursor.
-   * @param {number} clientX - Screen X coordinate of the mouse pointer.
-   * @param {number} clientY - Screen Y coordinate of the mouse pointer.
-   * @returns {Promise<void>}
-   */
-  async function queryAndRender(latlng, clientX, clientY) {
-    const ts = Date.now();
-    lastFetchTs = ts;
-    const ac = new AbortController();
-    inFlight = { ts, ac };
+/**
+ * Query the backend for pixel values under the cursor and update the probe.
+ *
+ * Requests current values from active rasters (A and/or B and/or Base) using `fetchPixelVal`,
+ * updates the `.pixel-probe` tooltip with results, and-if both A/B values are
+ * finite-records the coordinate in `state.lastPixelPoint` for plotting on
+ * the scatterplot. Handles throttling, aborting prior requests, and tooltip
+ * placement relative to the mouse.
+ *
+ * @async
+ * @param {L.LatLng} latlng - Leaflet latitude/longitude of the cursor.
+ * @param {number} clientX - Screen X coordinate of the mouse pointer.
+ * @param {number} clientY - Screen Y coordinate of the mouse pointer.
+ * @returns {Promise<void>}
+ */
+async function queryAndRender(latlng, clientX, clientY) {
+  const ts = Date.now();
+  lastFetchTs = ts;
 
-    const aIdx = state.activeLayerIdxA;
-    const bIdx = state.activeLayerIdxB;
-    const idA = layerId(aIdx);
-    const idB = layerId(bIdx);
-    const uiA = layerUiName(aIdx);
-    const uiB = layerUiName(bIdx);
+  const prev = inFlight;
+  if (prev?.ac) prev.ac.abort();
 
-    let valA = null;
-    let valB = null;
+  const ac = new AbortController();
+  inFlight = { ts, ac };
 
-    try {
-      const jobs = [];
-      if (Number.isInteger(aIdx)) {
-        jobs.push(
-          fetchPixelVal(idA, latlng.lng, latlng.lat, ac).then((o) => {
-            valA = o?.value ?? null;
-          }),
-        );
-      }
-      if (Number.isInteger(bIdx)) {
-        jobs.push(
-          fetchPixelVal(idB, latlng.lng, latlng.lat, ac).then((o) => {
-            valB = o?.value ?? null;
-          }),
-        );
-      }
-      await Promise.all(jobs);
-    } catch (e) {
-      if (ac.signal.aborted) return;
-    } finally {
-      if (inFlight?.ts === ts) inFlight = null;
+  const aIdx = state.activeLayerIdxA;
+  const bIdx = state.activeLayerIdxB;
+  const baseIdx = state.activeBaseLayerIdx;
+
+  const idA = layerId(aIdx);
+  const idB = layerId(bIdx);
+  const idBase = baseLayerId(baseIdx);
+
+  const uiA = layerUiName(aIdx);
+  const uiB = layerUiName(bIdx);
+  const uiBase = baseLayerUiName(baseIdx);
+
+  let valA = null;
+  let valB = null;
+  let valBase = null;
+
+  try {
+    const jobs = [];
+    if (Number.isInteger(aIdx)) {
+      jobs.push(
+        fetchPixelVal(idA, latlng.lng, latlng.lat, ac).then((o) => {
+          valA = o?.value ?? null;
+        }),
+      );
     }
-
-    const lines = [
-      `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx)
-        ? `${uiA}: ${valA == null ? "-" : String(valA)}`
-        : null,
-      Number.isInteger(bIdx)
-        ? `${uiB}: ${valB == null ? "-" : String(valB)}`
-        : null,
-    ].filter(Boolean);
-
-    probe.textContent = lines.join("\n");
-    probe.style.display = "block";
-
-    const bothFinite = Number.isFinite(valA) && Number.isFinite(valB);
-    if (bothFinite) {
-      state.lastPixelPoint = {
-        x: valA,
-        y: valB,
-        label: `${uiA}: ${valA} * ${uiB}: ${valB}`,
-      };
-      // if scatter is visible, refresh to draw marker
-      if (state.lastScatterOpts && state.scatterObj) {
-        renderScatterPoint(state.lastPixelPoint, "A", "B");
-      }
-    } else {
-      if (state.lastPointMarker && state.lastPointMarker.parentNode) {
-        state.lastPointMarker.remove();
-        state.lastPointMarker = null;
-      }
-      state.lastPixelPoint = null;
+    if (Number.isInteger(bIdx)) {
+      jobs.push(
+        fetchPixelVal(idB, latlng.lng, latlng.lat, ac).then((o) => {
+          valB = o?.value ?? null;
+        }),
+      );
     }
+    if (Number.isInteger(baseIdx)) {
+      jobs.push(
+        fetchPixelVal(idBase, latlng.lng, latlng.lat, ac).then((o) => {
+          valBase = o?.value ?? null;
+        }),
+      );
+    }
+    await Promise.all(jobs);
+  } catch (e) {
+    if (ac.signal.aborted) return;
+  } finally {
+    if (inFlight?.ts === ts) inFlight = null;
   }
+
+  const lines = [
+    `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
+    Number.isInteger(baseIdx)
+      ? `${uiBase}: ${valBase == null ? '-' : String(valBase)}`
+      : null,
+    Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
+    Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
+  ].filter(Boolean);
+
+  probe.textContent = lines.join('\n');
+  probe.style.display = 'block';
+
+  const bothFinite = Number.isFinite(valA) && Number.isFinite(valB);
+  if (bothFinite) {
+    state.lastPixelPoint = {
+      x: valA,
+      y: valB,
+      label: `${uiA}: ${valA} * ${uiB}: ${valB}`,
+    };
+    if (state.lastScatterOpts && state.scatterObj) {
+      renderScatterPoint(state.lastPixelPoint, 'A', 'B');
+    }
+  } else {
+    if (state.lastPointMarker && state.lastPointMarker.parentNode) {
+      state.lastPointMarker.remove();
+      state.lastPointMarker = null;
+    }
+    state.lastPixelPoint = null;
+  }
+}
 
   /**
    * Schedule a new pixel value query with simple rate-limiting.

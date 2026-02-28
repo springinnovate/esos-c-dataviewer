@@ -269,9 +269,7 @@ def _reproject_geojson_geoms(gj: dict, from_crs: str, to_crs) -> list[dict]:
         if gtype == "GeometryCollection":
             return {
                 "type": "GeometryCollection",
-                "geometries": [
-                    _tx_geometry(g) for g in geom.get("geometries", [])
-                ],
+                "geometries": [_tx_geometry(g) for g in geom.get("geometries", [])],
             }
         return geom
 
@@ -348,9 +346,7 @@ def _clip_and_write_tif(
         HTTPException: If no valid geometry is provided.
     """
     if not geoms_ds:
-        raise HTTPException(
-            status_code=400, detail="No valid geometry provided"
-        )
+        raise HTTPException(status_code=400, detail="No valid geometry provided")
 
     out_image, out_transform = rio_mask(
         ds,
@@ -398,16 +394,23 @@ def _load_registry() -> dict:
         raise RuntimeError(f"{RASTERS_YAML_PATH} not found")
     raw_yaml = RASTERS_YAML_PATH.read_text()
     expanded_yaml = os.path.expandvars(raw_yaml)
-    y = yaml.safe_load(expanded_yaml)
-    # geoserver expects all the raster ids to be lowercase
-    layers_dict = {k.lower(): v for k, v in y.get("layers", {}).items()}
-    logger.warning(
-        "this is a hack to use the processed layers, fix in issue #57"
-    )
-    for layer_dict in layers_dict.values():
-        layer_dict["file_path"] = layer_dict["file_path"].replace(
-            "rasters", "processed_rasters"
-        )
+    y = yaml.safe_load(expanded_yaml) or {}
+
+    layers_dict = {}
+    for section_key in ("layers", "baseLayers"):
+        for k, v in (y.get(section_key, {}) or {}).items():
+            layers_dict[k.lower()] = v
+
+    logger.warning("this is a hack to use the processed layers, fix in issue #57")
+    for layer_name, layer_dict in layers_dict.items():
+        rendering = layer_dict.get("rendering") or {}
+        categories = rendering.get("categories") or {}
+        if categories:
+            rendering["category_labels"] = {
+                int(value): (meta or {}).get("label")
+                for value, meta in categories.items()
+            }
+            layer_dict["rendering"] = rendering
 
     return layers_dict
 
@@ -437,14 +440,10 @@ def _open_raster(raster_id: str):
     """
     meta = REGISTRY.get(raster_id)
     if not meta:
-        raise HTTPException(
-            status_code=404, detail=f"raster_id not found: {raster_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"raster_id not found: {raster_id}")
     path = meta["file_path"]
     if not Path(path).exists():
-        raise HTTPException(
-            status_code=500, detail=f"raster file missing: {path}"
-        )
+        raise HTTPException(status_code=500, detail=f"raster file missing: {path}")
     ds = rasterio.open(path)
     nodata = meta.get("nodata", ds.nodata)
     return ds, nodata
@@ -732,9 +731,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 geom_ref_shape = _geom_in_ds_crs(ds)
 
                 win = _safe_window_for_geom(ds, geom_ref_shape)
-                data = ds.read(
-                    1, window=win, boundless=True, masked=False
-                ).astype("float64", copy=False)
+                data = ds.read(1, window=win, boundless=True, masked=False).astype(
+                    "float64", copy=False
+                )
                 affine = ds.window_transform(win)
 
                 mask = geometry_mask(
@@ -860,9 +859,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     x_pairs, y_pairs, bins=[x_edges_2d, y_edges_2d]
                 )
             else:
-                hist2d = np.zeros(
-                    (len(x_edges_2d) - 1, len(y_edges_2d) - 1), dtype=int
-                )
+                hist2d = np.zeros((len(x_edges_2d) - 1, len(y_edges_2d) - 1), dtype=int)
                 x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
 
             # scatter arrays (downsample if needed)
@@ -985,9 +982,7 @@ def pixel_val(req: PixelValIn):
         v = float(arr[0, 0])
 
         # nodata / non-finite -> None
-        if (nodata is not None and np.isclose(v, nodata)) or (
-            not np.isfinite(v)
-        ):
+        if (nodata is not None and np.isclose(v, nodata)) or (not np.isfinite(v)):
             val = None
         else:
             val = v
@@ -1029,13 +1024,9 @@ def download_clip(req: ClipIn):
 
         ref_ds = x_ds or y_ds
         if ref_ds is None:
-            raise HTTPException(
-                status_code=400, detail="No valid raster provided"
-            )
+            raise HTTPException(status_code=400, detail="No valid raster provided")
 
-        geom_ref = _reproject_geojson_geoms(
-            req.geometry, req.from_crs, ref_ds.crs
-        )
+        geom_ref = _reproject_geojson_geoms(req.geometry, req.from_crs, ref_ds.crs)
         ts = datetime.utcnow().strftime("%Y_%m_%d_%H_%M_%S")
         name_parts = []
         if req.raster_id_x:
@@ -1073,9 +1064,7 @@ def download_clip(req: ClipIn):
             out_paths.append(out_y)
 
         zip_path = Path(temp_dir) / zip_name
-        with zipfile.ZipFile(
-            zip_path, "w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for p in out_paths:
                 zf.write(p, arcname=p.name)
 

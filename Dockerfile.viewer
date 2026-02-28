@@ -9,8 +9,8 @@ RUN --mount=type=bind,source=.git,target=/src/.git,ro \
 FROM node:20-slim AS build
 WORKDIR /build
 
-COPY static/package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund
+COPY static/package.json static/package-lock.json ./
+RUN --mount=type=cache,id=npm-cache,target=/root/.npm npm ci --no-audit --no-fund
 
 COPY static/ ./
 RUN node -e "console.log('vite=', require('vite/package.json').version)" && [ -f vite.config.js ] || (echo 'vite.config.js missing' && exit 1)

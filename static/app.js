@@ -121,6 +121,8 @@ const state = {
   lastLayerSetting: null,
 };
 
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
 /**
  * Create a continuous 2D colormap that combines a base color ramp (X-axis)
  * with a lightening or tinting effect (Y-axis). Produces a function (x, y) → hex.
@@ -151,7 +153,6 @@ function createBivariateColormap(opts = {}) {
   const lightener = hexToRgb(lightenerColor);
 
   const lerp = (a, b, t) => a + (b - a) * t;
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
   // piecewise linear ramp: min→mid→max
   function ramp3(rgb0, rgb1, rgb2, t) {
@@ -205,6 +206,144 @@ function createBivariateColormap(opts = {}) {
     const mixed = mixTowardLightener(base, lightener, amt);
     return rgbToHex(mixed[0], mixed[1], mixed[2]);
   };
+}
+
+/**
+ * Computes the normalized stop position (0–1) of a median value within a range.
+ *
+ * @param {number|string} min - The minimum value of the range.
+ * @param {number|string} med - The median (or midpoint) value within the range.
+ * @param {number|string} max - The maximum value of the range.
+ * @returns {number} A clamped ratio between 0 and 1 representing the relative
+ * position of `med` between `min` and `max`. Returns 0.5 if inputs are invalid
+ * or if `min` and `max` are equal.
+ */
+function legendStopPos(min, med, max) {
+  const a = parseFloat(min);
+  const b = parseFloat(med);
+  const c = parseFloat(max);
+  if (![a, b, c].every(Number.isFinite)) return 0.5;
+  if (c === a) return 0.5;
+  return clamp01((b - a) / (c - a));
+}
+
+/**
+ * Determines the CSS blend mode class for the bivariate legend
+ * based on the current WMS layer A configuration.
+ *
+ * @returns {string} The blend mode class name ('blend-lighter' or 'blend-screen').
+ */
+function getBivariateLegendBlendClass() {
+  const className = String(state.wmsLayerA?.options?.className || '');
+  if (className.includes('plus-lighter')) return 'blend-lighter';
+  return 'blend-screen';
+}
+
+/**
+ * Ensures that the bivariate legend DOM structure exists.
+ * If not present, it creates and inserts it into the style control group.
+ *
+ * @returns {HTMLElement|null} The root legend element, or null if no suitable host is found.
+ */
+function ensureBivariateLegend() {
+  let root = document.getElementById('bivariateLegend');
+  if (root) return root;
+
+  const host = document.querySelector('.control-group.style');
+  if (!host) return null;
+
+  root = document.createElement('div');
+  root.id = 'bivariateLegend';
+  root.className = 'bivariate-legend';
+  root.innerHTML = `
+    <div class='bivariate-legend-title'>Blend legend</div>
+    <div class='bivariate-legend-main'>
+      <div class='bivariate-legend-y'>
+        <span>High B</span>
+        <span>Low B</span>
+      </div>
+      <div class='bivariate-legend-figure'>
+        <div class='bivariate-legend-swatch'>
+          <div class='bivariate-legend-layer-a'></div>
+          <div class='bivariate-legend-layer-b'></div>
+          <div class='bivariate-legend-med-x'></div>
+          <div class='bivariate-legend-med-y'></div>
+          <div class='bivariate-legend-empty'>Select layers</div>
+        </div>
+        <div class='bivariate-legend-x'>
+          <span>Low A</span>
+          <span>High A</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const paletteControl = host.querySelector('.palette-control');
+  if (paletteControl) {
+    paletteControl.insertAdjacentElement('afterend', root);
+  } else {
+    host.appendChild(root);
+  }
+
+  return root;
+}
+
+/**
+ * Renders or updates the bivariate legend based on current UI style inputs
+ * for layers A and B. Updates CSS custom properties, blend mode classes,
+ * and median marker positions. If inputs are invalid, marks the legend as empty.
+ */
+function renderBivariateLegend() {
+  const root = ensureBivariateLegend();
+  if (!root) return;
+
+  const a = readStyleInputsFromUI('A');
+  const b = readStyleInputsFromUI('B');
+
+  const okA =
+    Number.isFinite(parseFloat(a.min)) &&
+    Number.isFinite(parseFloat(a.med)) &&
+    Number.isFinite(parseFloat(a.max));
+
+  const okB =
+    Number.isFinite(parseFloat(b.min)) &&
+    Number.isFinite(parseFloat(b.med)) &&
+    Number.isFinite(parseFloat(b.max));
+
+  root.classList.toggle('is-empty', !(okA && okB));
+
+  if (!(okA && okB)) return;
+
+  const aStop = legendStopPos(a.min, a.med, a.max);
+  const bStop = legendStopPos(b.min, b.med, b.max);
+
+  root.style.setProperty('--a-cmin', a.cmin || '#000000');
+  root.style.setProperty('--a-cmed', a.cmed || '#888888');
+  root.style.setProperty('--a-cmax', a.cmax || '#ffffff');
+  root.style.setProperty('--a-stop', `${aStop * 100}%`);
+
+  root.style.setProperty('--b-cmin', b.cmin || '#000000');
+  root.style.setProperty('--b-cmed', b.cmed || '#888888');
+  root.style.setProperty('--b-cmax', b.cmax || '#ffffff');
+  root.style.setProperty('--b-stop', `${bStop * 100}%`);
+
+  root.classList.remove('blend-screen', 'blend-lighter');
+  root.classList.add(getBivariateLegendBlendClass());
+
+  const medX = root.querySelector('.bivariate-legend-med-x');
+  const medY = root.querySelector('.bivariate-legend-med-y');
+
+  medX.style.left = `${aStop * 100}%`;
+  medY.style.top = `${(1 - bStop) * 100}%`;
+}
+
+/**
+ * Initializes and wires up the bivariate legend by ensuring its presence
+ * in the DOM and triggering an initial render.
+ */
+function wireBivariateLegend() {
+  ensureBivariateLegend();
+  renderBivariateLegend();
 }
 
 /**
@@ -1284,16 +1423,18 @@ function readStyleInputsFromUI(layerId) {
  */
 function applyDynamicStyle(layerId) {
   const layer = state[`wmsLayer${layerId}`];
-  if (!layer) return;
+  if (layer) {
 
-  //adding a new style does not clear the old ones, so we do it manually
-  delete layer.wmsParams?.sld;
-  delete layer.wmsParams?.sld_body;
+    //adding a new style does not clear the old ones, so we do it manually
+    delete layer.wmsParams?.sld;
+    delete layer.wmsParams?.sld_body;
 
-  const styleVars = readStyleInputsFromUI(layerId);
-  const env = buildEnvString(styleVars);
+    const styleVars = readStyleInputsFromUI(layerId);
+    const env = buildEnvString(styleVars);
 
-  layer.setParams({ styles: "esosc:dynamic_style", env, _t: Date.now() });
+    layer.setParams({ styles: "esosc:dynamic_style", env, _t: Date.now() });
+  }
+  renderBivariateLegend();
 }
 
 /**
@@ -3454,6 +3595,7 @@ function createBaseLegendControl() {
   wireAutoStyleFromHistogram();
   wirePixelProbe();
   wireBivariatePalettePicker("bivariatePaletteSelect");
+  wireBivariateLegend();
   wireShapefileAOIControl();
   wireControlGroup();
   wireOverlayControls();

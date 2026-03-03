@@ -208,6 +208,16 @@ function createBivariateColormap(opts = {}) {
   };
 }
 
+/**
+ * Computes the normalized stop position (0–1) of a median value within a range.
+ *
+ * @param {number|string} min - The minimum value of the range.
+ * @param {number|string} med - The median (or midpoint) value within the range.
+ * @param {number|string} max - The maximum value of the range.
+ * @returns {number} A clamped ratio between 0 and 1 representing the relative
+ * position of `med` between `min` and `max`. Returns 0.5 if inputs are invalid
+ * or if `min` and `max` are equal.
+ */
 function legendStopPos(min, med, max) {
   const a = parseFloat(min);
   const b = parseFloat(med);
@@ -217,12 +227,24 @@ function legendStopPos(min, med, max) {
   return clamp01((b - a) / (c - a));
 }
 
+/**
+ * Determines the CSS blend mode class for the bivariate legend
+ * based on the current WMS layer A configuration.
+ *
+ * @returns {string} The blend mode class name ('blend-lighter' or 'blend-screen').
+ */
 function getBivariateLegendBlendClass() {
   const className = String(state.wmsLayerA?.options?.className || '');
   if (className.includes('plus-lighter')) return 'blend-lighter';
   return 'blend-screen';
 }
 
+/**
+ * Ensures that the bivariate legend DOM structure exists.
+ * If not present, it creates and inserts it into the style control group.
+ *
+ * @returns {HTMLElement|null} The root legend element, or null if no suitable host is found.
+ */
 function ensureBivariateLegend() {
   let root = document.getElementById('bivariateLegend');
   if (root) return root;
@@ -266,6 +288,11 @@ function ensureBivariateLegend() {
   return root;
 }
 
+/**
+ * Renders or updates the bivariate legend based on current UI style inputs
+ * for layers A and B. Updates CSS custom properties, blend mode classes,
+ * and median marker positions. If inputs are invalid, marks the legend as empty.
+ */
 function renderBivariateLegend() {
   const root = ensureBivariateLegend();
   if (!root) return;
@@ -310,6 +337,10 @@ function renderBivariateLegend() {
   medY.style.top = `${(1 - bStop) * 100}%`;
 }
 
+/**
+ * Initializes and wires up the bivariate legend by ensuring its presence
+ * in the DOM and triggering an initial render.
+ */
 function wireBivariateLegend() {
   ensureBivariateLegend();
   renderBivariateLegend();

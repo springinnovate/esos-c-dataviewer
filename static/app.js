@@ -724,12 +724,6 @@ function populateLayerSelects() {
     if (idx < 0) return;
 
     sel.value = String(idx);
-
-    sel.addEventListener("input", (e) => {
-      const idx = parseInt(e.target.value, 10);
-      renderLayerMeta(layerId, state.availableLayers[idx]);
-    });
-
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
   ["Base"].forEach((layerId) => {
@@ -738,22 +732,13 @@ function populateLayerSelects() {
 
     const def = sel.dataset.default;
     sel.addEventListener("change", (e) => onBaseLayerChange(e, layerId));
-
     const idx = /^\d+$/.test(def)
       ? parseInt(def, 10)
       : state.availableBaseLayers.findIndex(
           (l) => l.id === def || l.name === def,
         );
-
     if (idx < 0) return;
-
     sel.value = String(idx);
-
-    /*sel.addEventListener("input", (e) => {
-      const idx = parseInt(e.target.value, 10);
-      renderBaseLayerMeta(layerId, state.availableBaseLayers[idx]);
-    });*/
-
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
@@ -802,8 +787,7 @@ function onBaseLayerChange(e) {
   const baseLayer = state.availableBaseLayers[idx];
   state.baseLayer = baseLayer;
   state.baseLegendControl.setLayer(baseLayer.name);
-
-  //renderBaseLayerMeta("Base", baseLayer);
+  renderLayerMeta("Base", baseLayer);
 
   state.activeBaseLayerIdx = idx;
 
@@ -3339,22 +3323,23 @@ function wireCollapsibleTopBar() {
   window.addEventListener("resize", onResize);
 }
 
-//TODO: this renderLayerMeta isn't used but it's the placehodler for title and description
 function renderLayerMeta(layerId, lyr) {
-  const el = document.getElementById(`layerMeta${layerId}`);
-  if (!el) return;
-
-  el.innerHTML = "";
-
-  const t = document.createElement("div");
-  t.className = "layer-meta-title";
-  t.textContent = layerLabel(lyr) || "";
-
+  let el = document.getElementById(`layerMeta${layerId}`);
+  if (!el) {
+    const sel = document.getElementById(`layerSelect${layerId}`);
+    if (!sel) return;
+    el = document.createElement("div");
+    el.id = `layerMeta${layerId}`;
+    el.className = "layer-meta";
+    sel.insertAdjacentElement("afterend", el);
+  }
+  const desc = layerDesc(lyr) || "";
+  el.replaceChildren();
+  if (!desc) return;
   const d = document.createElement("div");
   d.className = "layer-meta-desc";
-  d.textContent = layerDesc(lyr) || "";
-
-  el.append(t, d);
+  d.textContent = desc;
+  el.appendChild(d);
 }
 
 /**

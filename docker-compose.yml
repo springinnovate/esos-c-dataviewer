@@ -113,6 +113,21 @@ services:
       - traefik.http.routers.viewer-local.middlewares=viewer-strip@docker
       - traefik.http.routers.viewer-local.service=viewer
 
+      # deploy (HTTPS): /viewer -> /viewer/
+      - traefik.http.routers.viewer-noslash.rule=Host(`${HOST}`) && Path(`/viewer`)
+      - traefik.http.routers.viewer-noslash.entrypoints=websecure
+      - traefik.http.routers.viewer-noslash.tls=true
+      - traefik.http.routers.viewer-noslash.tls.certresolver=le
+      - traefik.http.routers.viewer-noslash.middlewares=viewer-slash@docker
+      - traefik.http.routers.viewer-noslash.service=noop@internal
+
+      - traefik.http.routers.viewer.rule=Host(`${HOST}`) && PathPrefix(`/viewer/`)
+      - traefik.http.routers.viewer.entrypoints=websecure
+      - traefik.http.routers.viewer.tls=true
+      - traefik.http.routers.viewer.tls.certresolver=le
+      - traefik.http.routers.viewer.middlewares=viewer-strip@docker
+      - traefik.http.routers.viewer.service=viewer
+
   geoserver-init:
     build:
       context: .

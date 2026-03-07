@@ -1,6 +1,11 @@
 History
 =======
 
+Unreleased
+----------
+* Added algorithm to pick no more than 1M pixels when determining histograms
+  for purposes of speedy calculations.
+
 1.1.1 (2026-03-02)
 ------------------
 * Fixed issue with viewer not resolving with traefik on external host.

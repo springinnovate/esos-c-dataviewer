@@ -679,6 +679,34 @@ def _safe_window_for_geom(dataset, geometry):
     return padded_window
 
 
+def _shape_for_pixel_budget(win, max_pixels):
+    """Helper for determining a max window size for scatter plots.
+
+    Args:
+        win (Window): base window size
+        max_pixels (int): desired target window pixel size
+
+    returns:
+        out_h, out_w (both ints the window that would match max_pixels)
+    """
+    w = max(1, int(np.ceil(win.width)))
+    h = max(1, int(np.ceil(win.height)))
+    n = w * h
+    if n <= max_pixels:
+        return h, w
+
+    scale = np.sqrt(max_pixels / n)
+    out_w = max(1, int(np.floor(w * scale)))
+    out_h = max(1, int(np.floor(h * scale)))
+
+    if out_w * out_h > max_pixels:
+        out_w = max(1, min(out_w, max_pixels // out_h))
+        if out_w * out_h > max_pixels:
+            out_h = max(1, min(out_h, max_pixels // out_w))
+
+    return out_h, out_w
+
+
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
@@ -730,9 +758,14 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 geom_ref_shape = _geom_in_ds_crs(ds)
 
                 win = _safe_window_for_geom(ds, geom_ref_shape)
-                data = ds.read(1, window=win, boundless=True, masked=False).astype(
-                    "float64", copy=False
-                )
+                out_h, out_w = _shape_for_pixel_budget(win, max_pixels=1_000_000)
+                data = ds.read(
+                    1,
+                    window=win,
+                    out_shape=(out_h, out_w),
+                    boundless=True,
+                    masked=False,
+                ).astype("float64", copy=False)
                 affine = ds.window_transform(win)
 
                 mask = geometry_mask(

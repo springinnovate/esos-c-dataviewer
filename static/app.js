@@ -1125,7 +1125,7 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
       raster_id_x: rasterIdX ?? null,
       raster_id_y: rasterIdY ?? null,
       geometry: geojson.geometry ? geojson.geometry : geojson,
-      from_crs: "EPSG:4326", //the poly should be in lat/lng
+      from_crs: "EPSG:4326", //the poly should be in lat/lng so this is hard-coded
       histogram_bins: MAX_HISTOGRAM_BINS,
       max_points: MAX_HISTOGRAM_POINTS,
       all_touched: true,

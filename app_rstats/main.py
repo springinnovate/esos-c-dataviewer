@@ -572,10 +572,10 @@ def get_best_overview(band):
 def minmax_stats(r: RasterMinMaxIn):
     """Compute approximate 5th and 95th percentile values for a raster.
 
-    This endpoint estimates the low and high value range for a given raster by
-    sampling multiple random windows and aggregating valid pixel values.
-    The computed percentiles are used as approximate minimum and maximum values
-    for visualization or dynamic styling.
+    This endpoint either uses pre-computed low/high values or estimates the
+    value range for a given raster by sampling multiple random windows and
+    aggregating valid pixel values. The computed percentiles are used as
+    approximate minimum and maximum values for visualization or dynamic styling.
 
     Args:
         r (RasterMinMaxIn): Input model containing the raster identifier (`raster_id`)
@@ -590,8 +590,16 @@ def minmax_stats(r: RasterMinMaxIn):
         percentiles. Returns HTTP 500 with detail "Failed to compute min/max".
     """
     try:
+        raster_dict = REGISTRY[r.raster_id]
+        # use min/max if it exists
+        if all(key in raster_dict for key in ("min", "max")):
+            return RasterMinMaxOut(
+                raster_id=r.raster_id,
+                min_=raster_dict["min"],
+                max_=raster_dict["max"],
+            )
+        # fallback is to calculatemanually
         file_path = REGISTRY[r.raster_id]["file_path"]
-        logger.debug(f"stats on this file: {file_path}")
         raster = gdal.Open(file_path, gdal.GA_ReadOnly)
         band = raster.GetRasterBand(1)
         overview = get_best_overview(band)

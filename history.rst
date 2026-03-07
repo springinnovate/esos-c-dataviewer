@@ -5,6 +5,8 @@ Unreleased
 ----------
 * Added algorithm to pick no more than 1M pixels when determining histograms
   for purposes of speedy calculations.
+* Added a feature to define min/max values in the layer.yml file for faster
+  initial loading.
 
 1.1.1 (2026-03-02)
 ------------------

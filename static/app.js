@@ -119,6 +119,9 @@ const state = {
   lastHasData: null,
   selectElement: null,
   lastLayerSetting: null,
+  plotView: null,
+  plotViewScatterObj: null,
+  plotViewKind: null,
 };
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -1189,21 +1192,23 @@ function zoomToOutline(centerLng, centerLat) {
  * @param {string} layerId - Identifier of the raster layer, used for color mapping.
  * @returns {SVGElement} The constructed histogram `<svg>` element.
  */
-function buildHistogramSVG(edges, hist, layerId) {
-  const w = 480;
-  const h = 160;
-  const pad = 36;
-  const axisColor = "#666";
-  const percentileColor = "#eeeeee";
+function buildHistogramSVG(edges, hist, layerId, opts = {}) {
+  const w = opts.width ?? 480;
+  const h = opts.height ?? 160;
+  const pad = opts.pad ?? 36;
+  const axisColor = '#666';
+  const percentileColor = '#eeeeee';
   const percentileDecimals = 2;
 
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("width", String(w));
-  svg.setAttribute("height", String(h));
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
 
-  const xMin = Math.min(...edges);
-  const xMax = Math.max(...edges);
+  const dataMin = edges[0];
+  const dataMax = edges[edges.length - 1];
+  const viewMin = opts.viewMin ?? dataMin;
+  const viewMax = opts.viewMax ?? dataMax;
   const innerW = Math.max(1, w - pad * 2);
   const innerH = Math.max(1, h - pad * 2);
 
@@ -1212,141 +1217,130 @@ function buildHistogramSVG(edges, hist, layerId) {
   const plotX1 = pad + innerW;
   const plotY1 = pad + innerH;
 
-  const scaleX = (v) => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
-  const scaleH = (c) => {
-    const maxC = Math.max(1, ...hist.map((v) => (Number.isFinite(v) ? v : 0)));
-    return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
-  };
+  const scaleX = (v) =>
+    plotX0 + ((v - viewMin) / Math.max(1e-9, viewMax - viewMin)) * innerW;
+  const maxCount = Math.max(
+    1,
+    ...hist.map((value) => (Number.isFinite(value) ? value : 0)),
+  );
+  const scaleH = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCount) * innerH;
 
   state.scaleX = scaleX;
-  state.hist1dBounds = [xMin, xMax];
+  state.hist1dBounds = [viewMin, viewMax];
+  state.pctBounds1d = null;
 
-  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = "1") => {
-    const l = document.createElementNS(svgNS, "line");
-    l.setAttribute("x1", x1);
-    l.setAttribute("y1", y1);
-    l.setAttribute("x2", x2);
-    l.setAttribute("y2", y2);
-    l.setAttribute("stroke", stroke);
-    l.setAttribute("stroke-width", sw);
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = "middle") => {
-    const t = document.createElementNS(svgNS, "text");
-    t.textContent = txt;
-    t.setAttribute("x", x);
-    t.setAttribute("y", y);
-    t.setAttribute("fill", "#aaa");
-    t.setAttribute("font-size", "10");
-    t.setAttribute("text-anchor", anchor);
-    return t;
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', stroke);
+    line.setAttribute('stroke-width', sw);
+    return line;
   };
 
-  // axes
+  const mkText = (text, x, y, anchor = 'middle') => {
+    const label = document.createElementNS(svgNS, 'text');
+    label.textContent = text;
+    label.setAttribute('x', x);
+    label.setAttribute('y', y);
+    label.setAttribute('fill', '#aaa');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', anchor);
+    return label;
+  };
+
   svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
   svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, "start"));
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, "end"));
+  svg.appendChild(mkText(viewMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(viewMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
 
-  // bars
   for (let i = 0; i < hist.length; i++) {
-    const c = Number(hist[i]) || 0;
-    const x0 = scaleX(edges[i]);
-    const x1 = scaleX(edges[i + 1]);
+    const binMin = edges[i];
+    const binMax = edges[i + 1];
+    const drawMin = Math.max(binMin, viewMin);
+    const drawMax = Math.min(binMax, viewMax);
+
+    if (drawMax <= drawMin) continue;
+
+    const count = Number(hist[i]) || 0;
+    const x0 = scaleX(drawMin);
+    const x1 = scaleX(drawMax);
     const barW = Math.max(1, x1 - x0);
-    const hPix = scaleH(c);
-    const mid = (edges[i] + edges[i + 1]) / 2;
+    const hPix = scaleH(count);
+    const mid = (binMin + binMax) / 2;
     const rgbArray = styleColorArrForValue(layerId, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
 
-    const rect = document.createElementNS(svgNS, "rect");
-    rect.setAttribute("x", String(x0));
-    rect.setAttribute("y", String(plotY1 - hPix));
-    rect.setAttribute("width", String(barW));
-    rect.setAttribute("height", String(hPix));
-    rect.setAttribute("fill", rgbStr);
-    rect.setAttribute("fill-opacity", "0.85");
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(x0));
+    rect.setAttribute('y', String(plotY1 - hPix));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', rgbStr);
+    rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 
-  // percentiles (reads from state.percentiles if available)
-  const percentilesRaw = Array.isArray(state.percentiles)
-    ? state.percentiles
-    : [];
-  const parsePercent = (p) => p / 100;
+  const percentilesRaw = Array.isArray(state.percentiles) ? state.percentiles : [];
   const percentiles = [
     ...new Set(
       percentilesRaw
-        .map(parsePercent)
-        .filter((p) => p !== null && p >= 0 && p <= 1),
+        .map((value) => value / 100)
+        .filter((value) => value >= 0 && value <= 1),
     ),
   ].sort((a, b) => a - b);
 
-  const total = hist.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const getQuantile = (q) => {
-    if (total <= 0) return xMin;
-    const target = q * total;
-    let cum = 0;
-    for (let i = 0; i < hist.length; i++) {
-      const c = Number.isFinite(hist[i]) ? hist[i] : 0;
-      const next = cum + c;
-      if (target <= next) {
-        const e0 = edges[i],
-          e1 = edges[i + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = next;
-    }
-    return xMax;
-  };
-
-  const attachPctHover = (guideEl, lblEl, text) => {
-    [guideEl, lblEl].forEach((el) => {
-      el.style.cursor = "pointer";
-      el.addEventListener("mouseenter", (e) => {
-        guideEl.setAttribute("stroke-width", "2");
-        guideEl.setAttribute("opacity", "1");
-        if (typeof showPctTooltip === "function")
-          showPctTooltip(text, e.clientX, e.clientY);
+  const attachPctHover = (guideEl, labelEl, text) => {
+    [guideEl, labelEl].forEach((el) => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('mouseenter', (e) => {
+        guideEl.setAttribute('stroke-width', '2');
+        guideEl.setAttribute('opacity', '1');
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener("mousemove", (e) => {
-        if (typeof showPctTooltip === "function")
-          showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mousemove', (e) => {
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener("mouseleave", () => {
-        guideEl.setAttribute("stroke-width", "1");
-        guideEl.setAttribute("opacity", "0.9");
-        if (typeof hidePctTooltip === "function") hidePctTooltip();
+      el.addEventListener('mouseleave', () => {
+        guideEl.setAttribute('stroke-width', '1');
+        guideEl.setAttribute('opacity', '0.9');
+        hidePctTooltip?.();
       });
     });
   };
 
-  for (const p of percentiles) {
-    const xv = getQuantile(p);
-    const x = scaleX(xv);
-    const gx = mkLine(x, plotY0, x, plotY1, percentileColor);
-    gx.setAttribute("stroke-dasharray", "4,3");
-    gx.setAttribute("opacity", "0.5");
-    svg.appendChild(gx);
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(edges, hist, percentile);
+    if (value < viewMin || value > viewMax) continue;
 
-    const label = `${Math.round(p * 100)}% (${xv.toFixed(percentileDecimals)})`;
-    const lx = mkText(label, x, plotY0 - 6, "middle");
-    lx.setAttribute("fill", percentileColor);
-    svg.appendChild(lx);
+    const x = scaleX(value);
+    const guide = mkLine(x, plotY0, x, plotY1, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`;
+    const text = mkText(label, x, plotY0 - 6, 'middle');
+    text.setAttribute('fill', percentileColor);
+    svg.appendChild(text);
+
     attachPctHover(
-      gx,
-      lx,
-      `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`,
+      guide,
+      text,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
     );
   }
 
   if (percentiles.length) {
-    const minP = Math.min(...percentiles);
-    const maxP = Math.max(...percentiles);
-    const xmin = getQuantile(minP);
-    const xmax = getQuantile(maxP);
-    state.pctBounds1d = { xmin, xmax };
+    const minPercentile = Math.min(...percentiles);
+    const maxPercentile = Math.max(...percentiles);
+    state.pctBounds1d = {
+      xmin: getHistogramQuantile(edges, hist, minPercentile),
+      xmax: getHistogramQuantile(edges, hist, maxPercentile),
+    };
   }
 
   return svg;
@@ -1382,6 +1376,310 @@ function showHistTooltip(text, clientX, clientY, anchorEl) {
 function hideHistTooltip() {
   const tip = document.querySelector(".hist-tooltip");
   if (tip) tip.style.display = "none";
+}
+
+
+/**
+ * Estimate a quantile value from a histogram defined by bin edges and counts.
+ * Performs a linear interpolation within the bin containing the target quantile.
+ *
+ * @param {number[]} edges - Monotonically increasing array of bin edges of length N+1.
+ * @param {number[]} counts - Histogram counts per bin of length N corresponding to edges.
+ * @param {number} quantile - Desired quantile in [0, 1].
+ * @returns {number} Estimated value at the requested quantile within the histogram range.
+ */
+function getHistogramQuantile(edges, counts, quantile) {
+  const min = edges[0];
+  const max = edges[edges.length - 1];
+  const total = counts.reduce(
+    (sum, count) => sum + (Number.isFinite(count) ? count : 0),
+    0,
+  );
+
+  if (total <= 0) return min;
+
+  const target = clamp01(quantile) * total;
+  let cumulative = 0;
+
+  for (let i = 0; i < counts.length; i++) {
+    const count = Number.isFinite(counts[i]) ? counts[i] : 0;
+    const next = cumulative + count;
+
+    if (target <= next) {
+      const binMin = edges[i];
+      const binMax = edges[i + 1];
+      const fraction = count > 0 ? (target - cumulative) / count : 0;
+      return binMin + fraction * (binMax - binMin);
+    }
+
+    cumulative = next;
+  }
+
+  return max;
+}
+
+/**
+ * Compute marginal counts along each axis from a 2D histogram.
+ *
+ * @param {number[][]} hist2d - 2D histogram array indexed as [xBin][yBin].
+ * @returns {{xCounts: number[], yCounts: number[]}} Object containing summed counts per x bin and per y bin.
+ */
+function getScatterMarginalCounts(hist2d) {
+  const xCounts = new Array(hist2d.length).fill(0);
+  const yCounts = new Array(hist2d[0].length).fill(0);
+
+  for (let i = 0; i < hist2d.length; i++) {
+    for (let j = 0; j < hist2d[i].length; j++) {
+      const value = Number(hist2d[i][j]) || 0;
+      xCounts[i] += value;
+      yCounts[j] += value;
+    }
+  }
+
+  return { xCounts, yCounts };
+}
+
+/**
+ * Initialize or update the plot view range for the current scatter object and plot type.
+ * If the view already corresponds to the same scatter object and plot kind, no change is made.
+ *
+ * @param {Object} scatterObj - Scatter data object containing x_edges and/or y_edges arrays.
+ * @param {string} plotKind - Identifier for the current plot mode/type.
+ */
+function ensurePlotView(scatterObj, plotKind) {
+  if (
+    state.plotView &&
+    state.plotViewScatterObj === scatterObj &&
+    state.plotViewKind === plotKind
+  ) {
+    return;
+  }
+
+  state.plotView = {
+    xMin: Array.isArray(scatterObj?.x_edges) ? scatterObj.x_edges[0] : null,
+    xMax: Array.isArray(scatterObj?.x_edges)
+      ? scatterObj.x_edges[scatterObj.x_edges.length - 1]
+      : null,
+    yMin: Array.isArray(scatterObj?.y_edges) ? scatterObj.y_edges[0] : null,
+    yMax: Array.isArray(scatterObj?.y_edges)
+      ? scatterObj.y_edges[scatterObj.y_edges.length - 1]
+      : null,
+  };
+  state.plotViewScatterObj = scatterObj;
+  state.plotViewKind = plotKind;
+}
+
+/**
+ * Update the visible range for a plot axis while clamping it to the full data extent.
+ * The resulting range is stored in state.plotView.
+ *
+ * @param {'x'|'y'} axis - Axis identifier.
+ * @param {number} nextMin - Proposed minimum value for the axis view.
+ * @param {number} nextMax - Proposed maximum value for the axis view.
+ * @param {number} fullMin - Minimum allowed value for the axis.
+ * @param {number} fullMax - Maximum allowed value for the axis.
+ */
+function setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax) {
+  const rangeMin = Math.max(
+    fullMin,
+    Math.min(fullMax, Math.min(nextMin, nextMax)),
+  );
+  const rangeMax = Math.max(
+    fullMin,
+    Math.min(fullMax, Math.max(nextMin, nextMax)),
+  );
+
+  if (!(rangeMin < rangeMax)) return;
+
+  if (!state.plotView) state.plotView = {};
+
+  if (axis === 'x') {
+    state.plotView.xMin = rangeMin;
+    state.plotView.xMax = rangeMax;
+  } else {
+    state.plotView.yMin = rangeMin;
+    state.plotView.yMax = rangeMax;
+  }
+}
+
+/**
+ * Re-render the scatter overlay using the last render options stored in state.
+ * If no previous scatter options or scatter object exist, no action is taken.
+ *
+ * @returns {Promise<void>}
+ */
+async function rerenderScatterOverlayFromState() {
+  if (!state.lastScatterOpts || !state.scatterObj) return;
+
+  await renderScatterOverlay({
+    ...state.lastScatterOpts,
+    scatterObj: state.scatterObj,
+  });
+}
+
+/**
+ * Render UI controls that allow adjusting the visible axis ranges of the plot.
+ * Supports manual numeric entry and preset percentile-based range buttons.
+ * The controls update state.plotView and trigger scatter overlay re-rendering.
+ *
+ * @param {Object} params
+ * @param {Object} params.scatterObj - Scatter data object containing histogram data and edges.
+ * @param {boolean} params.has2D - Whether the plot uses a 2D histogram.
+ * @param {boolean} params.has1DX - Whether the plot uses a 1D histogram along X.
+ * @param {boolean} params.has1DY - Whether the plot uses a 1D histogram along Y.
+ * @param {string} [params.rasterX] - Optional label for the X axis.
+ * @param {string} [params.rasterY] - Optional label for the Y axis.
+ */
+function renderPlotRangeControls({
+  scatterObj,
+  has2D,
+  has1DX,
+  has1DY,
+  rasterX,
+  rasterY,
+}) {
+  const container = document.getElementById('plotRangeControls');
+  if (!container) return;
+
+  container.replaceChildren();
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '4px';
+
+  if (!scatterObj || !state.plotView) return;
+
+  const axisConfigs = [];
+
+  if (has2D) {
+    const { xCounts, yCounts } = getScatterMarginalCounts(scatterObj.hist2d);
+
+    axisConfigs.push(
+      {
+        axis: 'x',
+        label: rasterX || 'X',
+        edges: scatterObj.x_edges,
+        counts: xCounts,
+        viewMin: state.plotView.xMin,
+        viewMax: state.plotView.xMax,
+      },
+      {
+        axis: 'y',
+        label: rasterY || 'Y',
+        edges: scatterObj.y_edges,
+        counts: yCounts,
+        viewMin: state.plotView.yMin,
+        viewMax: state.plotView.yMax,
+      },
+    );
+  } else if (has1DX) {
+    axisConfigs.push({
+      axis: 'x',
+      label: rasterX || 'X',
+      edges: scatterObj.x_edges,
+      counts: scatterObj.hist1d_x,
+      viewMin: state.plotView.xMin,
+      viewMax: state.plotView.xMax,
+    });
+  } else if (has1DY) {
+    axisConfigs.push({
+      axis: 'y',
+      label: rasterY || 'Y',
+      edges: scatterObj.y_edges,
+      counts: scatterObj.hist1d_y,
+      viewMin: state.plotView.yMin,
+      viewMax: state.plotView.yMax,
+    });
+  }
+
+  const hint = document.createElement('div');
+  hint.textContent = 'Range presets only change the current view.';
+  hint.style.fontSize = '11px';
+  hint.style.color = '#94a3b8';
+  hint.style.marginBottom = '6px';
+  container.appendChild(hint);
+
+  axisConfigs.forEach((axisConfig) => {
+    const { axis, label, edges, counts, viewMin, viewMax } = axisConfig;
+    const fullMin = edges[0];
+    const fullMax = edges[edges.length - 1];
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+    row.style.marginBottom = '8px';
+
+    const axisLabel = document.createElement('span');
+    axisLabel.textContent = label;
+    axisLabel.className = 'small-mono';
+    axisLabel.style.minWidth = '110px';
+    row.appendChild(axisLabel);
+
+    const minInput = document.createElement('input');
+    minInput.type = 'number';
+    minInput.step = 'any';
+    minInput.value = String(viewMin);
+    minInput.style.width = '96px';
+    row.appendChild(minInput);
+
+    const separator = document.createElement('span');
+    separator.textContent = 'to';
+    row.appendChild(separator);
+
+    const maxInput = document.createElement('input');
+    maxInput.type = 'number';
+    maxInput.step = 'any';
+    maxInput.value = String(viewMax);
+    maxInput.style.width = '96px';
+    row.appendChild(maxInput);
+
+    const commitManualRange = async () => {
+      const nextMin = parseFloat(minInput.value);
+      const nextMax = parseFloat(maxInput.value);
+
+      if (!Number.isFinite(nextMin) || !Number.isFinite(nextMax)) return;
+
+      setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax);
+      await rerenderScatterOverlayFromState();
+    };
+
+    [minInput, maxInput].forEach((input) => {
+      input.addEventListener('change', commitManualRange);
+      input.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        await commitManualRange();
+      });
+    });
+
+    const makePresetButton = (labelText, lowQuantile, highQuantile) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = labelText;
+      button.addEventListener('click', async () => {
+        const nextMin = getHistogramQuantile(edges, counts, lowQuantile);
+        const nextMax = getHistogramQuantile(edges, counts, highQuantile);
+        setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax);
+        await rerenderScatterOverlayFromState();
+      });
+      return button;
+    };
+
+    row.appendChild(makePresetButton('1–99', 0.01, 0.99));
+    row.appendChild(makePresetButton('5–95', 0.05, 0.95));
+
+    const fullButton = document.createElement('button');
+    fullButton.type = 'button';
+    fullButton.textContent = 'Full';
+    fullButton.addEventListener('click', async () => {
+      setPlotAxisView(axis, fullMin, fullMax, fullMin, fullMax);
+      await rerenderScatterOverlayFromState();
+    });
+    row.appendChild(fullButton);
+
+    container.appendChild(row);
+  });
 }
 
 /**
@@ -1504,38 +1802,108 @@ function enableAltWheelSlider() {
  */
 async function renderScatterOverlay(opts) {
   state.lastScatterOpts = opts;
-  const visA = document.getElementById("layerVisibleA").checked;
-  const visB = document.getElementById("layerVisibleB").checked;
 
-  let {
-    rasterX,
-    rasterY,
-    centerLng,
-    centerLat,
-    boxKm,
-    scatterObj, // normal behavior to be null if not generated yet
-  } = opts;
+  const visA = document.getElementById('layerVisibleA').checked;
+  const visB = document.getElementById('layerVisibleB').checked;
 
-  const layerSetting = `${visA ? "A1" : "A0"}_${visB ? "B1" : "B0"}`;
+  const { rasterX, rasterY, centerLng, centerLat, boxKm } = opts;
+  let { scatterObj } = opts;
 
-  if (state.lastScatterOpts != layerSetting) {
-    const lyrAName = state.availableLayers?.[state.activeLayerIdxA]?.name;
-    const lyrBName = state.availableLayers?.[state.activeLayerIdxB]?.name;
-    scatterObj = await fetchScatterStats(
-      lyrAName,
-      lyrBName,
-      state.sampleBox.toGeoJSON(),
-    );
-  }
-
-  const overlay = document.getElementById("statsOverlay");
-  const body = document.getElementById("overlayBody");
-
+  const overlay = document.getElementById('statsOverlay');
+  const body = document.getElementById('overlayBody');
   const hasData = !!scatterObj;
 
-  const s = scatterObj || {};
+  const fmt = (value, digits = 3) =>
+    value == null || Number.isNaN(value) ? '-' : Number(value).toFixed(digits);
 
-  // check to see if we've rendered this before
+  const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`;
+  const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`;
+  const plotTitleHtml =
+    visA && visB
+      ? `${rasterX} <span class='muted'>vs</span> ${rasterY}`
+      : visA
+        ? `${rasterX}`
+        : `${rasterY}`;
+
+  const needsBodyRefresh = !body.innerHTML || state.lastHasData !== hasData;
+
+  if (needsBodyRefresh) {
+    body.innerHTML = `
+      <div class='overlay-header'>
+        <div>
+          <div class='overlay-title'>${plotTitleHtml}</div>
+          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
+        </div>
+      </div>
+
+      <div class='overlay-content'>
+        <div>
+          <div id='scatterPlot' class='plot-holder'>
+            ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+          </div>
+        </div>
+        <div class='layer-group'>
+          <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
+          <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
+          <input id='percentiles' type='text' value="${state.percentiles}"/>
+        </div>
+        <div class='layer-group'>
+          <label class='tool-label'>Plot Range</label>
+          <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
+          <div id='plotRangeControls'></div>
+        </div>
+      </div>
+    `;
+
+    const centerZoomBtn = body.querySelector('.center-zoom-btn');
+    centerZoomBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomToOutline(centerLng, centerLat);
+    });
+
+    wirePercentiles();
+  }
+
+  state.lastHasData = hasData;
+
+  const plotEl = document.getElementById('scatterPlot');
+  const plotRangeControls = document.getElementById('plotRangeControls');
+
+  overlay.classList.remove('hidden');
+
+  if (!visA && !visB) {
+    plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
+    plotRangeControls?.replaceChildren();
+    return;
+  }
+
+  if (!scatterObj) {
+    plotRangeControls?.replaceChildren();
+    return;
+  }
+
+  const has2D =
+    visA &&
+    visB &&
+    Array.isArray(scatterObj.hist2d) &&
+    Array.isArray(scatterObj.x_edges) &&
+    Array.isArray(scatterObj.y_edges);
+
+  const has1DX =
+    visA &&
+    Array.isArray(scatterObj.hist1d_x) &&
+    Array.isArray(scatterObj.x_edges);
+
+  const has1DY =
+    visB &&
+    Array.isArray(scatterObj.hist1d_y) &&
+    Array.isArray(scatterObj.y_edges);
+
+  const plotKind = has2D ? '2d' : has1DX ? '1d-x' : has1DY ? '1d-y' : 'none';
+
+  ensurePlotView(scatterObj, plotKind);
+
   const newRenderKey = JSON.stringify({
     rasterX,
     rasterY,
@@ -1547,79 +1915,20 @@ async function renderScatterOverlay(opts) {
     visB,
     palette: state.selectElement.value,
     percentiles: state.percentiles,
+    plotView: state.plotView,
   });
 
-  if (state.lastRenderKey === newRenderKey) {
+  if (!needsBodyRefresh && state.lastRenderKey === newRenderKey) {
     return;
   }
+
   state.lastRenderKey = newRenderKey;
-  const fmt = (v, digits = 3) =>
-    v == null || Number.isNaN(v) ? "-" : Number(v).toFixed(digits);
+  state.scatterObj = scatterObj;
 
-  if (!body.innerHTML || state.lastHasData !== hasData) {
-    const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`;
-    const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`;
-
-    body.innerHTML = `
-      <div class='overlay-header'>
-        <div>
-          <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml} </div>
-        </div>
-      </div>
-
-      <div class='overlay-content'>
-        <div>
-          <div id='scatterPlot' class='plot-holder'>
-            ${hasData ? "" : '<div class="spinner" aria-label="loading"></div>'}
-          </div>
-        </div>
-        <div class='layer-group'>
-          <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-          <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
-          <input id='percentiles' type='text' value="${state.percentiles}"/>
-        </div>
-      </div>
-     `;
-    // wire events
-    const centerZoomBtn = body.querySelector(".center-zoom-btn");
-    centerZoomBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      zoomToOutline(centerLng, centerLat);
-    });
-  }
-  state.lastHasData = hasData;
-  const plotEl = document.getElementById("scatterPlot");
-  overlay.classList.remove("hidden");
-  if (!visA && !visB) {
-    plotEl.innerHTML = `<div class="no-layers-msg">
-        <span> No layers selected</span>
-      </div>`;
-    return;
-  }
-  if (!scatterObj) {
-    return;
-  }
-  plotEl.innerHTML = "";
-  const has2D =
-    !!scatterObj &&
-    visA &&
-    visB &&
-    Array.isArray(scatterObj.hist2d) &&
-    Array.isArray(scatterObj.x_edges) &&
-    Array.isArray(scatterObj.y_edges);
-
-  const has1DX =
-    visA &&
-    Array.isArray(scatterObj.hist1d_x) &&
-    Array.isArray(scatterObj.x_edges);
-  const has1DY =
-    visB &&
-    Array.isArray(scatterObj.hist1d_y) &&
-    Array.isArray(scatterObj.y_edges);
+  plotEl.innerHTML = '';
 
   let svg = null;
+
   if (has2D) {
     svg = buildScatterSVG(
       scatterObj.x_edges,
@@ -1630,29 +1939,49 @@ async function renderScatterOverlay(opts) {
         height: 320,
         pad: 40,
         percentiles: state.percentiles,
-        layerIdX: "A",
-        layerIdY: "B",
-        blend: "plus-lighter",
+        layerIdX: 'A',
+        layerIdY: 'B',
+        blend: 'plus-lighter',
         point: state.lastPixelPoint,
         axisLabelX: rasterX,
         axisLabelY: rasterY,
+        viewXMin: state.plotView.xMin,
+        viewXMax: state.plotView.xMax,
+        viewYMin: state.plotView.yMin,
+        viewYMax: state.plotView.yMax,
       },
     );
-  } else {
-    if (has1DX) {
-      svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, "A");
-    } else if (has1DY) {
-      svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, "B");
-    }
+  } else if (has1DX) {
+    svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A', {
+      viewMin: state.plotView.xMin,
+      viewMax: state.plotView.xMax,
+    });
+  } else if (has1DY) {
+    svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B', {
+      viewMin: state.plotView.yMin,
+      viewMax: state.plotView.yMax,
+    });
   }
+
   if (svg) {
     plotEl.appendChild(svg);
     state.scatterSvg = svg;
-    wirePercentiles();
-    state.scatterObj = scatterObj;
+
+    renderPlotRangeControls({
+      scatterObj,
+      has2D,
+      has1DX,
+      has1DY,
+      rasterX,
+      rasterY,
+    });
+
+    if (has2D && state.lastPixelPoint) {
+      renderScatterPoint(state.lastPixelPoint, 'A', 'B');
+    }
   } else {
     state.scatterSvg = null;
-    state.scatterObj = null;
+    plotRangeControls?.replaceChildren();
   }
 }
 
@@ -1785,19 +2114,37 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
   }
 }
 
+/**
+ * Reset and hide the scatter overlay UI and clear all scatter-related state.
+ * This removes the current SVG plot, overlay content, and cached render state
+ * so the next scatter render starts from a clean slate.
+ *
+ * @returns {Promise<void>}
+ */
 async function clearScatterOverlay() {
-  const overlay = document.getElementById("statsOverlay");
-  const body = document.getElementById("overlayBody");
-  const plot = document.getElementById("scatterPlot");
-  if (!plot) return; // plot hasn't been initalized yet
+  const overlay = document.getElementById('statsOverlay');
+  const body = document.getElementById('overlayBody');
+  const plot = document.getElementById('scatterPlot');
+  if (!plot) return;
 
-  overlay.classList.add("hidden");
-  body.innerHTML = "";
-  plot.innerHTML = "";
+  overlay.classList.add('hidden');
+  body.innerHTML = '';
+  plot.innerHTML = '';
+
   delete state.scatterObj;
   delete state.lastScatterOpts;
   delete state.pointGroup;
   delete state.lastRenderKey;
+
+  state.scatterSvg = null;
+  state.pointCircle = null;
+  state.pointBackground = null;
+  state.plotView = null;
+  state.plotViewScatterObj = null;
+  state.plotViewKind = null;
+  state.pctBounds = null;
+  state.pctBounds1d = null;
+  state.lastHasData = null;
 }
 
 ["layerVisibleA", "layerVisibleB"].forEach((id) => {
@@ -1834,95 +2181,117 @@ function densityWeight(binCount, maxCount2d) {
  * @param {{width?:number,height?:number,pad?:number}} opts
  * @returns {SVGSVGElement}
  */
-// color top/right histograms in scatter using layer styles
 function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const w = opts.width ?? 400;
   const h = opts.height ?? 300;
   const pad = opts.pad ?? 40;
   const mSize = opts.marginalSize ?? 48;
-  const percentileColor = opts.percentileColor ?? "#eeeeee";
+  const percentileColor = opts.percentileColor ?? '#eeeeee';
   const percentileDecimals = Number.isFinite(opts.percentileDecimals)
     ? opts.percentileDecimals
     : 2;
-  const percentilesRaw = Array.isArray(opts.percentiles)
-    ? opts.percentiles
-    : [];
-  const blendMode = opts.blend || "plus-lighter";
-  const layerIdX = opts.layerIdX || "A";
-  const layerIdY = opts.layerIdY || "B";
-  const point = opts.point || null;
-  const axisLabelX = opts.axisLabelX || "";
-  const axisLabelY = opts.axisLabelY || "";
+  const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
+  const blendMode = opts.blend || 'plus-lighter';
+  const layerIdX = opts.layerIdX || 'A';
+  const layerIdY = opts.layerIdY || 'B';
+  const axisLabelX = opts.axisLabelX || '';
+  const axisLabelY = opts.axisLabelY || '';
 
-  const parsePercent = (p) => p / 100;
   const percentiles = [
     ...new Set(
       percentilesRaw
-        .map(parsePercent)
-        .filter((p) => p !== null && p >= 0 && p <= 1),
+        .map((value) => value / 100)
+        .filter((value) => value >= 0 && value <= 1),
     ),
   ].sort((a, b) => a - b);
 
   const innerW = Math.max(1, w - pad * 2 - mSize);
   const innerH = Math.max(1, h - pad * 2 - mSize);
 
-  const xMin = Math.min(...xEdges),
-    xMax = Math.max(...xEdges);
-  const yMin = Math.min(...yEdges),
-    yMax = Math.max(...yEdges);
-  state.scatterBounds = [xMin, yMin, xMax, yMax];
-  const nx = hist2d.length,
-    ny = hist2d[0].length;
+  const fullXMin = xEdges[0];
+  const fullXMax = xEdges[xEdges.length - 1];
+  const fullYMin = yEdges[0];
+  const fullYMax = yEdges[yEdges.length - 1];
+  const viewXMin = opts.viewXMin ?? fullXMin;
+  const viewXMax = opts.viewXMax ?? fullXMax;
+  const viewYMin = opts.viewYMin ?? fullYMin;
+  const viewYMax = opts.viewYMax ?? fullYMax;
 
-  const xCounts = new Array(nx).fill(0);
-  const yCounts = new Array(ny).fill(0);
+  state.scatterBounds = [viewXMin, viewYMin, viewXMax, viewYMax];
+  state.pctBounds = null;
+
+  const nx = hist2d.length;
+  const ny = hist2d[0].length;
+
+  const fullXCounts = new Array(nx).fill(0);
+  const fullYCounts = new Array(ny).fill(0);
+  const visibleXCounts = new Array(nx).fill(0);
+  const visibleYCounts = new Array(ny).fill(0);
+
   let maxCount2d = 1;
+
   for (let i = 0; i < nx; i++) {
-    let rowSum = 0;
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const xVisible = binXMax > viewXMin && binXMin < viewXMax;
+
     for (let j = 0; j < ny; j++) {
-      const v = Number(hist2d[i][j]) || 0;
-      rowSum += v;
-      yCounts[j] += v;
-      if (v > maxCount2d) maxCount2d = v;
+      const binYMin = yEdges[j];
+      const binYMax = yEdges[j + 1];
+      const yVisible = binYMax > viewYMin && binYMin < viewYMax;
+      const value = Number(hist2d[i][j]) || 0;
+
+      fullXCounts[i] += value;
+      fullYCounts[j] += value;
+
+      if (!(xVisible && yVisible)) continue;
+
+      visibleXCounts[i] += value;
+      visibleYCounts[j] += value;
+      if (value > maxCount2d) maxCount2d = value;
     }
-    xCounts[i] = rowSum;
   }
-  const maxCountTop = Math.max(1, ...xCounts);
-  const maxCountRight = Math.max(1, ...yCounts);
 
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("width", String(w));
-  svg.setAttribute("height", String(h));
+  const maxCountTop = Math.max(1, ...visibleXCounts);
+  const maxCountRight = Math.max(1, ...visibleYCounts);
 
-  const axisColor = "#666";
-  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = "1") => {
-    const l = document.createElementNS(svgNS, "line");
-    l.setAttribute("x1", x1);
-    l.setAttribute("y1", y1);
-    l.setAttribute("x2", x2);
-    l.setAttribute("y2", y2);
-    l.setAttribute("stroke", stroke);
-    l.setAttribute("stroke-width", sw);
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = "middle") => {
-    const t = document.createElementNS(svgNS, "text");
-    t.textContent = txt;
-    t.setAttribute("x", x);
-    t.setAttribute("y", y);
-    t.setAttribute("fill", "#aaa");
-    t.setAttribute("font-size", "10");
-    t.setAttribute("text-anchor", anchor);
-    return t;
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+
+  const axisColor = '#666';
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', stroke);
+    line.setAttribute('stroke-width', sw);
+    return line;
   };
 
-  const plotX0 = pad,
-    plotY0 = pad + mSize;
-  const plotX1 = pad + innerW,
-    plotY1 = pad + mSize + innerH;
-  const scaleX = (v) => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
-  const scaleY = (v) => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
+  const mkText = (text, x, y, anchor = 'middle') => {
+    const label = document.createElementNS(svgNS, 'text');
+    label.textContent = text;
+    label.setAttribute('x', x);
+    label.setAttribute('y', y);
+    label.setAttribute('fill', '#aaa');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', anchor);
+    return label;
+  };
+
+  const plotX0 = pad;
+  const plotY0 = pad + mSize;
+  const plotX1 = pad + innerW;
+  const plotY1 = pad + mSize + innerH;
+
+  const scaleX = (v) =>
+    plotX0 + ((v - viewXMin) / Math.max(1e-9, viewXMax - viewXMin)) * innerW;
+  const scaleY = (v) =>
+    plotY1 - ((v - viewYMin) / Math.max(1e-9, viewYMax - viewYMin)) * innerH;
 
   state.scaleX = scaleX;
   state.scaleY = scaleY;
@@ -1930,243 +2299,248 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const lerp = (a, b, t) => a + (b - a) * t;
 
   for (let i = 0; i < nx; i++) {
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const drawXMin = Math.max(binXMin, viewXMin);
+    const drawXMax = Math.min(binXMax, viewXMax);
+
+    if (drawXMax <= drawXMin) continue;
+
     for (let j = 0; j < ny; j++) {
+      const binYMin = yEdges[j];
+      const binYMax = yEdges[j + 1];
+      const drawYMin = Math.max(binYMin, viewYMin);
+      const drawYMax = Math.min(binYMax, viewYMax);
+
+      if (drawYMax <= drawYMin) continue;
+
       const binCount = Number(hist2d[i][j]) || 0;
       const t = densityWeight(binCount, maxCount2d);
       if (t <= 0) continue;
 
-      const x0 = scaleX(xEdges[i]),
-        x1 = scaleX(xEdges[i + 1]);
-      const y0 = scaleY(yEdges[j]),
-        y1 = scaleY(yEdges[j + 1]);
+      const x0 = scaleX(drawXMin);
+      const x1 = scaleX(drawXMax);
+      const y0 = scaleY(drawYMin);
+      const y1 = scaleY(drawYMax);
 
-      const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
-      const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
+      const xMid = (binXMin + binXMax) / 2;
+      const yMid = (binYMin + binYMax) / 2;
 
       const colA = styleColorArrForValue(layerIdX, xMid);
       const colB = styleColorArrForValue(layerIdY, yMid);
       const blended =
-        blendMode === "screen"
+        blendMode === 'screen'
           ? blendScreenRGB(colA, colB)
           : blendPlusLighterRGB(colA, colB);
 
-      const rect = document.createElementNS(svgNS, "rect");
-      const shrink = -0.05 + 0.5 * (1 - t); // fraction of each bin to inset by default make it a little bigger
+      const rect = document.createElementNS(svgNS, 'rect');
+      const shrink = -0.05 + 0.5 * (1 - t);
       const dx = x1 - x0;
       const dy = y0 - y1;
       const insetX = dx * shrink * 0.5;
       const insetY = dy * shrink * 0.5;
 
-      rect.setAttribute("x", String(x0 + insetX));
-      rect.setAttribute("y", String(y1 + insetY));
-      rect.setAttribute("width", String(dx * (1 - shrink)));
-      rect.setAttribute("height", String(dy * (1 - shrink)));
-      let [h, s, l] = rgbToHsl(...blended);
-      const sMin = 0.08;
-      const sOut = lerp(sMin, s, t);
-      const lAnchor = 0.28;
-      const lOut = lerp(lAnchor, l, 0.25 + 0.75 * t);
-      const [r2, g2, b2] = hslToRgb(h, sOut, lOut);
-      rect.setAttribute("fill", `rgb(${r2 | 0},${g2 | 0},${b2 | 0})`);
-      rect.setAttribute("stroke", "rgba(0,0,0,0.7)");
-      rect.setAttribute("stroke-opacity", (0.15 * Math.pow(t, 0.7)).toFixed(3));
-      rect.setAttribute("vector-effect", "non-scaling-stroke");
-      rect.setAttribute("stroke-width", "0.3");
+      rect.setAttribute('x', String(x0 + insetX));
+      rect.setAttribute('y', String(y1 + insetY));
+      rect.setAttribute('width', String(dx * (1 - shrink)));
+      rect.setAttribute('height', String(dy * (1 - shrink)));
+
+      let [hue, sat, light] = rgbToHsl(...blended);
+      const satMin = 0.08;
+      const satOut = lerp(satMin, sat, t);
+      const lightAnchor = 0.28;
+      const lightOut = lerp(lightAnchor, light, 0.25 + 0.75 * t);
+      const [r2, g2, b2] = hslToRgb(hue, satOut, lightOut);
+
+      rect.setAttribute('fill', `rgb(${r2 | 0},${g2 | 0},${b2 | 0})`);
+      rect.setAttribute('stroke', 'rgba(0,0,0,0.7)');
+      rect.setAttribute('stroke-opacity', (0.15 * Math.pow(t, 0.7)).toFixed(3));
+      rect.setAttribute('vector-effect', 'non-scaling-stroke');
+      rect.setAttribute('stroke-width', '0.3');
 
       svg.appendChild(rect);
     }
   }
 
-  // axes + labels
   svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
   svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, "start"));
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, "end"));
-  svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, "end"));
-  svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, "end"));
+  svg.appendChild(mkText(viewXMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(viewXMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+  svg.appendChild(mkText(viewYMin.toFixed(2), plotX0 - 6, plotY1, 'end'));
+  svg.appendChild(mkText(viewYMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'));
 
   if (axisLabelX) {
     const xMid = (plotX0 + plotX1) / 2;
-    const xTitle = document.createElementNS(svgNS, "text");
+    const xTitle = document.createElementNS(svgNS, 'text');
     xTitle.textContent = axisLabelX;
-    xTitle.setAttribute("x", String(xMid));
-    xTitle.setAttribute("y", String(plotY1 + 28));
-    xTitle.setAttribute("fill", "#bbb");
-    xTitle.setAttribute("font-size", "11");
-    xTitle.setAttribute("text-anchor", "middle");
+    xTitle.setAttribute('x', String(xMid));
+    xTitle.setAttribute('y', String(plotY1 + 28));
+    xTitle.setAttribute('fill', '#bbb');
+    xTitle.setAttribute('font-size', '11');
+    xTitle.setAttribute('text-anchor', 'middle');
     svg.appendChild(xTitle);
   }
+
   if (axisLabelY) {
     const yMid = (plotY0 + plotY1) / 2;
-    const yTitle = document.createElementNS(svgNS, "text");
+    const yTitle = document.createElementNS(svgNS, 'text');
     yTitle.textContent = axisLabelY;
     const tx = plotX0 - 34;
     const ty = yMid;
-    yTitle.setAttribute("x", String(tx));
-    yTitle.setAttribute("y", String(ty));
-    yTitle.setAttribute("fill", "#bbb");
-    yTitle.setAttribute("font-size", "11");
-    yTitle.setAttribute("text-anchor", "middle");
-    yTitle.setAttribute("transform", `rotate(-90 ${tx} ${ty})`);
+    yTitle.setAttribute('x', String(tx));
+    yTitle.setAttribute('y', String(ty));
+    yTitle.setAttribute('fill', '#bbb');
+    yTitle.setAttribute('font-size', '11');
+    yTitle.setAttribute('text-anchor', 'middle');
+    yTitle.setAttribute('transform', `rotate(-90 ${tx} ${ty})`);
     svg.appendChild(yTitle);
   }
 
-  // top histogram (x)
-  const topY1 = pad + mSize,
-    topY0 = pad;
+  const topY1 = plotY0;
   const topInnerH = Math.max(1, mSize - 6);
-  const scaleTopH = (c) =>
-    ((Number.isFinite(c) ? c : 0) / maxCountTop) * topInnerH;
+  const scaleTopH = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCountTop) * topInnerH;
+
   for (let i = 0; i < nx; i++) {
-    const x0 = scaleX(xEdges[i]),
-      x1 = scaleX(xEdges[i + 1]);
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const drawXMin = Math.max(binXMin, viewXMin);
+    const drawXMax = Math.min(binXMax, viewXMax);
+
+    if (drawXMax <= drawXMin) continue;
+
+    const x0 = scaleX(drawXMin);
+    const x1 = scaleX(drawXMax);
     const barW = Math.max(1, x1 - x0);
-    const hPix = scaleTopH(xCounts[i]);
-    const mid = (xEdges[i] + xEdges[i + 1]) / 2;
+    const hPix = scaleTopH(visibleXCounts[i]);
+    const mid = (binXMin + binXMax) / 2;
     const rgbArray = styleColorArrForValue(layerIdX, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
-    const rect = document.createElementNS(svgNS, "rect");
-    rect.setAttribute("x", String(x0));
-    rect.setAttribute("y", String(topY1 - hPix));
-    rect.setAttribute("width", String(barW));
-    rect.setAttribute("height", String(hPix));
-    rect.setAttribute("fill", rgbStr);
-    rect.setAttribute("fill-opacity", "0.85");
+
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(x0));
+    rect.setAttribute('y', String(topY1 - hPix));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', rgbStr);
+    rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 
-  // right histogram (y)
-  const rightX0 = pad + innerW,
-    rightX1 = pad + innerW + mSize;
+  const rightX0 = plotX1;
   const rightInnerW = Math.max(1, mSize - 6);
-  const scaleRightW = (c) =>
-    ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW;
+  const scaleRightW = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCountRight) * rightInnerW;
 
   for (let j = 0; j < ny; j++) {
-    const y0 = scaleY(yEdges[j]),
-      y1 = scaleY(yEdges[j + 1]);
+    const binYMin = yEdges[j];
+    const binYMax = yEdges[j + 1];
+    const drawYMin = Math.max(binYMin, viewYMin);
+    const drawYMax = Math.min(binYMax, viewYMax);
+
+    if (drawYMax <= drawYMin) continue;
+
+    const y0 = scaleY(drawYMin);
+    const y1 = scaleY(drawYMax);
     const barH = Math.max(1, y0 - y1);
-    const wPix = scaleRightW(yCounts[j]);
-    const mid = (yEdges[j] + yEdges[j + 1]) / 2;
+    const wPix = scaleRightW(visibleYCounts[j]);
+    const mid = (binYMin + binYMax) / 2;
     const rgbArray = styleColorArrForValue(layerIdY, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
 
-    const rect = document.createElementNS(svgNS, "rect");
-    rect.setAttribute("x", String(rightX0));
-    rect.setAttribute("y", String(y1));
-    rect.setAttribute("width", String(wPix));
-    rect.setAttribute("height", String(barH));
-    rect.setAttribute("fill", rgbStr);
-    rect.setAttribute("fill-opacity", "0.85");
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', String(rightX0));
+    rect.setAttribute('y', String(y1));
+    rect.setAttribute('width', String(wPix));
+    rect.setAttribute('height', String(barH));
+    rect.setAttribute('fill', rgbStr);
+    rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 
-  const totalX = xCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const totalY = yCounts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const getQuantileX = (q) => {
-    if (totalX <= 0) return xMin;
-    const target = q * totalX;
-    let cum = 0;
-    for (let i = 0; i < nx; i++) {
-      const c = Number.isFinite(xCounts[i]) ? xCounts[i] : 0;
-      const next = cum + c;
-      if (target <= next) {
-        const e0 = xEdges[i],
-          e1 = xEdges[i + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = next;
-    }
-    return xMax;
-  };
-  const getQuantileY = (q) => {
-    if (totalY <= 0) return yMin;
-    const target = q * totalY;
-    let cum = 0;
-    for (let j = 0; j < ny; j++) {
-      const c = Number.isFinite(yCounts[j]) ? yCounts[j] : 0;
-      const next = cum + c;
-      if (target <= next) {
-        const e0 = yEdges[j],
-          e1 = yEdges[j + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = next;
-    }
-    return yMax;
-  };
-  const pctLabel = (p, val) =>
-    `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`;
-  const attachPctHover = (guideEl, lblEl, text) => {
-    [guideEl, lblEl].forEach((el) => {
-      el.style.cursor = "pointer";
-      el.addEventListener("mouseenter", (e) => {
-        guideEl.setAttribute("stroke-width", "2");
-        guideEl.setAttribute("opacity", "1");
-        if (typeof showPctTooltip === "function")
-          showPctTooltip(text, e.clientX, e.clientY);
+  const attachPctHover = (guideEl, labelEl, text) => {
+    [guideEl, labelEl].forEach((el) => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('mouseenter', (e) => {
+        guideEl.setAttribute('stroke-width', '2');
+        guideEl.setAttribute('opacity', '1');
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener("mousemove", (e) => {
-        if (typeof showPctTooltip === "function")
-          showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mousemove', (e) => {
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener("mouseleave", () => {
-        guideEl.setAttribute("stroke-width", "1");
-        guideEl.setAttribute("opacity", "0.9");
-        if (typeof hidePctTooltip === "function") hidePctTooltip();
+      el.addEventListener('mouseleave', () => {
+        guideEl.setAttribute('stroke-width', '1');
+        guideEl.setAttribute('opacity', '0.9');
+        hidePctTooltip?.();
       });
     });
   };
 
-  for (const p of percentiles) {
-    const xv = getQuantileX(p),
-      x = scaleX(xv);
-    const gx = mkLine(x, pad, x, plotY1, percentileColor);
-    gx.setAttribute("stroke-dasharray", "4,3");
-    gx.setAttribute("opacity", "0.5");
-    svg.appendChild(gx);
-    const lx = mkText(pctLabel(p, xv), x, pad - 6, "middle");
-    lx.setAttribute("fill", percentileColor);
-    svg.appendChild(lx);
-    attachPctHover(
-      gx,
-      lx,
-      `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`,
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(xEdges, fullXCounts, percentile);
+    if (value < viewXMin || value > viewXMax) continue;
+
+    const x = scaleX(value);
+    const guide = mkLine(x, pad, x, plotY1, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = mkText(
+      `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`,
+      x,
+      pad - 6,
+      'middle',
     );
-  }
-  for (const p of percentiles) {
-    const yv = getQuantileY(p),
-      y = scaleY(yv);
-    const gy = mkLine(plotX0, y, pad + innerW + mSize, y, percentileColor);
-    gy.setAttribute("stroke-dasharray", "4,3");
-    gy.setAttribute("opacity", "0.5");
-    svg.appendChild(gy);
-    const ly = mkText(
-      pctLabel(p, yv),
-      pad + innerW + mSize + 4,
-      y + 3,
-      "start",
-    );
-    ly.setAttribute("fill", percentileColor);
-    svg.appendChild(ly);
+    label.setAttribute('fill', percentileColor);
+    svg.appendChild(label);
+
     attachPctHover(
-      gy,
-      ly,
-      `${Math.round(p * 100)}% • ${yv.toFixed(percentileDecimals)}`,
+      guide,
+      label,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
     );
   }
 
-  if (Array.isArray(percentiles) && percentiles.length) {
-    const minP = Math.min(...percentiles);
-    const maxP = Math.max(...percentiles);
-    const xmin = getQuantileX(minP);
-    const xmax = getQuantileX(maxP);
-    const ymin = getQuantileY(minP);
-    const ymax = getQuantileY(maxP);
-    state.pctBounds = { xmin, xmax, ymin, ymax };
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(yEdges, fullYCounts, percentile);
+    if (value < viewYMin || value > viewYMax) continue;
+
+    const y = scaleY(value);
+    const guide = mkLine(plotX0, y, plotX1 + mSize, y, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = mkText(
+      `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`,
+      plotX1 + mSize + 4,
+      y + 3,
+      'start',
+    );
+    label.setAttribute('fill', percentileColor);
+    svg.appendChild(label);
+
+    attachPctHover(
+      guide,
+      label,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
+    );
   }
+
+  if (percentiles.length) {
+    const minPercentile = Math.min(...percentiles);
+    const maxPercentile = Math.max(...percentiles);
+
+    state.pctBounds = {
+      xmin: getHistogramQuantile(xEdges, fullXCounts, minPercentile),
+      xmax: getHistogramQuantile(xEdges, fullXCounts, maxPercentile),
+      ymin: getHistogramQuantile(yEdges, fullYCounts, minPercentile),
+      ymax: getHistogramQuantile(yEdges, fullYCounts, maxPercentile),
+    };
+  }
+
   return svg;
 }
 

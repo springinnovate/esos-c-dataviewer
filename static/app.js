@@ -1379,7 +1379,15 @@ function hideHistTooltip() {
 }
 
 
-//TODO: make docstrings for all these functions
+/**
+ * Estimate a quantile value from a histogram defined by bin edges and counts.
+ * Performs a linear interpolation within the bin containing the target quantile.
+ *
+ * @param {number[]} edges - Monotonically increasing array of bin edges of length N+1.
+ * @param {number[]} counts - Histogram counts per bin of length N corresponding to edges.
+ * @param {number} quantile - Desired quantile in [0, 1].
+ * @returns {number} Estimated value at the requested quantile within the histogram range.
+ */
 function getHistogramQuantile(edges, counts, quantile) {
   const min = edges[0];
   const max = edges[edges.length - 1];
@@ -1410,6 +1418,12 @@ function getHistogramQuantile(edges, counts, quantile) {
   return max;
 }
 
+/**
+ * Compute marginal counts along each axis from a 2D histogram.
+ *
+ * @param {number[][]} hist2d - 2D histogram array indexed as [xBin][yBin].
+ * @returns {{xCounts: number[], yCounts: number[]}} Object containing summed counts per x bin and per y bin.
+ */
 function getScatterMarginalCounts(hist2d) {
   const xCounts = new Array(hist2d.length).fill(0);
   const yCounts = new Array(hist2d[0].length).fill(0);
@@ -1425,6 +1439,13 @@ function getScatterMarginalCounts(hist2d) {
   return { xCounts, yCounts };
 }
 
+/**
+ * Initialize or update the plot view range for the current scatter object and plot type.
+ * If the view already corresponds to the same scatter object and plot kind, no change is made.
+ *
+ * @param {Object} scatterObj - Scatter data object containing x_edges and/or y_edges arrays.
+ * @param {string} plotKind - Identifier for the current plot mode/type.
+ */
 function ensurePlotView(scatterObj, plotKind) {
   if (
     state.plotView &&
@@ -1448,6 +1469,16 @@ function ensurePlotView(scatterObj, plotKind) {
   state.plotViewKind = plotKind;
 }
 
+/**
+ * Update the visible range for a plot axis while clamping it to the full data extent.
+ * The resulting range is stored in state.plotView.
+ *
+ * @param {'x'|'y'} axis - Axis identifier.
+ * @param {number} nextMin - Proposed minimum value for the axis view.
+ * @param {number} nextMax - Proposed maximum value for the axis view.
+ * @param {number} fullMin - Minimum allowed value for the axis.
+ * @param {number} fullMax - Maximum allowed value for the axis.
+ */
 function setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax) {
   const rangeMin = Math.max(
     fullMin,
@@ -1471,6 +1502,12 @@ function setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax) {
   }
 }
 
+/**
+ * Re-render the scatter overlay using the last render options stored in state.
+ * If no previous scatter options or scatter object exist, no action is taken.
+ *
+ * @returns {Promise<void>}
+ */
 async function rerenderScatterOverlayFromState() {
   if (!state.lastScatterOpts || !state.scatterObj) return;
 
@@ -1480,6 +1517,19 @@ async function rerenderScatterOverlayFromState() {
   });
 }
 
+/**
+ * Render UI controls that allow adjusting the visible axis ranges of the plot.
+ * Supports manual numeric entry and preset percentile-based range buttons.
+ * The controls update state.plotView and trigger scatter overlay re-rendering.
+ *
+ * @param {Object} params
+ * @param {Object} params.scatterObj - Scatter data object containing histogram data and edges.
+ * @param {boolean} params.has2D - Whether the plot uses a 2D histogram.
+ * @param {boolean} params.has1DX - Whether the plot uses a 1D histogram along X.
+ * @param {boolean} params.has1DY - Whether the plot uses a 1D histogram along Y.
+ * @param {string} [params.rasterX] - Optional label for the X axis.
+ * @param {string} [params.rasterY] - Optional label for the Y axis.
+ */
 function renderPlotRangeControls({
   scatterObj,
   has2D,

@@ -2114,7 +2114,13 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
   }
 }
 
-//TODO: Make docstring
+/**
+ * Reset and hide the scatter overlay UI and clear all scatter-related state.
+ * This removes the current SVG plot, overlay content, and cached render state
+ * so the next scatter render starts from a clean slate.
+ *
+ * @returns {Promise<void>}
+ */
 async function clearScatterOverlay() {
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');

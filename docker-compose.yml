@@ -78,7 +78,7 @@ services:
       - LAYERS_YAML_PATH=/app/layers.yml
       - RSTATS_BASE_URL=/rstats
     volumes:
-      - ./layers.yml:/app/layers.yml:ro
+      - ${LAYERS_YML}:/app/layers.yml:ro
     networks: [backend]
     labels:
       - traefik.enable=true
@@ -128,7 +128,7 @@ services:
       - GEOSERVER_INIT_PROCESS_FILES=${GEOSERVER_INIT_PROCESS_FILES}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
-      - ./layers.yml:/app/layers.yml:ro
+      - ${LAYERS_YML}:/app/layers.yml:ro
       - ./.env:/app/.env:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
       - ./local_data/processed_rasters:${GEOSERVER_LOCAL_DATA_DIR}/processed_rasters
@@ -143,7 +143,7 @@ services:
       - RASTERS_YAML_PATH=/app/layers.yml
       - WORKERS=2
     volumes:
-      - ./layers.yml:/app/layers.yml:ro
+      - ${LAYERS_YML}:/app/layers.yml:ro
       - ./local_data:${GEOSERVER_LOCAL_DATA_DIR}:ro
       - ./.env:/app/.env:ro
     networks: [backend]

@@ -1,12 +1,16 @@
 History
 =======
 
-Unreleased
-----------
+1.2.0 (2026-03-20)
+------------------
 * Added algorithm to pick no more than 1M pixels when determining histograms
   for purposes of speedy calculations.
 * Added a feature to define min/max values in the layer.yml file for faster
   initial loading.
+* Added feature to allow for a base landcover layer.
+* Added feature to view the bivariate plot color range.
+* Fixed issues where there were unneeded .env variables and/or confusing ones
+  which bled into the compose file.
 
 1.1.1 (2026-03-02)
 ------------------

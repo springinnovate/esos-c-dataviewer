@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 import logging
 import os
 import shutil
@@ -58,7 +58,10 @@ import yaml
 
 load_dotenv()
 
-RASTERS_YAML_PATH = Path(os.getenv("RASTERS_YAML_PATH"))
+# this will be mounted in the docker container when it is launched to always
+# point at this yaml
+RASTERS_YAML_PATH = Path("/app/layers.yml")
+
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -114,7 +117,6 @@ class ScatterOut(BaseModel):
     Attributes:
         raster_id_x (str): Identifier for the X-axis raster layer.
         raster_id_y (str): Identifier for the Y-axis raster layer.
-        n_pairs (int): Total number of paired pixel values sampled.
         x (Optional[List[float]]): List of X-axis pixel values, or None if unavailable.
         y (Optional[List[float]]): List of Y-axis pixel values, or None if unavailable.
         hist2d (Optional[List[List[int]]]): 2D histogram counts, or None if unavailable.
@@ -123,15 +125,12 @@ class ScatterOut(BaseModel):
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
-        pixels_sampled (Optional[int]): Number of pixels included in the window mask, or None if not applicable.
         valid_pixels (Optional[int]): Number of valid (non-null) paired pixels, or None if not available.
-        coverage_ratio (Optional[float]): Ratio of valid pixels to total mask pixels, or None if not available.
         geometry (dict): GeoJSON-like geometry defining the analysis window.
     """
 
     raster_id_x: Optional[str]
     raster_id_y: Optional[str]
-    n_pairs: int
     x: Optional[List[float]] = None
     y: Optional[List[float]] = None
     hist2d: Optional[List[List[int]]] = None
@@ -142,9 +141,7 @@ class ScatterOut(BaseModel):
     pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
-    pixels_sampled: Optional[int] = None
     valid_pixels: Optional[int] = None
-    coverage_ratio: Optional[float] = None
     geometry: dict
 
 
@@ -174,7 +171,7 @@ class PixelValOut(BaseModel):
         row (Optional[int]): Raster row index (0-based) if within bounds, else None.
         col (Optional[int]): Raster column index (0-based) if within bounds, else None.
         in_bounds (bool): Whether the projected coordinate fell inside raster bounds.
-        value (Optional[float]): Pixel value or None if nodata/out-of-bounds/non-finite.
+        value (Optional[Union[float, str]]): Pixel value or None if nodata/out-of-bounds/non-finite.
     """
 
     raster_id: str
@@ -183,7 +180,7 @@ class PixelValOut(BaseModel):
     row: Optional[int] = None
     col: Optional[int] = None
     in_bounds: bool = False
-    value: Optional[float] = None
+    value: Optional[Union[float, str]] = None
 
 
 class ClipIn(BaseModel):
@@ -272,9 +269,7 @@ def _reproject_geojson_geoms(gj: dict, from_crs: str, to_crs) -> list[dict]:
         if gtype == "GeometryCollection":
             return {
                 "type": "GeometryCollection",
-                "geometries": [
-                    _tx_geometry(g) for g in geom.get("geometries", [])
-                ],
+                "geometries": [_tx_geometry(g) for g in geom.get("geometries", [])],
             }
         return geom
 
@@ -351,9 +346,7 @@ def _clip_and_write_tif(
         HTTPException: If no valid geometry is provided.
     """
     if not geoms_ds:
-        raise HTTPException(
-            status_code=400, detail="No valid geometry provided"
-        )
+        raise HTTPException(status_code=400, detail="No valid geometry provided")
 
     out_image, out_transform = rio_mask(
         ds,
@@ -398,19 +391,25 @@ def _load_registry() -> dict:
 
     """
     if not RASTERS_YAML_PATH.exists():
-        raise RuntimeError("rasters.yml not found")
+        raise RuntimeError(f"{RASTERS_YAML_PATH} not found")
     raw_yaml = RASTERS_YAML_PATH.read_text()
     expanded_yaml = os.path.expandvars(raw_yaml)
-    y = yaml.safe_load(expanded_yaml)
-    # geoserver expects all the raster ids to be lowercase
-    layers_dict = {k.lower(): v for k, v in y.get("layers", {}).items()}
-    logger.warning(
-        "this is a hack to use the processed layers, fix in issue #57"
-    )
-    for layer_dict in layers_dict.values():
-        layer_dict["file_path"] = layer_dict["file_path"].replace(
-            "rasters", "processed_rasters"
-        )
+    y = yaml.safe_load(expanded_yaml) or {}
+
+    layers_dict = {}
+    for section_key in ("layers", "baseLayers"):
+        for k, v in (y.get(section_key, {}) or {}).items():
+            layers_dict[k.lower()] = v
+
+    for layer_name, layer_dict in layers_dict.items():
+        rendering = layer_dict.get("rendering") or {}
+        categories = rendering.get("categories") or {}
+        if categories:
+            rendering["category_labels"] = {
+                int(value): (meta or {}).get("label")
+                for value, meta in categories.items()
+            }
+            layer_dict["rendering"] = rendering
 
     return layers_dict
 
@@ -440,14 +439,10 @@ def _open_raster(raster_id: str):
     """
     meta = REGISTRY.get(raster_id)
     if not meta:
-        raise HTTPException(
-            status_code=404, detail=f"raster_id not found: {raster_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"raster_id not found: {raster_id}")
     path = meta["file_path"]
     if not Path(path).exists():
-        raise HTTPException(
-            status_code=500, detail=f"raster file missing: {path}"
-        )
+        raise HTTPException(status_code=500, detail=f"raster file missing: {path}")
     ds = rasterio.open(path)
     nodata = meta.get("nodata", ds.nodata)
     return ds, nodata
@@ -548,14 +543,39 @@ def rasters():
     return {"rasters": list(REGISTRY.keys())}
 
 
+def get_best_overview(band):
+    """Returns the highest-resolution overview that fits within a memory budget.
+
+    This scans overviews for band 1 (from highest to lowest resolution) and returns
+    the first overview whose pixel count fits within 2*28 bytes assuming
+    4 bytes per pixel.
+
+    Args:
+      raster: A GDAL rasterband.
+
+    Returns:
+      A GDAL RasterBand overview (RasterBand) for band 1 that fits the budget, or
+      None if no available overview fits.
+    """
+    max_bytes = 2**28
+    element_bytesize = 4
+    max_elements = max_bytes / element_bytesize
+
+    for i in range(band.GetOverviewCount()):
+        print(f"trying {i}")
+        overview = band.GetOverview(i)
+        if overview.XSize * overview.YSize < max_elements:
+            return overview
+
+
 @app.post("/stats/minmax", response_model=RasterMinMaxOut)
 def minmax_stats(r: RasterMinMaxIn):
     """Compute approximate 5th and 95th percentile values for a raster.
 
-    This endpoint estimates the low and high value range for a given raster by
-    sampling multiple random windows and aggregating valid pixel values.
-    The computed percentiles are used as approximate minimum and maximum values
-    for visualization or dynamic styling.
+    This endpoint either uses pre-computed low/high values or estimates the
+    value range for a given raster by sampling multiple random windows and
+    aggregating valid pixel values. The computed percentiles are used as
+    approximate minimum and maximum values for visualization or dynamic styling.
 
     Args:
         r (RasterMinMaxIn): Input model containing the raster identifier (`raster_id`)
@@ -570,12 +590,19 @@ def minmax_stats(r: RasterMinMaxIn):
         percentiles. Returns HTTP 500 with detail "Failed to compute min/max".
     """
     try:
+        raster_dict = REGISTRY[r.raster_id]
+        # use min/max if it exists
+        if all(key in raster_dict for key in ("min", "max")):
+            return RasterMinMaxOut(
+                raster_id=r.raster_id,
+                min_=raster_dict["min"],
+                max_=raster_dict["max"],
+            )
+        # fallback is to calculatemanually
         file_path = REGISTRY[r.raster_id]["file_path"]
-        logger.debug(f"stats on this file: {file_path}")
         raster = gdal.Open(file_path, gdal.GA_ReadOnly)
         band = raster.GetRasterBand(1)
-        n_ovr = band.GetOverviewCount()
-        overview = band.GetOverview(n_ovr - 1)
+        overview = get_best_overview(band)
         array = overview.ReadAsArray()
         nodata = band.GetNoDataValue()
         if nodata is not None:
@@ -660,6 +687,34 @@ def _safe_window_for_geom(dataset, geometry):
     return padded_window
 
 
+def _shape_for_pixel_budget(win, max_pixels):
+    """Helper for determining a max window size for scatter plots.
+
+    Args:
+        win (Window): base window size
+        max_pixels (int): desired target window pixel size
+
+    returns:
+        out_h, out_w (both ints the window that would match max_pixels)
+    """
+    w = max(1, int(np.ceil(win.width)))
+    h = max(1, int(np.ceil(win.height)))
+    n = w * h
+    if n <= max_pixels:
+        return h, w
+
+    scale = np.sqrt(max_pixels / n)
+    out_w = max(1, int(np.floor(w * scale)))
+    out_h = max(1, int(np.floor(h * scale)))
+
+    if out_w * out_h > max_pixels:
+        out_w = max(1, min(out_w, max_pixels // out_h))
+        if out_w * out_h > max_pixels:
+            out_h = max(1, min(out_h, max_pixels // out_w))
+
+    return out_h, out_w
+
+
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
@@ -711,8 +766,13 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 geom_ref_shape = _geom_in_ds_crs(ds)
 
                 win = _safe_window_for_geom(ds, geom_ref_shape)
+                out_h, out_w = _shape_for_pixel_budget(win, max_pixels=1_000_000)
                 data = ds.read(
-                    1, window=win, boundless=True, masked=False
+                    1,
+                    window=win,
+                    out_shape=(out_h, out_w),
+                    boundless=True,
+                    masked=False,
                 ).astype("float64", copy=False)
                 affine = ds.window_transform(win)
 
@@ -771,10 +831,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             results["y"]["edges"] if results["y"]["edges"] is not None else None
         )
         x_plot, y_plot = None, None
-        pearson_r, slope, intercept = None, None, None
 
         # compute 2D histogram on overlapping pixels if both are valid
-        n_pairs = 0
         if x_valid and y_valid:
             x_arr = results["x"]["arr"]
             x_affine = results["x"]["affine"]
@@ -841,9 +899,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     x_pairs, y_pairs, bins=[x_edges_2d, y_edges_2d]
                 )
             else:
-                hist2d = np.zeros(
-                    (len(x_edges_2d) - 1, len(y_edges_2d) - 1), dtype=int
-                )
+                hist2d = np.zeros((len(x_edges_2d) - 1, len(y_edges_2d) - 1), dtype=int)
                 x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
 
             # scatter arrays (downsample if needed)
@@ -863,13 +919,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 x_std = float(np.std(x_pairs))
                 y_std = float(np.std(y_pairs))
                 if x_std != 0.0 and y_std != 0.0:
-                    corr = np.corrcoef(x_pairs, y_pairs)[0, 1]
-                    pearson_r = float(corr) if np.isfinite(corr) else None
                     design = np.vstack([x_pairs, np.ones_like(x_pairs)]).T
                     slope_val, intercept_val = np.linalg.lstsq(
                         design, y_pairs, rcond=None
                     )[0]
-                    slope, intercept = float(slope_val), float(intercept_val)
 
         # if only one is valid, prepare 1D scatter arrays directly from that raster
         if x_valid ^ y_valid:  # XOR
@@ -890,28 +943,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot = sampled if side == "x" else None
             y_plot = sampled if side == "y" else None
         else:
-            n_pairs = 0
             x_plot, y_plot = None, None
-
-        # coverage metrics
-        if x_valid:
-            total_mask_pixels = int(np.count_nonzero(results["x"]["mask"]))
-        elif y_valid:
-            total_mask_pixels = int(np.count_nonzero(results["y"]["mask"]))
-        else:
-            total_mask_pixels = 0
-
-        valid_pixels = int(n_pairs)
-        coverage_ratio = (
-            float(valid_pixels / total_mask_pixels)
-            if total_mask_pixels
-            else 0.0
-        )
 
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
-            n_pairs=valid_pixels,
             x=x_plot.tolist() if x_plot is not None else None,
             y=y_plot.tolist() if y_plot is not None else None,
             hist2d=hist2d.tolist() if hist2d is not None else None,
@@ -935,12 +971,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if results["y"]["hist"] is not None
                 else None
             ),
-            pearson_r=pearson_r,
-            slope=slope,
-            intercept=intercept,
-            pixels_sampled=total_mask_pixels,
-            valid_pixels=valid_pixels,
-            coverage_ratio=coverage_ratio,
             geometry=scatter_request.geometry,
         )
 
@@ -966,14 +996,12 @@ def pixel_val(req: PixelValIn):
     try:
         ds, nodata = _open_raster(req.raster_id)
 
-        # project input coordinate to raster CRS if needed
         if req.from_crs and ds.crs and req.from_crs != ds.crs.to_string():
             tf = Transformer.from_crs(req.from_crs, ds.crs, always_xy=True)
             x, y = tf.transform(req.lon, req.lat)
         else:
             x, y = req.lon, req.lat
 
-        # compute row/col and check bounds
         r, c = rasterio.transform.rowcol(ds.transform, x, y)
         if r < 0 or c < 0 or r >= ds.height or c >= ds.width:
             return PixelValOut(
@@ -986,18 +1014,23 @@ def pixel_val(req: PixelValIn):
                 value=None,
             )
 
-        # read single pixel
         win = Window(c, r, 1, 1)
         arr = ds.read(1, window=win, masked=False)
         v = float(arr[0, 0])
 
-        # nodata / non-finite -> None
-        if (nodata is not None and np.isclose(v, nodata)) or (
-            not np.isfinite(v)
-        ):
+        if (nodata is not None and np.isclose(v, nodata)) or (not np.isfinite(v)):
             val = None
         else:
             val = v
+
+        layer_cfg = REGISTRY.get(req.raster_id.lower(), {})
+        category_labels = (layer_cfg.get("rendering") or {}).get(
+            "category_labels"
+        ) or {}
+        if val is not None and category_labels:
+            label = category_labels.get(int(val))
+            if label is not None:
+                val = label
 
         return PixelValOut(
             raster_id=req.raster_id,
@@ -1036,13 +1069,9 @@ def download_clip(req: ClipIn):
 
         ref_ds = x_ds or y_ds
         if ref_ds is None:
-            raise HTTPException(
-                status_code=400, detail="No valid raster provided"
-            )
+            raise HTTPException(status_code=400, detail="No valid raster provided")
 
-        geom_ref = _reproject_geojson_geoms(
-            req.geometry, req.from_crs, ref_ds.crs
-        )
+        geom_ref = _reproject_geojson_geoms(req.geometry, req.from_crs, ref_ds.crs)
         ts = datetime.utcnow().strftime("%Y_%m_%d_%H_%M_%S")
         name_parts = []
         if req.raster_id_x:
@@ -1080,9 +1109,7 @@ def download_clip(req: ClipIn):
             out_paths.append(out_y)
 
         zip_path = Path(temp_dir) / zip_name
-        with zipfile.ZipFile(
-            zip_path, "w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for p in out_paths:
                 zf.write(p, arcname=p.name)
 

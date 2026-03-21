@@ -1,13 +1,12 @@
-// static/app.js
-import 'leaflet/dist/leaflet.css'
-import './style.css'
+import "leaflet/dist/leaflet.css";
+import "./style.css";
 
-import L from 'leaflet'
-import proj4 from 'proj4'
-import 'proj4leaflet'
+import L from "leaflet";
+import proj4 from "proj4";
+import "proj4leaflet";
 
-import shp from 'shpjs'
-import * as turf from '@turf/turf'
+import shp from "shpjs";
+import * as turf from "@turf/turf";
 
 /**
  * @file
@@ -15,21 +14,21 @@ import * as turf from '@turf/turf'
  * Uses Leaflet WMS for visualization and fetches raster stats for a user-defined square window.
  * Docstrings use JSDoc so editors/TS can infer types.
  */
-const MAX_HISTOGRAM_BINS = 50
-const MAX_HISTOGRAM_POINTS = 20000
-const CANADA_CENTER = [55, -96.9]
-const INITIAL_ZOOM = 0
-const GLOBAL_CRS = 'EPSG:3347'
+const MAX_HISTOGRAM_BINS = 50;
+const MAX_HISTOGRAM_POINTS = 20000;
+const CANADA_CENTER = [55, -96.9];
+const INITIAL_ZOOM = 0;
+const GLOBAL_CRS = "EPSG:3347";
 const CRS3347 = new L.Proj.CRS(
-  'EPSG:3347',
-  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs',
+  "EPSG:3347",
+  "+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs",
   {
     origin: [0, 0],
-    resolutions: [
-      4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
-    ]
-  }
-)
+    resolutions: [4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1],
+  },
+);
+// once the new CRS is defined we register it with leaflet's CRS
+L.CRS.EPSG3347 = CRS3347;
 
 const state = {
   map: null,
@@ -40,65 +39,71 @@ const state = {
   availableLayers: null,
   activeLayerIdxA: null,
   activeLayerIdxB: null,
+  baseLayer: null,
   hoverRect: null,
   boxSizeKm: null,
   lastMouseLatLng: null,
   outlineLayer: null,
   lastStats: null,
   didInitialCenter: false,
+  didInitialRasterFit: false,
+  _wmsCapsXml: null,
+  _wmsCapsPromise: null,
+  _wmsLayerBoundsCache: new Map(),
   visibility: { A: true, B: true },
+  baseVisibility: true,
   lastScatterOpts: null,
   scatterObj: null,
-  percentiles: '5 50 90',
+  percentiles: "5 50 90",
   scatterBounds: null,
   lastPixelPoint: null,
   bivariatePalette: {
     orangeBlue: createBivariateColormap({
-      baseRamp: ['#000000', '#ff8000', '#ffcc00'],
-      lightenerColor: '#00ffff',
-      strength: 1.0
+      baseRamp: ["#000000", "#ff8000", "#ffcc00"],
+      lightenerColor: "#00ffff",
+      strength: 1.0,
     }),
 
     grayWhite: createBivariateColormap({
-      baseRamp: ['#222222', '#777777', '#dddddd'],
-      lightenerColor: '#ffffff',
-      strength: 1.0
+      baseRamp: ["#222222", "#777777", "#dddddd"],
+      lightenerColor: "#ffffff",
+      strength: 1.0,
     }),
 
     tealMagenta: createBivariateColormap({
-      baseRamp: ['#003333', '#00b3b3', '#00ffff'],
-      lightenerColor: '#ff66cc',
-      strength: 0.9
+      baseRamp: ["#003333", "#00b3b3", "#00ffff"],
+      lightenerColor: "#ff66cc",
+      strength: 0.9,
     }),
 
     greenPurple: createBivariateColormap({
-      baseRamp: ['#003300', '#66aa55', '#ccff99'],
-      lightenerColor: '#aa55ff',
-      strength: 1.0
+      baseRamp: ["#003300", "#66aa55", "#ccff99"],
+      lightenerColor: "#aa55ff",
+      strength: 1.0,
     }),
 
     redCyan: createBivariateColormap({
-      baseRamp: ['#220000', '#cc3333', '#ff6666'],
-      lightenerColor: '#00ffff',
-      strength: 0.8
+      baseRamp: ["#220000", "#cc3333", "#ff6666"],
+      lightenerColor: "#00ffff",
+      strength: 0.8,
     }),
 
     indigoGold: createBivariateColormap({
-      baseRamp: ['#1a0033', '#4b33cc', '#ccbb33'],
-      lightenerColor: '#ffef99',
-      strength: 1.0
+      baseRamp: ["#1a0033", "#4b33cc", "#ccbb33"],
+      lightenerColor: "#ffef99",
+      strength: 1.0,
     }),
 
     brownSky: createBivariateColormap({
-      baseRamp: ['#332211', '#996633', '#ffcc66'],
-      lightenerColor: '#66ccff',
-      strength: 1.0
+      baseRamp: ["#332211", "#996633", "#ffcc66"],
+      lightenerColor: "#66ccff",
+      strength: 1.0,
     }),
     steelRose: createBivariateColormap({
-      baseRamp: ['#111827', '#3b82f6', '#93c5fd'],
-      lightenerColor: '#f472b6',
-      strength: 1.0
-    })
+      baseRamp: ["#111827", "#3b82f6", "#93c5fd"],
+      lightenerColor: "#f472b6",
+      strength: 1.0,
+    }),
   },
   sampleMode: null,
   uploadedLayer: null,
@@ -114,8 +119,12 @@ const state = {
   lastHasData: null,
   selectElement: null,
   lastLayerSetting: null,
- }
+  plotView: null,
+  plotViewScatterObj: null,
+  plotViewKind: null,
+};
 
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /**
  * Create a continuous 2D colormap that combines a base color ramp (X-axis)
@@ -139,15 +148,14 @@ const state = {
  * const color = cmap(0.5, 0.8);
  */
 function createBivariateColormap(opts = {}) {
-  const baseRamp = opts.baseRamp || ['#000000', '#888888', '#ffffff'];
-  const lightenerColor = opts.lightenerColor || '#ffffff';
+  const baseRamp = opts.baseRamp || ["#000000", "#888888", "#ffffff"];
+  const lightenerColor = opts.lightenerColor || "#ffffff";
   const strength = opts.strength == null ? 1.0 : opts.strength;
 
   const [c0, c1, c2] = baseRamp.map(hexToRgb);
   const lightener = hexToRgb(lightenerColor);
 
   const lerp = (a, b, t) => a + (b - a) * t;
-  const clamp01 = v => Math.max(0, Math.min(1, v));
 
   // piecewise linear ramp: min→mid→max
   function ramp3(rgb0, rgb1, rgb2, t) {
@@ -157,14 +165,14 @@ function createBivariateColormap(opts = {}) {
       return [
         Math.round(lerp(rgb0[0], rgb1[0], u)),
         Math.round(lerp(rgb0[1], rgb1[1], u)),
-        Math.round(lerp(rgb0[2], rgb1[2], u))
+        Math.round(lerp(rgb0[2], rgb1[2], u)),
       ];
     } else {
       const u = (t - 0.5) / 0.5;
       return [
         Math.round(lerp(rgb1[0], rgb2[0], u)),
         Math.round(lerp(rgb1[1], rgb2[1], u)),
-        Math.round(lerp(rgb1[2], rgb2[2], u))
+        Math.round(lerp(rgb1[2], rgb2[2], u)),
       ];
     }
   }
@@ -177,7 +185,7 @@ function createBivariateColormap(opts = {}) {
     const s = lerp(hslBase[1], hslLight[1], amt);
     const l = lerp(hslBase[2], hslLight[2], amt);
     const mixed = hslToRgb(h, s, l);
-    return mixed.map(v => Math.round(v));
+    return mixed.map((v) => Math.round(v));
   }
 
   function lerpAngle(a, b, t) {
@@ -204,6 +212,144 @@ function createBivariateColormap(opts = {}) {
 }
 
 /**
+ * Computes the normalized stop position (0–1) of a median value within a range.
+ *
+ * @param {number|string} min - The minimum value of the range.
+ * @param {number|string} med - The median (or midpoint) value within the range.
+ * @param {number|string} max - The maximum value of the range.
+ * @returns {number} A clamped ratio between 0 and 1 representing the relative
+ * position of `med` between `min` and `max`. Returns 0.5 if inputs are invalid
+ * or if `min` and `max` are equal.
+ */
+function legendStopPos(min, med, max) {
+  const a = parseFloat(min);
+  const b = parseFloat(med);
+  const c = parseFloat(max);
+  if (![a, b, c].every(Number.isFinite)) return 0.5;
+  if (c === a) return 0.5;
+  return clamp01((b - a) / (c - a));
+}
+
+/**
+ * Determines the CSS blend mode class for the bivariate legend
+ * based on the current WMS layer A configuration.
+ *
+ * @returns {string} The blend mode class name ('blend-lighter' or 'blend-screen').
+ */
+function getBivariateLegendBlendClass() {
+  const className = String(state.wmsLayerA?.options?.className || '');
+  if (className.includes('plus-lighter')) return 'blend-lighter';
+  return 'blend-screen';
+}
+
+/**
+ * Ensures that the bivariate legend DOM structure exists.
+ * If not present, it creates and inserts it into the style control group.
+ *
+ * @returns {HTMLElement|null} The root legend element, or null if no suitable host is found.
+ */
+function ensureBivariateLegend() {
+  let root = document.getElementById('bivariateLegend');
+  if (root) return root;
+
+  const host = document.querySelector('.control-group.style');
+  if (!host) return null;
+
+  root = document.createElement('div');
+  root.id = 'bivariateLegend';
+  root.className = 'bivariate-legend';
+  root.innerHTML = `
+    <div class='bivariate-legend-title'>Blend legend</div>
+    <div class='bivariate-legend-main'>
+      <div class='bivariate-legend-y'>
+        <span>High B</span>
+        <span>Low B</span>
+      </div>
+      <div class='bivariate-legend-figure'>
+        <div class='bivariate-legend-swatch'>
+          <div class='bivariate-legend-layer-a'></div>
+          <div class='bivariate-legend-layer-b'></div>
+          <div class='bivariate-legend-med-x'></div>
+          <div class='bivariate-legend-med-y'></div>
+          <div class='bivariate-legend-empty'>Select layers</div>
+        </div>
+        <div class='bivariate-legend-x'>
+          <span>Low A</span>
+          <span>High A</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const paletteControl = host.querySelector('.palette-control');
+  if (paletteControl) {
+    paletteControl.insertAdjacentElement('afterend', root);
+  } else {
+    host.appendChild(root);
+  }
+
+  return root;
+}
+
+/**
+ * Renders or updates the bivariate legend based on current UI style inputs
+ * for layers A and B. Updates CSS custom properties, blend mode classes,
+ * and median marker positions. If inputs are invalid, marks the legend as empty.
+ */
+function renderBivariateLegend() {
+  const root = ensureBivariateLegend();
+  if (!root) return;
+
+  const a = readStyleInputsFromUI('A');
+  const b = readStyleInputsFromUI('B');
+
+  const okA =
+    Number.isFinite(parseFloat(a.min)) &&
+    Number.isFinite(parseFloat(a.med)) &&
+    Number.isFinite(parseFloat(a.max));
+
+  const okB =
+    Number.isFinite(parseFloat(b.min)) &&
+    Number.isFinite(parseFloat(b.med)) &&
+    Number.isFinite(parseFloat(b.max));
+
+  root.classList.toggle('is-empty', !(okA && okB));
+
+  if (!(okA && okB)) return;
+
+  const aStop = legendStopPos(a.min, a.med, a.max);
+  const bStop = legendStopPos(b.min, b.med, b.max);
+
+  root.style.setProperty('--a-cmin', a.cmin || '#000000');
+  root.style.setProperty('--a-cmed', a.cmed || '#888888');
+  root.style.setProperty('--a-cmax', a.cmax || '#ffffff');
+  root.style.setProperty('--a-stop', `${aStop * 100}%`);
+
+  root.style.setProperty('--b-cmin', b.cmin || '#000000');
+  root.style.setProperty('--b-cmed', b.cmed || '#888888');
+  root.style.setProperty('--b-cmax', b.cmax || '#ffffff');
+  root.style.setProperty('--b-stop', `${bStop * 100}%`);
+
+  root.classList.remove('blend-screen', 'blend-lighter');
+  root.classList.add(getBivariateLegendBlendClass());
+
+  const medX = root.querySelector('.bivariate-legend-med-x');
+  const medY = root.querySelector('.bivariate-legend-med-y');
+
+  medX.style.left = `${aStop * 100}%`;
+  medY.style.top = `${(1 - bStop) * 100}%`;
+}
+
+/**
+ * Initializes and wires up the bivariate legend by ensuring its presence
+ * in the DOM and triggering an initial render.
+ */
+function wireBivariateLegend() {
+  ensureBivariateLegend();
+  renderBivariateLegend();
+}
+
+/**
  * Convert a hex color string to an RGB triplet.
  *
  * Supports both 3-digit (#abc) and 6-digit (#aabbcc) formats.
@@ -215,8 +361,12 @@ function createBivariateColormap(opts = {}) {
  * hexToRgb('#ff8000'); // → [255, 128, 0]
  */
 function hexToRgb(hex) {
-  let h = hex.replace('#', '');
-  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  let h = hex.replace("#", "");
+  if (h.length === 3)
+    h = h
+      .split("")
+      .map((c) => c + c)
+      .join("");
   const num = parseInt(h, 16);
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
@@ -233,8 +383,8 @@ function hexToRgb(hex) {
  * rgbToHex(255, 128, 0); // → '#ff8000'
  */
 function rgbToHex(r, g, b) {
-  const toHex = v => v.toString(16).padStart(2, '0');
-  return '#' + toHex(r) + toHex(g) + toHex(b);
+  const toHex = (v) => v.toString(16).padStart(2, "0");
+  return "#" + toHex(r) + toHex(g) + toHex(b);
 }
 
 /**
@@ -252,19 +402,29 @@ function rgbToHex(r, g, b) {
  * rgbToHsl(255, 128, 0); // → [0.0833, 1, 0.5]
  */
 function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
   let h, s;
   const l = (max + min) / 2;
   const d = max - min;
   if (d === 0) {
-    h = 0; s = 0;
+    h = 0;
+    s = 0;
   } else {
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
     switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      case b:
+        h = (r - g) / d + 4;
+        break;
     }
     h /= 6;
   }
@@ -293,16 +453,16 @@ function hslToRgb(h, s, l) {
   const hue2rgb = (p, q, t) => {
     if (t < 0) t += 1;
     if (t > 1) t -= 1;
-    if (t < 1/6) return p + (q - p) * 6 * t;
-    if (t < 1/2) return q;
-    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
   };
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
   const p = 2 * l - q;
-  const r = hue2rgb(p, q, h + 1/3) * 255;
+  const r = hue2rgb(p, q, h + 1 / 3) * 255;
   const g = hue2rgb(p, q, h) * 255;
-  const b = hue2rgb(p, q, h - 1/3) * 255;
+  const b = hue2rgb(p, q, h - 1 / 3) * 255;
   return [r, g, b];
 }
 
@@ -323,42 +483,60 @@ function applyBivariateColormapToAB(cmap) {
   const setVal = (id, value) => {
     const el = document.getElementById(id);
     el.value = value;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   };
 
-  setVal('layerACminInput', cmap(0.0, 0.0));
-  setVal('layerACmedInput', cmap(0.5, 0.0));
-  setVal('layerACmaxInput', cmap(1.0, 0.0));
+  setVal("layerACminInput", cmap(0.0, 0.0));
+  setVal("layerACmedInput", cmap(0.5, 0.0));
+  setVal("layerACmaxInput", cmap(1.0, 0.0));
 
-  setVal('layerBCminInput', cmap(0.0, 0.0));
-  setVal('layerBCmedInput', cmap(0.0, 0.5));
-  setVal('layerBCmaxInput', cmap(0.0, 1.0));
+  setVal("layerBCminInput", cmap(0.0, 0.0));
+  setVal("layerBCmedInput", cmap(0.0, 0.5));
+  setVal("layerBCmaxInput", cmap(0.0, 1.0));
 }
-
 
 /**
  * Set the visibility of a specified WMS layer and synchronize its checkbox state.
- * @param {'A'|'B'} layerId - The identifier of the layer ('A' or 'B').
- * @param {boolean} visible - Whether the layer should be visible (true) or hidden (false).
+ * @param {'A'|'B'|'Base'} layerId
+ * @param {boolean} visible
  */
 function setLayerVisibility(layerId, visible) {
-  const layer = layerId === 'A' ? state.wmsLayerA : state.wmsLayerB
-  layer.setOpacity(visible ? 1 : 0)
-  state.visibility[layerId] = visible
-  const cb = document.getElementById(`layerVisible${layerId}`)
-  cb.checked = !!visible
+  const stateKey = layerId === "Base" ? "wmsLayerBase" : `wmsLayer${layerId}`;
+
+  const layer = state[stateKey];
+  if (!layer) return;
+
+  layer.setOpacity(visible ? 1 : 0);
+
+  state.visibility[layerId] = visible;
+
+  const cb = document.getElementById(`layerVisible${layerId}`);
+  if (cb) cb.checked = !!visible;
+
+  if (layerId == "Base") {
+    if (visible) {
+      state.baseLegendControl.setLayer(state.baseLayer.name);
+    } else {
+      state.baseLegendControl.setLayer(null);
+    }
+  }
 }
 
 /**
- * Initialize visibility checkboxes for layers A and B and wire their change events.
- * When a checkbox is toggled, it updates the corresponding layer's visibility.
+ * Initialize visibility checkboxes for layers A, B, and Base
+ * and wire their change events.
  */
 function wireVisibilityCheckboxes() {
-  ;['A', 'B'].forEach(id => {
-    const cb = document.getElementById(`layerVisible${id}`)
-    cb.checked = state.visibility[id]
-    cb.addEventListener('change', () => setLayerVisibility(id, cb.checked))
-  })
+  ["A", "B", "Base"].forEach((layerId) => {
+    const cb = document.getElementById(`layerVisible${layerId}`);
+    if (!cb) return;
+
+    cb.checked = !!state.visibility[layerId];
+
+    cb.addEventListener("change", () => {
+      setLayerVisibility(layerId, cb.checked);
+    });
+  });
 }
 
 /**
@@ -367,24 +545,156 @@ function wireVisibilityCheckboxes() {
  * @throws {Error} if the request fails
  */
 async function loadConfig() {
-  const res = await fetch('api/config')
-  if (!res.ok) throw new Error('Failed to load config')
-  return res.json()
+  const res = await fetch("api/config");
+  if (!res.ok) throw new Error("Failed to load config");
+  return res.json();
 }
 
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
  */
-function initMap() {
-  const mapDiv = document.getElementById('map')
+function initMap(crsCode) {
+  const leafletCRS =
+    L.CRS[String(crsCode).trim().toUpperCase().replace(":", "")];
+  const mapDiv = document.getElementById("map");
   const map = L.map(mapDiv, {
-    crs: CRS3347,
+    crs: leafletCRS,
     center: CANADA_CENTER,
     zoom: INITIAL_ZOOM,
     zoomControl: false,
-  })
-  state.map = map
+  });
+
+  // make two panes, one for layers that blend, the other for the base layer
+  // that does not
+  map.createPane("basePane");
+  map.getPane("basePane").style.zIndex = 100;
+
+  map.createPane("blendPane");
+  map.getPane("blendPane").style.zIndex = 200;
+  map.getPane("blendPane").style.isolation = "isolate";
+  state.map = map;
+  if (Array.isArray(leafletCRS?.wrapLng) && leafletCRS?.projection?.bounds) {
+    const projectedBounds = leafletCRS.projection.bounds;
+    const southWest = leafletCRS.unproject(projectedBounds.min);
+    const northEast = leafletCRS.unproject(projectedBounds.max);
+    map.setMaxBounds(L.latLngBounds(southWest, northEast));
+    map.options.maxBoundsViscosity = 1.0;
+  }
+  // this watches the map to see if it ever resizes so it fixes the issue with
+  // Leaflet not being able to
+  const mapContainer = map.getContainer();
+  const mapResizeObserver = new ResizeObserver(() =>
+    map.invalidateSize({ pan: false }),
+  );
+  mapResizeObserver.observe(mapContainer);
+  state.mapResizeObserver = mapResizeObserver;
+  state.baseLegendControl = createBaseLegendControl().addTo(state.map);
+}
+
+/**
+ * Infer whether a Leaflet CRS operates in geographic degrees or projected meters.
+ *
+ * This attempts several heuristics, in order:
+ * 1) Read a declared `units` string from proj4leaflet / proj4 metadata.
+ * 2) Fall back to inspecting the CRS code for common geographic CRS identifiers.
+ * 3) As a last resort, project two very small latitude/longitude offsets and
+ *    check whether the projected delta is "tiny" (suggesting degree-based coordinates)
+ *    rather than meter-scaled coordinates.
+ *
+ * Returns `'degrees'` when the CRS appears geographic (e.g., EPSG:4326),
+ * otherwise returns `'meters'` for projected CRSs.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance (may be a proj4leaflet CRS).
+ * @returns {'degrees'|'meters'} Unit kind inferred for the CRS.
+ */
+function _detectCrsUnitKind(crs) {
+  const declaredUnits =
+    crs?.projection?._proj?.oProj?.units ??
+    crs?.projection?._proj?.units ??
+    null;
+
+  if (typeof declaredUnits === "string") {
+    const unitsLower = declaredUnits.toLowerCase();
+    if (unitsLower.includes("degree")) return "degrees";
+    if (unitsLower === "m" || unitsLower.includes("meter")) return "meters";
+  }
+
+  const crsCodeUpper = String(crs?.code || "").toUpperCase();
+  const looksGeographicByCode =
+    crsCodeUpper.includes("4326") ||
+    crsCodeUpper.includes("4269") ||
+    crsCodeUpper.includes("4258") ||
+    crsCodeUpper.includes("CRS:84") ||
+    crsCodeUpper.includes("CRS84");
+
+  if (looksGeographicByCode) return "degrees";
+
+  try {
+    const referenceLatLng =
+      state.lastMouseLatLng || state.map?.getCenter?.() || L.latLng(0, 0);
+
+    const projectedReference = crs.project(referenceLatLng);
+    const projectedLatOffset = crs.project(
+      L.latLng(referenceLatLng.lat + 0.01, referenceLatLng.lng),
+    );
+    const projectedLngOffset = crs.project(
+      L.latLng(referenceLatLng.lat, referenceLatLng.lng + 0.01),
+    );
+
+    const deltaX = Math.abs(projectedLngOffset.x - projectedReference.x);
+    const deltaY = Math.abs(projectedLatOffset.y - projectedReference.y);
+
+    if (deltaX < 1 && deltaY < 1) return "degrees";
+  } catch {}
+
+  return "meters";
+}
+
+/**
+ * Convert a window size expressed in kilometers into "half side length" in the map CRS units.
+ *
+ * The sampler UI expresses the square window side length in kilometers. To draw that square
+ * in the current CRS, we need the half-side length in the CRS' native coordinate units:
+ *
+ * - If the CRS is projected in meters, the conversion is straightforward:
+ *     halfSide = (windowSizeKm * 1000) / 2
+ *
+ * - If the CRS is geographic in degrees, we approximate a degree-based half-side length
+ *   using the current latitude:
+ *     - 1 degree of latitude is ~110.574 km (roughly constant)
+ *     - 1 degree of longitude is ~111.320 * cos(latitude) km (shrinks toward the poles)
+ *   We then compute a single "km per degree" scalar using the geometric mean of the
+ *   lat/lon scales to keep the square reasonably area-consistent in degree space.
+ *
+ * The inferred CRS unit kind is cached on `state._crsUnitKind`.
+ *
+ * @param {L.CRS} crs - Leaflet CRS instance used by the map.
+ * @param {number} windowSizeKilometers - Desired square side length in kilometers.
+ * @returns {number} Half the window side length expressed in CRS coordinate units
+ *   (degrees or meters depending on CRS).
+ */
+function _halfSizeInCrsUnits(crs, windowSizeKilometers) {
+  if (!state._crsUnitKind) state._crsUnitKind = _detectCrsUnitKind(crs);
+
+  if (state._crsUnitKind === "degrees") {
+    const latitudeDegrees = (
+      state.lastMouseLatLng ||
+      state.map?.getCenter?.() || { lat: 0 }
+    ).lat;
+
+    const kilometersPerDegreeLatitude = 110.574;
+    const kilometersPerDegreeLongitude =
+      111.32 * Math.max(1e-9, Math.cos((latitudeDegrees * Math.PI) / 180));
+
+    const kilometersPerDegree = Math.sqrt(
+      kilometersPerDegreeLatitude * kilometersPerDegreeLongitude,
+    );
+
+    return windowSizeKilometers / kilometersPerDegree / 2;
+  }
+
+  return (windowSizeKilometers * 1000) / 2;
 }
 
 /**
@@ -400,19 +710,24 @@ function initMap() {
  *   and no fill, non-interactive.
  */
 function squarePolygonAt(centerLatLng, windowSizeKm) {
-  const crs = state.map.options.crs
-  const half = windowSizeKm * 1000 / 2
-  const p = crs.project(centerLatLng)
+  const crs = state.map.options.crs;
+  const half = _halfSizeInCrsUnits(crs, windowSizeKm);
+  const p = crs.project(centerLatLng);
+
   const corners = [
     L.point(p.x - half, p.y - half),
     L.point(p.x + half, p.y - half),
     L.point(p.x + half, p.y + half),
     L.point(p.x - half, p.y + half),
-  ].map(pt => crs.unproject(pt))
-  // strong orange color to follow the cursor
-  return L.polygon(corners, { color: '#ff6b00', weight: 2, fill: false, interactive: false })
-}
+  ].map((pt) => crs.unproject(pt));
 
+  return L.polygon(corners, {
+    color: "#ff6b00",
+    weight: 2,
+    fill: false,
+    interactive: false,
+  });
+}
 
 /**
  * Ensure a single outline polygon exists for the current selection.
@@ -420,17 +735,17 @@ function squarePolygonAt(centerLatLng, windowSizeKm) {
  * @private
  */
 function _ensureOutlineLayer() {
-  if (state.outlineLayer) return state.outlineLayer
+  if (state.outlineLayer) return state.outlineLayer;
   state.outlineLayer = L.polygon([], {
     //colors are shades of blues
-    color: '#0c63b8',
-    fillColor: '#1e90ff',
+    color: "#0c63b8",
+    fillColor: "#1e90ff",
     fillOpacity: 0.15,
     weight: 2,
     fill: true,
     interactive: false,
-  })
-  return state.outlineLayer
+  });
+  return state.outlineLayer;
 }
 
 /**
@@ -439,138 +754,307 @@ function _ensureOutlineLayer() {
  * @private
  */
 function updateOutline(poly) {
- const layer = _ensureOutlineLayer()
- layer.setLatLngs(poly.getLatLngs())
- if (!state.map.hasLayer(layer)) layer.addTo(state.map)
+  const layer = _ensureOutlineLayer();
+  layer.setLatLngs(poly.getLatLngs());
+  if (!state.map.hasLayer(layer)) layer.addTo(state.map);
 }
-
 
 /**
  * Wire UI controls that set the sampling window size (km).
  * Keeps range and numeric inputs in sync and updates hover rectangle.
  */
 function wireSquareSamplerControls() {
-  const windowSlider = document.getElementById('windowSlider')
-  const windowNumber = document.getElementById('windowSizeNumber')
+  const windowSlider = document.getElementById("windowSlider");
+  const windowNumber = document.getElementById("windowSizeNumber");
 
-  const minKm = 1
-  const maxKm = 400
-  const stepRange = 1
-  const currentKm = 200
+  const minKm = 1;
+  const maxKm = 300;
+  const stepRange = 1;
+  const currentKm = 200;
 
-  windowNumber.min = minKm
-  windowNumber.max = maxKm
-  windowNumber.step = stepRange
-  windowNumber.value = currentKm
+  windowNumber.min = minKm;
+  windowNumber.max = maxKm;
+  windowNumber.step = stepRange;
+  windowNumber.value = currentKm;
 
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   // pos in [0..100]  ->  km in [minKm..maxKm]
   function sliderToKm(pos) {
-    const p = clamp(Number(pos) || 0, 0, 100)
-    const exp = Math.sqrt(p / 100)
-    return minKm * Math.pow(maxKm / minKm, exp)
+    const p = clamp(Number(pos) || 0, 0, 100);
+    const exp = Math.sqrt(p / 100);
+    return minKm * Math.pow(maxKm / minKm, exp);
   }
 
   function updateHoverRect() {
-    if (!state.map || !state.hoverRect) return
-    const ll = state.lastMouseLatLng || state.map.getCenter()
-    const poly = squarePolygonAt(ll, state.boxSizeKm)
-    state.hoverRect.setLatLngs(poly.getLatLngs())
+    if (!state.map || !state.hoverRect) return;
+    const ll = state.lastMouseLatLng || state.map.getCenter();
+    const poly = squarePolygonAt(ll, state.boxSizeKm);
+    state.hoverRect.setLatLngs(poly.getLatLngs());
   }
-  windowSlider.addEventListener('input', () => updateHoverRect());
+  windowSlider.addEventListener("input", () => updateHoverRect());
 
   function setFromSlider(pos) {
-    const p = clamp(Number(pos) || 0, 0, 100)
-    const exp = Math.sqrt(p / 100)
-    const km = minKm * Math.pow(maxKm / minKm, exp)
-    state.boxSizeKm = km
-    windowNumber.value = km
-    updateHoverRect()
+    const p = clamp(Number(pos) || 0, 0, 100);
+    const exp = Math.sqrt(p / 100);
+    const km = minKm * Math.pow(maxKm / minKm, exp);
+    state.boxSizeKm = km;
+    windowNumber.value = km;
+    updateHoverRect();
   }
 
   function setFromKm(km) {
-    state.boxSizeKm = km
-    const k = clamp(Number(km) || minKm, minKm, maxKm)
-    const exp = Math.log(k / minKm) / Math.log(maxKm / minKm) // [0..1]
-    const pos = clamp(Math.pow(exp, 2) * 1, 0, 100)*100
+    state.boxSizeKm = km;
+    const k = clamp(Number(km) || minKm, minKm, maxKm);
+    const exp = Math.log(k / minKm) / Math.log(maxKm / minKm); // [0..1]
+    const pos = clamp(Math.pow(exp, 2) * 1, 0, 100) * 100;
     windowSlider.value = pos;
-    updateHoverRect()
+    updateHoverRect();
   }
   setFromKm(currentKm);
 
-  windowSlider.addEventListener('input', () => setFromSlider(Number(windowSlider.value)))
-  windowNumber.addEventListener('input', () => setFromKm(Number(windowNumber.value)))
-
+  windowSlider.addEventListener("input", () =>
+    setFromSlider(Number(windowSlider.value)),
+  );
+  windowNumber.addEventListener("input", () =>
+    setFromKm(Number(windowNumber.value)),
+  );
 }
 
+const layerLabel = (lyr) =>
+  lyr?.title && String(lyr.title).trim() ? String(lyr.title).trim() : lyr?.name;
+const layerDesc = (lyr) =>
+  lyr?.description && String(lyr.description).trim()
+    ? String(lyr.description).trim()
+    : "";
+
 /**
- * Populate both layer <select> elements with available WMS layers and wire change handlers.
- * Reads state.availableLayers and updates the DOM.
+ * Populate both layer <select> elements, and the base layer, with available
+ * WMS layers and wire change handlers.
+ * Reads state.availableLayers and state.availableBaseLayers updates the DOM.
  */
 function populateLayerSelects() {
-  const fill = (sel) => {
-    sel.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.textContent = 'Click here to choose a layer';
-    placeholder.value = '';
+  const fill = (sel, layers) => {
+    sel.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.textContent = "Click here to choose a layer";
+    placeholder.value = "";
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
-    state.availableLayers.forEach((lyr, i) => {
-      const opt = document.createElement('option');
+
+    layers.forEach((lyr, i) => {
+      const opt = document.createElement("option");
       opt.value = String(i);
-      opt.textContent = lyr.name;
+      opt.textContent = layerLabel(lyr);
+      opt.title = layerDesc(lyr);
       sel.appendChild(opt);
     });
   };
 
-  ['A', 'B'].forEach(layerId => {
+  ["A", "B"].forEach((layerId) => {
     const sel = document.getElementById(`layerSelect${layerId}`);
-    fill(sel);
+    fill(sel, state.availableLayers);
+
     const def = sel.dataset.default;
-    sel.addEventListener('change', e => onLayerChange(e, layerId));
-    const idx = /^\d+$/.test(def) ? parseInt(def, 10)
-      : state.availableLayers.findIndex(l => l.id === def || l.name === def);
-      //layer not enabled yet like when the page loads
-    if (idx < 0) {
-      return;
-    }
+    sel.addEventListener("change", (e) => onLayerChange(e, layerId));
+
+    const idx = /^\d+$/.test(def)
+      ? parseInt(def, 10)
+      : state.availableLayers.findIndex((l) => l.id === def || l.name === def);
+
+    if (idx < 0) return;
+
     sel.value = String(idx);
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  ["Base"].forEach((layerId) => {
+    const sel = document.getElementById(`layerSelect${layerId}`);
+    fill(sel, state.availableBaseLayers);
+
+    const def = sel.dataset.default;
+    sel.addEventListener("change", (e) => onBaseLayerChange(e, layerId));
+    const idx = /^\d+$/.test(def)
+      ? parseInt(def, 10)
+      : state.availableBaseLayers.findIndex(
+          (l) => l.id === def || l.name === def,
+        );
+    if (idx < 0) return;
+    sel.value = String(idx);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
 /**
- * Add a WMS layer to the map for the given qualified layer name and slot.
- * Replaces any existing layer in that slot. Slot 'A' is above 'B', className
- * adds any additional class to the layer probalby for styling.
+ * Add/replace a WMS layer in a named slot and set z-order.
+ * Slots: 'base' (bottom), 'B' (middle), 'A' (top)
  * @param {string} qualifiedName
- * @param {'A'|'B'} slot
- * @param {string} className
+ * @param {'A'|'B'|'base'} slot
+ * @param {{className?: string, transparent?: boolean, zIndex?: number}} [opts]
  */
-function addWmsLayer(qualifiedName, slot, className) {
-  const wmsUrl = `${state.geoserverBaseUrl}/wms`
-  const params = {
+function addWmsLayer(qualifiedName, slot, opts = {}) {
+  const wmsUrl = `${state.geoserverBaseUrl}/wms`;
+  const defaultClassName = slot === "A" ? "blend-screen" : "blend-base";
+  const zIndexBySlot = { base: 100, B: 200, A: 300 };
+  const paneBySlot = { base: "basePane", B: "blendPane", A: "blendPane" };
+
+  const layer = L.tileLayer.wms(wmsUrl, {
     layers: qualifiedName,
-    format: 'image/png',
-    transparent: true,
+    format: "image/png",
+    transparent: opts.transparent ?? true,
     tiled: true,
-    version: '1.1.1',
-    className: className ?? (slot === 'A' ? 'blend-screen' : 'blend-base'),
+    version: "1.1.1",
+    className: opts.className ?? defaultClassName,
+    noWrap: true,
+    pane: paneBySlot[slot],
+  });
+
+  const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
+  if (state[stateKey]) state.map.removeLayer(state[stateKey]);
+  state[stateKey] = layer.addTo(state.map);
+
+  const zIndex = opts.zIndex ?? zIndexBySlot[slot] ?? 200;
+  if (state[stateKey].setZIndex) state[stateKey].setZIndex(zIndex);
+
+  if (state.wmsLayerA) state.wmsLayerA.bringToFront();
+}
+
+/**
+ * Handle base layer change from a <select>.
+ * Adds/updates the base WMS underneath A/B when the base checkbox is checked.
+ * @param {Event & {target: HTMLSelectElement}} e
+ */
+function onBaseLayerChange(e) {
+  const idx = parseInt(e.target.value, 10);
+  const baseLayer = state.availableBaseLayers[idx];
+  state.baseLayer = baseLayer;
+  state.baseLegendControl.setLayer(baseLayer.name);
+  renderLayerMeta("Base", baseLayer);
+
+  state.activeBaseLayerIdx = idx;
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("baseLayer", baseLayer?.name ?? "");
+  history.replaceState(null, "", url.toString());
+
+  document.getElementById("layerVisibleBase").checked = true;
+  addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
+  state.baseVisibility = true;
+}
+
+function _xmlLocalName(el) {
+  return String(el?.localName || el?.tagName || "").toLowerCase();
+}
+
+function _xmlChild(el, localName) {
+  const want = String(localName).toLowerCase();
+  return (
+    Array.from(el?.children || []).find((c) => _xmlLocalName(c) === want) ||
+    null
+  );
+}
+
+function _xmlChildren(el, localName) {
+  const want = String(localName).toLowerCase();
+  return Array.from(el?.children || []).filter(
+    (c) => _xmlLocalName(c) === want,
+  );
+}
+
+async function _getWmsCapsXml() {
+  if (state._wmsCapsXml) return state._wmsCapsXml;
+  if (state._wmsCapsPromise) return state._wmsCapsPromise;
+  const url = `${state.geoserverBaseUrl}/wms?service=WMS&request=GetCapabilities&version=1.1.1`;
+  state._wmsCapsPromise = fetch(url)
+    .then((r) =>
+      r.ok ? r.text() : r.text().then((t) => Promise.reject(new Error(t))),
+    )
+    .then((txt) => new DOMParser().parseFromString(txt, "text/xml"))
+    .then((xml) => {
+      state._wmsCapsXml = xml;
+      state._wmsCapsPromise = null;
+      return xml;
+    })
+    .catch((e) => {
+      state._wmsCapsPromise = null;
+      throw e;
+    });
+  return state._wmsCapsPromise;
+}
+
+function _findWmsLayerElByName(xml, qualifiedName) {
+  const layers = Array.from(xml.getElementsByTagNameNS("*", "Layer"));
+  for (const layerEl of layers) {
+    const nameEl = _xmlChild(layerEl, "Name");
+    if (nameEl && String(nameEl.textContent || "").trim() === qualifiedName)
+      return layerEl;
   }
-  const l = L.tileLayer.wms(wmsUrl, params)
-  ;['A', 'B'].forEach(layerSlot => {
-    const key = `wmsLayer${layerSlot}`
-    if (slot === layerSlot) {
-      if (state[key]) state.map.removeLayer(state[key])
-      state[key] = l.addTo(state.map)
+  return null;
+}
+
+function _extractLayerLatLngBounds(layerEl) {
+  if (!layerEl || !state.map) return null;
+  const crs = state.map.options.crs;
+  const mapCrsCode = String(crs?.code || "").toUpperCase();
+
+  const bboxEls = _xmlChildren(layerEl, "BoundingBox");
+  for (const bb of bboxEls) {
+    const srs = String(
+      bb.getAttribute("SRS") || bb.getAttribute("CRS") || "",
+    ).toUpperCase();
+    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue;
+    const minx = parseFloat(bb.getAttribute("minx"));
+    const miny = parseFloat(bb.getAttribute("miny"));
+    const maxx = parseFloat(bb.getAttribute("maxx"));
+    const maxy = parseFloat(bb.getAttribute("maxy"));
+    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue;
+    const sw = crs.unproject(L.point(minx, miny));
+    const ne = crs.unproject(L.point(maxx, maxy));
+    return L.latLngBounds(sw, ne);
+  }
+
+  const ll = _xmlChild(layerEl, "LatLonBoundingBox");
+  if (ll) {
+    const minx = parseFloat(ll.getAttribute("minx"));
+    const miny = parseFloat(ll.getAttribute("miny"));
+    const maxx = parseFloat(ll.getAttribute("maxx"));
+    const maxy = parseFloat(ll.getAttribute("maxy"));
+    if ([minx, miny, maxx, maxy].every(Number.isFinite)) {
+      return L.latLngBounds([miny, minx], [maxy, maxx]);
     }
-  })
+  }
 
-  // keep A on top if present
-  if (state.wmsLayerA) state.wmsLayerA.bringToFront()
+  const ex = _xmlChild(layerEl, "EX_GeographicBoundingBox");
+  if (ex) {
+    const west = parseFloat(
+      String(_xmlChild(ex, "westBoundLongitude")?.textContent || "").trim(),
+    );
+    const east = parseFloat(
+      String(_xmlChild(ex, "eastBoundLongitude")?.textContent || "").trim(),
+    );
+    const south = parseFloat(
+      String(_xmlChild(ex, "southBoundLatitude")?.textContent || "").trim(),
+    );
+    const north = parseFloat(
+      String(_xmlChild(ex, "northBoundLatitude")?.textContent || "").trim(),
+    );
+    if ([west, east, south, north].every(Number.isFinite)) {
+      return L.latLngBounds([south, west], [north, east]);
+    }
+  }
 
+  return null;
+}
+
+async function _getWmsLayerLatLngBounds(qualifiedName) {
+  if (!qualifiedName) return null;
+  if (state._wmsLayerBoundsCache.has(qualifiedName))
+    return state._wmsLayerBoundsCache.get(qualifiedName);
+  const xml = await _getWmsCapsXml();
+  const layerEl = _findWmsLayerElByName(xml, qualifiedName);
+  const b = _extractLayerLatLngBounds(layerEl);
+  state._wmsLayerBoundsCache.set(qualifiedName, b);
+  return b;
 }
 
 /**
@@ -580,39 +1064,52 @@ function addWmsLayer(qualifiedName, slot, className) {
  * @param {'A'|'B'} layerId
  */
 async function onLayerChange(e, layerId) {
-  const idx = parseInt(e.target.value, 10)
-  const lyr = state.availableLayers[idx]
+  const idx = parseInt(e.target.value, 10);
+  const lyr = state.availableLayers[idx];
+  const doInitialFit = !state.didInitialRasterFit && !!lyr?.name;
+  if (doInitialFit) state.didInitialRasterFit = true;
+  const initialFitBoundsPromise = doInitialFit
+    ? _getWmsLayerLatLngBounds(lyr.name)
+    : null;
+  renderLayerMeta(layerId, lyr);
   const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ raster_id: lyr.name }),
-  })
-  if (!res.ok) throw new Error(await res.text())
-  const { min_, max_ } = await res.json()
-  const med = (max_ + min_) / 2
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const { min_, max_ } = await res.json();
+  const med = (max_ + min_) / 2;
 
   // write values into the correct panel (A or B)
-  document.getElementById(`layer${layerId}MinInput`).value = min_
-  document.getElementById(`layer${layerId}MedInput`).value = med
-  document.getElementById(`layer${layerId}MaxInput`).value = max_
+  document.getElementById(`layer${layerId}MinInput`).value = min_;
+  document.getElementById(`layer${layerId}MedInput`).value = med;
+  document.getElementById(`layer${layerId}MaxInput`).value = max_;
 
   // update state and map layer
-  state[`activeLayerIdx${layerId}`] = idx
-  const className = layerId === 'A' ? 'blend-screen' : 'blend-base'
-  addWmsLayer(lyr.name, layerId, className)
-  applyDynamicStyle(layerId)
+  state[`activeLayerIdx${layerId}`] = idx;
+  const className = layerId === "A" ? "blend-screen" : "blend-base";
+  document.getElementById(`layerVisible${layerId}`).checked = true;
+  addWmsLayer(lyr.name, layerId, className);
+  applyDynamicStyle(layerId);
   if (!state.sampleMode) {
-    document.getElementById('statsOverlay').classList.add('hidden')
-    document.getElementById('overlayBody').innerHTML = ''
-  } else if (state.sampleMode == 'shapefile') {
+    document.getElementById("statsOverlay").classList.add("hidden");
+    document.getElementById("overlayBody").innerHTML = "";
+  } else if (state.sampleMode == "shapefile") {
     // calculate new stats then re-render scatter overlay
-    setAOIAndRenderOverlay(state.lastFeatureCollection)
-  } else if (state.sampleMode == 'window') {
+    setAOIAndRenderOverlay(state.lastFeatureCollection);
+  } else if (state.sampleMode == "window") {
     sampleAndRenderSampleBox();
   }
-  const url = new URL(window.location.href)
-  url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name)
-  history.replaceState(null, '', url.toString())
+  const url = new URL(window.location.href);
+  url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name);
+  history.replaceState(null, "", url.toString());
+  if (initialFitBoundsPromise) {
+    try {
+      const b = await initialFitBoundsPromise;
+      if (b && b.isValid()) state.map.fitBounds(b, { padding: [24, 24] });
+    } catch {}
+  }
 }
 
 /**
@@ -625,21 +1122,21 @@ async function onLayerChange(e, layerId) {
  */
 async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
   const res = await fetch(`${state.baseStatsUrl}/stats/scatter`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       raster_id_x: rasterIdX ?? null,
       raster_id_y: rasterIdY ?? null,
       geometry: geojson.geometry ? geojson.geometry : geojson,
-      from_crs: 'EPSG:4326', //the poly should be in lat/lng
+      from_crs: "EPSG:4326", //the poly should be in lat/lng so this is hard-coded
       histogram_bins: MAX_HISTOGRAM_BINS,
       max_points: MAX_HISTOGRAM_POINTS,
       all_touched: true,
     }),
-  })
+  });
 
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 /**
@@ -647,10 +1144,10 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
  * @param {string} msg
  */
 function showOverlayError(msg) {
-  const overlay = document.getElementById('statsOverlay')
-  const body = document.getElementById('overlayBody')
-  overlay.classList.remove('hidden')
-  body.innerHTML = `<pre>${msg}</pre>`
+  const overlay = document.getElementById("statsOverlay");
+  const body = document.getElementById("overlayBody");
+  overlay.classList.remove("hidden");
+  body.innerHTML = `<pre>${msg}</pre>`;
 }
 
 /**
@@ -661,19 +1158,19 @@ function showOverlayError(msg) {
  */
 function zoomToOutline(centerLng, centerLat) {
   if (state.outlineLayer && state.map.hasLayer(state.outlineLayer)) {
-    const b = state.outlineLayer.getBounds()
+    const b = state.outlineLayer.getBounds();
     if (b && b.isValid()) {
-      state.map.fitBounds(b, { padding: [24, 24] })
-      return
+      state.map.fitBounds(b, { padding: [24, 24] });
+      return;
     }
   } else if (state.uploadedLayer && state.map.hasLayer(state.uploadedLayer)) {
-    const b = state.uploadedLayer.getBounds()
+    const b = state.uploadedLayer.getBounds();
     if (b && b.isValid()) {
-      state.map.fitBounds(b, { padding: [24, 24] })
-      return
+      state.map.fitBounds(b, { padding: [24, 24] });
+      return;
     }
   }
-  state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12))
+  state.map.setView([centerLat, centerLng], Math.max(state.map.getZoom(), 12));
 }
 
 /**
@@ -695,10 +1192,10 @@ function zoomToOutline(centerLng, centerLat) {
  * @param {string} layerId - Identifier of the raster layer, used for color mapping.
  * @returns {SVGElement} The constructed histogram `<svg>` element.
  */
-function buildHistogramSVG(edges, hist, layerId) {
-  const w = 480;
-  const h = 160;
-  const pad = 36;
+function buildHistogramSVG(edges, hist, layerId, opts = {}) {
+  const w = opts.width ?? 480;
+  const h = opts.height ?? 160;
+  const pad = opts.pad ?? 36;
   const axisColor = '#666';
   const percentileColor = '#eeeeee';
   const percentileDecimals = 2;
@@ -708,8 +1205,10 @@ function buildHistogramSVG(edges, hist, layerId) {
   svg.setAttribute('width', String(w));
   svg.setAttribute('height', String(h));
 
-  const xMin = Math.min(...edges);
-  const xMax = Math.max(...edges);
+  const dataMin = edges[0];
+  const dataMax = edges[edges.length - 1];
+  const viewMin = opts.viewMin ?? dataMin;
+  const viewMax = opts.viewMax ?? dataMax;
   const innerW = Math.max(1, w - pad * 2);
   const innerH = Math.max(1, h - pad * 2);
 
@@ -718,45 +1217,60 @@ function buildHistogramSVG(edges, hist, layerId) {
   const plotX1 = pad + innerW;
   const plotY1 = pad + innerH;
 
-  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
-  const scaleH = c => {
-    const maxC = Math.max(1, ...hist.map(v => Number.isFinite(v) ? v : 0));
-    return ((Number.isFinite(c) ? c : 0) / maxC) * innerH;
-  };
+  const scaleX = (v) =>
+    plotX0 + ((v - viewMin) / Math.max(1e-9, viewMax - viewMin)) * innerW;
+  const maxCount = Math.max(
+    1,
+    ...hist.map((value) => (Number.isFinite(value) ? value : 0)),
+  );
+  const scaleH = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCount) * innerH;
 
   state.scaleX = scaleX;
-  state.hist1dBounds = [xMin, xMax];
+  state.hist1dBounds = [viewMin, viewMax];
+  state.pctBounds1d = null;
 
   const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
-    const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
-    return l;
-  };
-  const mkText = (txt, x, y, anchor = 'middle') => {
-    const t = document.createElementNS(svgNS, 'text');
-    t.textContent = txt;
-    t.setAttribute('x', x); t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10');
-    t.setAttribute('text-anchor', anchor);
-    return t;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', stroke);
+    line.setAttribute('stroke-width', sw);
+    return line;
   };
 
-  // axes
+  const mkText = (text, x, y, anchor = 'middle') => {
+    const label = document.createElementNS(svgNS, 'text');
+    label.textContent = text;
+    label.setAttribute('x', x);
+    label.setAttribute('y', y);
+    label.setAttribute('fill', '#aaa');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', anchor);
+    return label;
+  };
+
   svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
   svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+  svg.appendChild(mkText(viewMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(viewMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
 
-  // bars
   for (let i = 0; i < hist.length; i++) {
-    const c = Number(hist[i]) || 0;
-    const x0 = scaleX(edges[i]);
-    const x1 = scaleX(edges[i + 1]);
+    const binMin = edges[i];
+    const binMax = edges[i + 1];
+    const drawMin = Math.max(binMin, viewMin);
+    const drawMax = Math.min(binMax, viewMax);
+
+    if (drawMax <= drawMin) continue;
+
+    const count = Number(hist[i]) || 0;
+    const x0 = scaleX(drawMin);
+    const x1 = scaleX(drawMax);
     const barW = Math.max(1, x1 - x0);
-    const hPix = scaleH(c);
-    const mid = (edges[i] + edges[i + 1]) / 2;
+    const hPix = scaleH(count);
+    const mid = (binMin + binMax) / 2;
     const rgbArray = styleColorArrForValue(layerId, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
 
@@ -770,80 +1284,67 @@ function buildHistogramSVG(edges, hist, layerId) {
     svg.appendChild(rect);
   }
 
-  // percentiles (reads from state.percentiles if available)
   const percentilesRaw = Array.isArray(state.percentiles) ? state.percentiles : [];
-  const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === 'string') {
-      const s = p.trim(); if (!s) return null;
-      const num = parseFloat(s); if (!Number.isFinite(num)) return null;
-      return (s.endsWith('%') || num > 1) ? num / 100 : num;
-    }
-    return null;
-  };
-  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a, b) => a - b);
+  const percentiles = [
+    ...new Set(
+      percentilesRaw
+        .map((value) => value / 100)
+        .filter((value) => value >= 0 && value <= 1),
+    ),
+  ].sort((a, b) => a - b);
 
-  const total = hist.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-  const getQuantile = q => {
-    if (total <= 0) return xMin;
-    const target = q * total;
-    let cum = 0;
-    for (let i = 0; i < hist.length; i++) {
-      const c = Number.isFinite(hist[i]) ? hist[i] : 0;
-      const next = cum + c;
-      if (target <= next) {
-        const e0 = edges[i], e1 = edges[i + 1];
-        const f = c > 0 ? (target - cum) / c : 0;
-        return e0 + f * (e1 - e0);
-      }
-      cum = next;
-    }
-    return xMax;
-  };
-
-  const attachPctHover = (guideEl, lblEl, text) => {
-    [guideEl, lblEl].forEach(el => {
+  const attachPctHover = (guideEl, labelEl, text) => {
+    [guideEl, labelEl].forEach((el) => {
       el.style.cursor = 'pointer';
-      el.addEventListener('mouseenter', e => {
-        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
-        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mouseenter', (e) => {
+        guideEl.setAttribute('stroke-width', '2');
+        guideEl.setAttribute('opacity', '1');
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener('mousemove', e => {
-        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mousemove', (e) => {
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
       el.addEventListener('mouseleave', () => {
-        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
-        if (typeof hidePctTooltip === 'function') hidePctTooltip();
+        guideEl.setAttribute('stroke-width', '1');
+        guideEl.setAttribute('opacity', '0.9');
+        hidePctTooltip?.();
       });
     });
   };
 
-  for (const p of percentiles) {
-    const xv = getQuantile(p);
-    const x = scaleX(xv);
-    const gx = mkLine(x, plotY0, x, plotY1, percentileColor);
-    gx.setAttribute('stroke-dasharray', '4,3');
-    gx.setAttribute('opacity', '0.5');
-    svg.appendChild(gx);
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(edges, hist, percentile);
+    if (value < viewMin || value > viewMax) continue;
 
-    const label = `${Math.round(p * 100)}% (${xv.toFixed(percentileDecimals)})`;
-    const lx = mkText(label, x, plotY0 - 6, 'middle');
-    lx.setAttribute('fill', percentileColor);
-    svg.appendChild(lx);
-    attachPctHover(gx, lx, `${Math.round(p * 100)}% • ${xv.toFixed(percentileDecimals)}`);
+    const x = scaleX(value);
+    const guide = mkLine(x, plotY0, x, plotY1, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`;
+    const text = mkText(label, x, plotY0 - 6, 'middle');
+    text.setAttribute('fill', percentileColor);
+    svg.appendChild(text);
+
+    attachPctHover(
+      guide,
+      text,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
+    );
   }
 
   if (percentiles.length) {
-    const minP = Math.min(...percentiles);
-    const maxP = Math.max(...percentiles);
-    const xmin = getQuantile(minP);
-    const xmax = getQuantile(maxP);
-    state.pctBounds1d = { xmin, xmax };
+    const minPercentile = Math.min(...percentiles);
+    const maxPercentile = Math.max(...percentiles);
+    state.pctBounds1d = {
+      xmin: getHistogramQuantile(edges, hist, minPercentile),
+      xmax: getHistogramQuantile(edges, hist, maxPercentile),
+    };
   }
 
   return svg;
 }
-
 
 /**
  * Show and position the histogram tooltip within the overlay.
@@ -854,18 +1355,18 @@ function buildHistogramSVG(edges, hist, layerId) {
  * @private
  */
 function showHistTooltip(text, clientX, clientY, anchorEl) {
-  let tip = document.querySelector('.hist-tooltip')
+  let tip = document.querySelector(".hist-tooltip");
   if (!tip) {
-    tip = document.createElement('div')
-    tip.className = 'hist-tooltip'
-    tip.style.display = 'none'
-    document.body.appendChild(tip)
+    tip = document.createElement("div");
+    tip.className = "hist-tooltip";
+    tip.style.display = "none";
+    document.body.appendChild(tip);
   }
-  tip.textContent = text
-  const r = anchorEl.getBoundingClientRect()
-  tip.style.left = `${clientX - r.left}px`
-  tip.style.top = `${clientY - r.top}px`
-  tip.style.display = 'block'
+  tip.textContent = text;
+  const r = anchorEl.getBoundingClientRect();
+  tip.style.left = `${clientX - r.left}px`;
+  tip.style.top = `${clientY - r.top}px`;
+  tip.style.display = "block";
 }
 
 /**
@@ -873,10 +1374,313 @@ function showHistTooltip(text, clientX, clientY, anchorEl) {
  * @private
  */
 function hideHistTooltip() {
-  const tip = document.querySelector('.hist-tooltip')
-  if (tip) tip.style.display = 'none'
+  const tip = document.querySelector(".hist-tooltip");
+  if (tip) tip.style.display = "none";
 }
 
+
+/**
+ * Estimate a quantile value from a histogram defined by bin edges and counts.
+ * Performs a linear interpolation within the bin containing the target quantile.
+ *
+ * @param {number[]} edges - Monotonically increasing array of bin edges of length N+1.
+ * @param {number[]} counts - Histogram counts per bin of length N corresponding to edges.
+ * @param {number} quantile - Desired quantile in [0, 1].
+ * @returns {number} Estimated value at the requested quantile within the histogram range.
+ */
+function getHistogramQuantile(edges, counts, quantile) {
+  const min = edges[0];
+  const max = edges[edges.length - 1];
+  const total = counts.reduce(
+    (sum, count) => sum + (Number.isFinite(count) ? count : 0),
+    0,
+  );
+
+  if (total <= 0) return min;
+
+  const target = clamp01(quantile) * total;
+  let cumulative = 0;
+
+  for (let i = 0; i < counts.length; i++) {
+    const count = Number.isFinite(counts[i]) ? counts[i] : 0;
+    const next = cumulative + count;
+
+    if (target <= next) {
+      const binMin = edges[i];
+      const binMax = edges[i + 1];
+      const fraction = count > 0 ? (target - cumulative) / count : 0;
+      return binMin + fraction * (binMax - binMin);
+    }
+
+    cumulative = next;
+  }
+
+  return max;
+}
+
+/**
+ * Compute marginal counts along each axis from a 2D histogram.
+ *
+ * @param {number[][]} hist2d - 2D histogram array indexed as [xBin][yBin].
+ * @returns {{xCounts: number[], yCounts: number[]}} Object containing summed counts per x bin and per y bin.
+ */
+function getScatterMarginalCounts(hist2d) {
+  const xCounts = new Array(hist2d.length).fill(0);
+  const yCounts = new Array(hist2d[0].length).fill(0);
+
+  for (let i = 0; i < hist2d.length; i++) {
+    for (let j = 0; j < hist2d[i].length; j++) {
+      const value = Number(hist2d[i][j]) || 0;
+      xCounts[i] += value;
+      yCounts[j] += value;
+    }
+  }
+
+  return { xCounts, yCounts };
+}
+
+/**
+ * Initialize or update the plot view range for the current scatter object and plot type.
+ * If the view already corresponds to the same scatter object and plot kind, no change is made.
+ *
+ * @param {Object} scatterObj - Scatter data object containing x_edges and/or y_edges arrays.
+ * @param {string} plotKind - Identifier for the current plot mode/type.
+ */
+function ensurePlotView(scatterObj, plotKind) {
+  if (
+    state.plotView &&
+    state.plotViewScatterObj === scatterObj &&
+    state.plotViewKind === plotKind
+  ) {
+    return;
+  }
+
+  state.plotView = {
+    xMin: Array.isArray(scatterObj?.x_edges) ? scatterObj.x_edges[0] : null,
+    xMax: Array.isArray(scatterObj?.x_edges)
+      ? scatterObj.x_edges[scatterObj.x_edges.length - 1]
+      : null,
+    yMin: Array.isArray(scatterObj?.y_edges) ? scatterObj.y_edges[0] : null,
+    yMax: Array.isArray(scatterObj?.y_edges)
+      ? scatterObj.y_edges[scatterObj.y_edges.length - 1]
+      : null,
+  };
+  state.plotViewScatterObj = scatterObj;
+  state.plotViewKind = plotKind;
+}
+
+/**
+ * Update the visible range for a plot axis while clamping it to the full data extent.
+ * The resulting range is stored in state.plotView.
+ *
+ * @param {'x'|'y'} axis - Axis identifier.
+ * @param {number} nextMin - Proposed minimum value for the axis view.
+ * @param {number} nextMax - Proposed maximum value for the axis view.
+ * @param {number} fullMin - Minimum allowed value for the axis.
+ * @param {number} fullMax - Maximum allowed value for the axis.
+ */
+function setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax) {
+  const rangeMin = Math.max(
+    fullMin,
+    Math.min(fullMax, Math.min(nextMin, nextMax)),
+  );
+  const rangeMax = Math.max(
+    fullMin,
+    Math.min(fullMax, Math.max(nextMin, nextMax)),
+  );
+
+  if (!(rangeMin < rangeMax)) return;
+
+  if (!state.plotView) state.plotView = {};
+
+  if (axis === 'x') {
+    state.plotView.xMin = rangeMin;
+    state.plotView.xMax = rangeMax;
+  } else {
+    state.plotView.yMin = rangeMin;
+    state.plotView.yMax = rangeMax;
+  }
+}
+
+/**
+ * Re-render the scatter overlay using the last render options stored in state.
+ * If no previous scatter options or scatter object exist, no action is taken.
+ *
+ * @returns {Promise<void>}
+ */
+async function rerenderScatterOverlayFromState() {
+  if (!state.lastScatterOpts || !state.scatterObj) return;
+
+  await renderScatterOverlay({
+    ...state.lastScatterOpts,
+    scatterObj: state.scatterObj,
+  });
+}
+
+/**
+ * Render UI controls that allow adjusting the visible axis ranges of the plot.
+ * Supports manual numeric entry and preset percentile-based range buttons.
+ * The controls update state.plotView and trigger scatter overlay re-rendering.
+ *
+ * @param {Object} params
+ * @param {Object} params.scatterObj - Scatter data object containing histogram data and edges.
+ * @param {boolean} params.has2D - Whether the plot uses a 2D histogram.
+ * @param {boolean} params.has1DX - Whether the plot uses a 1D histogram along X.
+ * @param {boolean} params.has1DY - Whether the plot uses a 1D histogram along Y.
+ * @param {string} [params.rasterX] - Optional label for the X axis.
+ * @param {string} [params.rasterY] - Optional label for the Y axis.
+ */
+function renderPlotRangeControls({
+  scatterObj,
+  has2D,
+  has1DX,
+  has1DY,
+  rasterX,
+  rasterY,
+}) {
+  const container = document.getElementById('plotRangeControls');
+  if (!container) return;
+
+  container.replaceChildren();
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '4px';
+
+  if (!scatterObj || !state.plotView) return;
+
+  const axisConfigs = [];
+
+  if (has2D) {
+    const { xCounts, yCounts } = getScatterMarginalCounts(scatterObj.hist2d);
+
+    axisConfigs.push(
+      {
+        axis: 'x',
+        label: rasterX || 'X',
+        edges: scatterObj.x_edges,
+        counts: xCounts,
+        viewMin: state.plotView.xMin,
+        viewMax: state.plotView.xMax,
+      },
+      {
+        axis: 'y',
+        label: rasterY || 'Y',
+        edges: scatterObj.y_edges,
+        counts: yCounts,
+        viewMin: state.plotView.yMin,
+        viewMax: state.plotView.yMax,
+      },
+    );
+  } else if (has1DX) {
+    axisConfigs.push({
+      axis: 'x',
+      label: rasterX || 'X',
+      edges: scatterObj.x_edges,
+      counts: scatterObj.hist1d_x,
+      viewMin: state.plotView.xMin,
+      viewMax: state.plotView.xMax,
+    });
+  } else if (has1DY) {
+    axisConfigs.push({
+      axis: 'y',
+      label: rasterY || 'Y',
+      edges: scatterObj.y_edges,
+      counts: scatterObj.hist1d_y,
+      viewMin: state.plotView.yMin,
+      viewMax: state.plotView.yMax,
+    });
+  }
+
+  const hint = document.createElement('div');
+  hint.textContent = 'Range presets only change the current view.';
+  hint.style.fontSize = '11px';
+  hint.style.color = '#94a3b8';
+  hint.style.marginBottom = '6px';
+  container.appendChild(hint);
+
+  axisConfigs.forEach((axisConfig) => {
+    const { axis, label, edges, counts, viewMin, viewMax } = axisConfig;
+    const fullMin = edges[0];
+    const fullMax = edges[edges.length - 1];
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+    row.style.marginBottom = '8px';
+
+    const axisLabel = document.createElement('span');
+    axisLabel.textContent = label;
+    axisLabel.className = 'small-mono';
+    axisLabel.style.minWidth = '110px';
+    row.appendChild(axisLabel);
+
+    const minInput = document.createElement('input');
+    minInput.type = 'number';
+    minInput.step = 'any';
+    minInput.value = String(viewMin);
+    minInput.style.width = '96px';
+    row.appendChild(minInput);
+
+    const separator = document.createElement('span');
+    separator.textContent = 'to';
+    row.appendChild(separator);
+
+    const maxInput = document.createElement('input');
+    maxInput.type = 'number';
+    maxInput.step = 'any';
+    maxInput.value = String(viewMax);
+    maxInput.style.width = '96px';
+    row.appendChild(maxInput);
+
+    const commitManualRange = async () => {
+      const nextMin = parseFloat(minInput.value);
+      const nextMax = parseFloat(maxInput.value);
+
+      if (!Number.isFinite(nextMin) || !Number.isFinite(nextMax)) return;
+
+      setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax);
+      await rerenderScatterOverlayFromState();
+    };
+
+    [minInput, maxInput].forEach((input) => {
+      input.addEventListener('change', commitManualRange);
+      input.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        await commitManualRange();
+      });
+    });
+
+    const makePresetButton = (labelText, lowQuantile, highQuantile) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = labelText;
+      button.addEventListener('click', async () => {
+        const nextMin = getHistogramQuantile(edges, counts, lowQuantile);
+        const nextMax = getHistogramQuantile(edges, counts, highQuantile);
+        setPlotAxisView(axis, nextMin, nextMax, fullMin, fullMax);
+        await rerenderScatterOverlayFromState();
+      });
+      return button;
+    };
+
+    row.appendChild(makePresetButton('1–99', 0.01, 0.99));
+    row.appendChild(makePresetButton('5–95', 0.05, 0.95));
+
+    const fullButton = document.createElement('button');
+    fullButton.type = 'button';
+    fullButton.textContent = 'Full';
+    fullButton.addEventListener('click', async () => {
+      setPlotAxisView(axis, fullMin, fullMax, fullMin, fullMax);
+      await rerenderScatterOverlayFromState();
+    });
+    row.appendChild(fullButton);
+
+    container.appendChild(row);
+  });
+}
 
 /**
  * Build a GeoServer env string from a dict, skipping undefined values.
@@ -885,11 +1689,13 @@ function hideHistTooltip() {
  * @private
  */
 function buildEnvString(obj) {
-  const entries = Object.entries(obj || {}).map(([k, v]) => {
-    if (v == null) return null
-    return `${k}:${v}`
-  }).filter(Boolean)
-  return entries.join(';')
+  const entries = Object.entries(obj || {})
+    .map(([k, v]) => {
+      if (v == null) return null;
+      return `${k}:${v}`;
+    })
+    .filter(Boolean);
+  return entries.join(";");
 }
 
 /**
@@ -898,15 +1704,15 @@ function buildEnvString(obj) {
  * @returns {{min:number,med:number,max:number,cmin:string,cmed:string,cmax:string,ncolor:string}}
  */
 function readStyleInputsFromUI(layerId) {
-  const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`)
+  const get = (suffix) => document.getElementById(`layer${layerId}${suffix}`);
   return {
-    min: get('MinInput').value,
-    med: get('MedInput').value,
-    max: get('MaxInput').value,
-    cmin: get('CminInput').value,
-    cmed: get('CmedInput').value,
-    cmax: get('CmaxInput').value,
-  }
+    min: get("MinInput").value,
+    med: get("MedInput").value,
+    max: get("MaxInput").value,
+    cmin: get("CminInput").value,
+    cmed: get("CmedInput").value,
+    cmax: get("CmaxInput").value,
+  };
 }
 
 /**
@@ -914,17 +1720,19 @@ function readStyleInputsFromUI(layerId) {
  * @param {'A'|'B'} layerId
  */
 function applyDynamicStyle(layerId) {
-  const layer = state[`wmsLayer${layerId}`]
-  if (!layer) return
+  const layer = state[`wmsLayer${layerId}`];
+  if (layer) {
 
-  //adding a new style does not clear the old ones, so we do it manually
-  delete layer.wmsParams?.sld
-  delete layer.wmsParams?.sld_body
+    //adding a new style does not clear the old ones, so we do it manually
+    delete layer.wmsParams?.sld;
+    delete layer.wmsParams?.sld_body;
 
-  const styleVars = readStyleInputsFromUI(layerId)
-  const env = buildEnvString(styleVars)
+    const styleVars = readStyleInputsFromUI(layerId);
+    const env = buildEnvString(styleVars);
 
-  layer.setParams({ styles: 'esosc:dynamic_style', env, _t: Date.now() })
+    layer.setParams({ styles: "esosc:dynamic_style", env, _t: Date.now() });
+  }
+  renderBivariateLegend();
 }
 
 /**
@@ -932,14 +1740,21 @@ function applyDynamicStyle(layerId) {
  * @param {'A'|'B'} layerId
  */
 function wireDynamicStyleControls(layerId) {
-  const update = () => applyDynamicStyle(layerId)
+  const update = () => applyDynamicStyle(layerId);
 
-  const suffixes = ['MinInput', 'MedInput', 'MaxInput', 'CminInput', 'CmedInput', 'CmaxInput']
-  suffixes.forEach(suffix => {
-    const el = document.getElementById(`layer${layerId}${suffix}`)
-    el.addEventListener('input', update)
-  })
-  update()
+  const suffixes = [
+    "MinInput",
+    "MedInput",
+    "MaxInput",
+    "CminInput",
+    "CmedInput",
+    "CmaxInput",
+  ];
+  suffixes.forEach((suffix) => {
+    const el = document.getElementById(`layer${layerId}${suffix}`);
+    el.addEventListener("input", update);
+  });
+  update();
 }
 
 /**
@@ -947,38 +1762,38 @@ function wireDynamicStyleControls(layerId) {
  * @returns {void}
  */
 function enableAltWheelSlider() {
-  const slider = document.getElementById('windowSlider')
+  const slider = document.getElementById("windowSlider");
 
   const clamp = (v) => {
-    return Math.max(1, Math.min(100, v))
-  }
+    return Math.max(1, Math.min(100, v));
+  };
 
   const apply = (pos) => {
-    const posClamp = clamp(pos)
-    slider.value = String(posClamp)
+    const posClamp = clamp(pos);
+    slider.value = String(posClamp);
     // let wireSquareSamplerControls' 'input' handler drive boxSize + number display
-    slider.dispatchEvent(new Event('input', { bubbles: true }))
-  }
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
 
   const onKeyDown = (e) => {
-    if (e.altKey) state.map.scrollWheelZoom.disable()
-  }
+    if (e.altKey) state.map.scrollWheelZoom.disable();
+  };
   const onKeyUp = () => {
-    state.map.scrollWheelZoom.enable()
-  }
+    state.map.scrollWheelZoom.enable();
+  };
 
   const onWheel = (e) => {
-    if (!e.altKey) return
-    e.preventDefault()
-    const delta = e.deltaY > 0 ? 1 : -1
-    const step = parseFloat(slider.step) || 1
-    const cur = parseFloat(slider.value)
-    apply(cur - delta * step)
-  }
+    if (!e.altKey) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 1 : -1;
+    const step = parseFloat(slider.step) || 1;
+    const cur = parseFloat(slider.value);
+    apply(cur - delta * step);
+  };
 
-  window.addEventListener('keydown', onKeyDown, true)
-  window.addEventListener('keyup', onKeyUp, true)
-  window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+  window.addEventListener("keydown", onKeyDown, true);
+  window.addEventListener("keyup", onKeyUp, true);
+  window.addEventListener("wheel", onWheel, { passive: false, capture: true });
 }
 
 /**
@@ -986,70 +1801,38 @@ function enableAltWheelSlider() {
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
 async function renderScatterOverlay(opts) {
-  state.lastScatterOpts = opts
+  state.lastScatterOpts = opts;
+
   const visA = document.getElementById('layerVisibleA').checked;
   const visB = document.getElementById('layerVisibleB').checked;
 
-  let {
-    rasterX, rasterY,
-    centerLng, centerLat,
-    boxKm,
-    scatterObj // normal behavior to be null if not generated yet
-  } = opts
+  const { rasterX, rasterY, centerLng, centerLat, boxKm } = opts;
+  let { scatterObj } = opts;
 
-  const layerSetting = `${visA ? 'A1' : 'A0'}_${visB ? 'B1' : 'B0'}`;
+  const overlay = document.getElementById('statsOverlay');
+  const body = document.getElementById('overlayBody');
+  const hasData = !!scatterObj;
 
-  if (state.lastScatterOpts != layerSetting) {
-      const lyrAName = state.availableLayers?.[state.activeLayerIdxA]?.name;
-      const lyrBName = state.availableLayers?.[state.activeLayerIdxB]?.name;
-      scatterObj = await fetchScatterStats(
-        lyrAName,
-        lyrBName,
-        state.sampleBox.toGeoJSON()
-      );
-  }
+  const fmt = (value, digits = 3) =>
+    value == null || Number.isNaN(value) ? '-' : Number(value).toFixed(digits);
 
-  const overlay = document.getElementById('statsOverlay')
-  const body = document.getElementById('overlayBody')
+  const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`;
+  const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`;
+  const plotTitleHtml =
+    visA && visB
+      ? `${rasterX} <span class='muted'>vs</span> ${rasterY}`
+      : visA
+        ? `${rasterX}`
+        : `${rasterY}`;
 
-  const hasData = !!scatterObj
+  const needsBodyRefresh = !body.innerHTML || state.lastHasData !== hasData;
 
-  const s = scatterObj || {}
-  const stats = {
-    n: parseInt(s.n_pairs) ?? null,
-    r: s.pearson_r ?? null,
-    slope: s.slope ?? null,
-    intercept: s.intercept ?? null,
-    pixels_sampled: parseInt(s.pixels_sampled) ?? null,
-    valid_pixels: parseInt(s.valid_pixels) ?? null,
-    coverage_ratio: s.coverage_ratio ?? null,
-  }
-
-  // check to see if we've rendered this before
-  const newRenderKey = JSON.stringify({
-    rasterX, rasterY, centerLng, centerLat, boxKm, scatterObj,
-    visA,
-    visB,
-    palette: state.selectElement.value,
-    percentiles: state.percentiles,
-
-  });
-
-  if (state.lastRenderKey === newRenderKey) {
-    return;
-  }
-  state.lastRenderKey = newRenderKey;
-  const fmt = (v, digits = 3) => (v == null || Number.isNaN(v) ? '-' : Number(v).toFixed(digits))
-
-  if (!body.innerHTML || state.lastHasData !== hasData) {
-    const centerLabel = `center: ${centerLng.toFixed(4)}, ${centerLat.toFixed(4)}`
-    const centerHtml = `<button type='button' class='link-btn center-zoom-btn'>${centerLabel}</button>`
-
+  if (needsBodyRefresh) {
     body.innerHTML = `
       <div class='overlay-header'>
         <div>
-          <div class='overlay-title'>${rasterX} <span class='muted'>vs</span> ${rasterY}</div>
-          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml} </div>
+          <div class='overlay-title'>${plotTitleHtml}</div>
+          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
         </div>
       </div>
 
@@ -1061,55 +1844,91 @@ async function renderScatterOverlay(opts) {
         </div>
         <div class='layer-group'>
           <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-          <p class='tool-description'>Optional: highlight percentile thresholds directly on the histogram (e.g. 10 50 90).</p>
-          <input id='percentiles' type='text' value="${(state.percentiles)}"/>
+          <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
+          <input id='percentiles' type='text' value="${state.percentiles}"/>
         </div>
-        <div>
-          <div class='muted' style='margin-bottom:6px;'>Data Stats</div>
-            <div class='stats-grid'>
-              <div class='label'>n</div><div class='value' data-stat='n'>${hasData ? fmt(stats.n, 0) : '-'}</div>
-              <div class='label'>r</div><div class='value' data-stat='r'>${hasData ? fmt(stats.r) : '-'}</div>
-              <div class='label'>slope</div><div class='value' data-stat='slope'>${hasData ? fmt(stats.slope) : '-'}</div>
-              <div class='label'>intercept</div><div class='value' data-stat='intercept'>${hasData ? fmt(stats.intercept) : '-'}</div>
-              <div class='label'>pixels sampled</div><div class='value' data-stat='pixels_sampled'>${hasData ? fmt(stats.pixels_sampled, 0) : '-'}</div>
-              <div class='label'>coverage_ratio</div><div class='value' data-stat='coverage_ratio'>${hasData ? fmt(stats.coverage_ratio) : '-'}</div>
-          </div>
+        <div class='layer-group'>
+          <label class='tool-label'>Plot Range</label>
+          <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
+          <div id='plotRangeControls'></div>
         </div>
       </div>
-     `
-    // wire events
-    const centerZoomBtn = body.querySelector('.center-zoom-btn')
+    `;
+
+    const centerZoomBtn = body.querySelector('.center-zoom-btn');
     centerZoomBtn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      zoomToOutline(centerLng, centerLat)
-    })
+      e.preventDefault();
+      e.stopPropagation();
+      zoomToOutline(centerLng, centerLat);
+    });
+
+    wirePercentiles();
   }
+
   state.lastHasData = hasData;
+
   const plotEl = document.getElementById('scatterPlot');
+  const plotRangeControls = document.getElementById('plotRangeControls');
+
   overlay.classList.remove('hidden');
+
   if (!visA && !visB) {
-      plotEl.innerHTML = `<div class="no-layers-msg">
-        <span> No layers selected</span>
-      </div>`;
-      return
-  }
-  if (!scatterObj) {
+    plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
+    plotRangeControls?.replaceChildren();
     return;
   }
-  plotEl.innerHTML = '';
+
+  if (!scatterObj) {
+    plotRangeControls?.replaceChildren();
+    return;
+  }
+
   const has2D =
-    !!scatterObj && visA && visB &&
+    visA &&
+    visB &&
     Array.isArray(scatterObj.hist2d) &&
     Array.isArray(scatterObj.x_edges) &&
     Array.isArray(scatterObj.y_edges);
 
   const has1DX =
-    visA && Array.isArray(scatterObj.hist1d_x) && Array.isArray(scatterObj.x_edges);
+    visA &&
+    Array.isArray(scatterObj.hist1d_x) &&
+    Array.isArray(scatterObj.x_edges);
+
   const has1DY =
-    visB && Array.isArray(scatterObj.hist1d_y) && Array.isArray(scatterObj.y_edges);
+    visB &&
+    Array.isArray(scatterObj.hist1d_y) &&
+    Array.isArray(scatterObj.y_edges);
+
+  const plotKind = has2D ? '2d' : has1DX ? '1d-x' : has1DY ? '1d-y' : 'none';
+
+  ensurePlotView(scatterObj, plotKind);
+
+  const newRenderKey = JSON.stringify({
+    rasterX,
+    rasterY,
+    centerLng,
+    centerLat,
+    boxKm,
+    scatterObj,
+    visA,
+    visB,
+    palette: state.selectElement.value,
+    percentiles: state.percentiles,
+    plotView: state.plotView,
+  });
+
+  if (!needsBodyRefresh && state.lastRenderKey === newRenderKey) {
+    return;
+  }
+
+  state.lastRenderKey = newRenderKey;
+  state.scatterObj = scatterObj;
+
+  plotEl.innerHTML = '';
 
   let svg = null;
+
   if (has2D) {
     svg = buildScatterSVG(
       scatterObj.x_edges,
@@ -1125,24 +1944,44 @@ async function renderScatterOverlay(opts) {
         blend: 'plus-lighter',
         point: state.lastPixelPoint,
         axisLabelX: rasterX,
-        axisLabelY: rasterY
-      }
+        axisLabelY: rasterY,
+        viewXMin: state.plotView.xMin,
+        viewXMax: state.plotView.xMax,
+        viewYMin: state.plotView.yMin,
+        viewYMax: state.plotView.yMax,
+      },
     );
-  } else {
-    if (has1DX) {
-      svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A')
-    } else if (has1DY) {
-      svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B')
-    }
+  } else if (has1DX) {
+    svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A', {
+      viewMin: state.plotView.xMin,
+      viewMax: state.plotView.xMax,
+    });
+  } else if (has1DY) {
+    svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B', {
+      viewMin: state.plotView.yMin,
+      viewMax: state.plotView.yMax,
+    });
   }
+
   if (svg) {
     plotEl.appendChild(svg);
     state.scatterSvg = svg;
-    wirePercentiles()
-    state.scatterObj = scatterObj;
+
+    renderPlotRangeControls({
+      scatterObj,
+      has2D,
+      has1DX,
+      has1DY,
+      rasterX,
+      rasterY,
+    });
+
+    if (has2D && state.lastPixelPoint) {
+      renderScatterPoint(state.lastPixelPoint, 'A', 'B');
+    }
   } else {
     state.scatterSvg = null;
-    state.scatterObj = null;
+    plotRangeControls?.replaceChildren();
   }
 }
 
@@ -1171,9 +2010,12 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
 
   if (
     point &&
-    Number.isFinite(point.x) && Number.isFinite(point.y) &&
-    point.x >= xMin && point.x <= xMax &&
-    point.y >= yMin && point.y <= yMax
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y) &&
+    point.x >= xMin &&
+    point.x <= xMax &&
+    point.y >= yMin &&
+    point.y <= yMax
   ) {
     const px = state.scaleX(point.x);
     const py = state.scaleY(point.y);
@@ -1182,43 +2024,45 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
     const colB = styleColorArrForValue(layerIdY, point.y);
     const blendMode = state.lastScatterOpts.blendMode;
     const blended =
-      blendMode === 'screen' ? blendScreenRGB(colA, colB) : blendPlusLighterRGB(colA, colB);
+      blendMode === "screen"
+        ? blendScreenRGB(colA, colB)
+        : blendPlusLighterRGB(colA, colB);
     const markerColor = `rgb(${blended[0]},${blended[1]},${blended[2]})`;
 
-    const svgNS = 'http://www.w3.org/2000/svg'
-    let circ, label, pointGroup
+    const svgNS = "http://www.w3.org/2000/svg";
+    let circ, label, pointGroup;
     if (!state.pointGroup) {
-      pointGroup = document.createElementNS(svgNS, 'g');
+      pointGroup = document.createElementNS(svgNS, "g");
       state.scatterSvg.append(pointGroup);
-      circ = document.createElementNS(svgNS, 'circle');
-      label = document.createElementNS(svgNS, 'text');
+      circ = document.createElementNS(svgNS, "circle");
+      label = document.createElementNS(svgNS, "text");
       state.pointCircle = [circ, label];
     } else {
       [circ, label] = state.pointCircle;
       pointGroup = state.pointGroup;
     }
 
-    circ.setAttribute('cx', String(px));
-    circ.setAttribute('cy', String(py));
-    circ.setAttribute('r', '3.5');
-    circ.setAttribute('fill', markerColor);
-    circ.setAttribute('stroke', '#000');
-    circ.setAttribute('stroke-width', '1');
-    circ.setAttribute('opacity', '0.95');
+    circ.setAttribute("cx", String(px));
+    circ.setAttribute("cy", String(py));
+    circ.setAttribute("r", "3.5");
+    circ.setAttribute("fill", markerColor);
+    circ.setAttribute("stroke", "#000");
+    circ.setAttribute("stroke-width", "1");
+    circ.setAttribute("opacity", "0.95");
     pointGroup.appendChild(circ);
 
     const labelText = `${point.x.toFixed(3)}, ${point.y.toFixed(3)}`;
     label.textContent = labelText;
-    label.setAttribute('x', String(px + 6));
-    label.setAttribute('y', String(py - 6));
-    label.setAttribute('fill', '#ddd');
-    label.setAttribute('font-size', '10px');
-    label.setAttribute('text-anchor', 'start');
-    label.setAttribute('dominant-baseline', 'alphabetic');
-    label.setAttribute('paint-order', 'stroke');
-    label.setAttribute('stroke', '#000');
-    label.setAttribute('stroke-width', '2');
-    label.setAttribute('stroke-opacity', '0.6');
+    label.setAttribute("x", String(px + 6));
+    label.setAttribute("y", String(py - 6));
+    label.setAttribute("fill", "#ddd");
+    label.setAttribute("font-size", "10px");
+    label.setAttribute("text-anchor", "start");
+    label.setAttribute("dominant-baseline", "alphabetic");
+    label.setAttribute("paint-order", "stroke");
+    label.setAttribute("stroke", "#000");
+    label.setAttribute("stroke-width", "2");
+    label.setAttribute("stroke-opacity", "0.6");
     pointGroup.appendChild(label);
 
     // measure bbox and insert background
@@ -1226,7 +2070,8 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
       let bbox = label.getBBox();
       if (!bbox.width || !bbox.height) {
         const fs = 10;
-        const approxW = (label.getComputedTextLength?.() || (labelText.length * fs * 0.6)) + 2;
+        const approxW =
+          (label.getComputedTextLength?.() || labelText.length * fs * 0.6) + 2;
         bbox = { x: px + 6, y: py - 6 - fs, width: approxW, height: fs * 1.2 };
       }
 
@@ -1235,58 +2080,84 @@ function renderScatterPoint(point, layerIdX, layerIdY) {
 
       let bg;
       if (!state.pointBackground) {
-        bg = document.createElementNS(svgNS, 'rect');
+        bg = document.createElementNS(svgNS, "rect");
         state.pointBackground = bg;
       } else {
         bg = state.pointBackground;
       }
-      bg.setAttribute('x', String(bbox.x - padX));
-      bg.setAttribute('y', String(bbox.y - padY));
-      bg.setAttribute('width', String(bbox.width + padX * 2));
-      bg.setAttribute('height', String(bbox.height + padY * 2));
-      bg.setAttribute('rx', '2');
-      bg.setAttribute('ry', '2');
-      bg.setAttribute('fill', '#000');
-      bg.setAttribute('fill-opacity', '0.6');
-      bg.setAttribute('pointer-events', 'none');
+      bg.setAttribute("x", String(bbox.x - padX));
+      bg.setAttribute("y", String(bbox.y - padY));
+      bg.setAttribute("width", String(bbox.width + padX * 2));
+      bg.setAttribute("height", String(bbox.height + padY * 2));
+      bg.setAttribute("rx", "2");
+      bg.setAttribute("ry", "2");
+      bg.setAttribute("fill", "#000");
+      bg.setAttribute("fill-opacity", "0.6");
+      bg.setAttribute("pointer-events", "none");
 
       pointGroup.insertBefore(bg, label);
     });
 
     const tipText = point.label || labelText;
-    [circ, label].forEach(el => {
-      el.style.cursor = 'default';
-      el.addEventListener('mouseenter', e => showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mousemove', e => showPctTooltip?.(tipText, e.clientX, e.clientY));
-      el.addEventListener('mouseleave', () => hidePctTooltip?.());
+    [circ, label].forEach((el) => {
+      el.style.cursor = "default";
+      el.addEventListener("mouseenter", (e) =>
+        showPctTooltip?.(tipText, e.clientX, e.clientY),
+      );
+      el.addEventListener("mousemove", (e) =>
+        showPctTooltip?.(tipText, e.clientX, e.clientY),
+      );
+      el.addEventListener("mouseleave", () => hidePctTooltip?.());
     });
 
     state.pointGroup = pointGroup;
   }
 }
 
+/**
+ * Reset and hide the scatter overlay UI and clear all scatter-related state.
+ * This removes the current SVG plot, overlay content, and cached render state
+ * so the next scatter render starts from a clean slate.
+ *
+ * @returns {Promise<void>}
+ */
 async function clearScatterOverlay() {
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');
   const plot = document.getElementById('scatterPlot');
-  if (!plot) return; // plot hasn't been initalized yet
+  if (!plot) return;
 
   overlay.classList.add('hidden');
   body.innerHTML = '';
   plot.innerHTML = '';
+
   delete state.scatterObj;
   delete state.lastScatterOpts;
   delete state.pointGroup;
   delete state.lastRenderKey;
+
+  state.scatterSvg = null;
+  state.pointCircle = null;
+  state.pointBackground = null;
+  state.plotView = null;
+  state.plotViewScatterObj = null;
+  state.plotViewKind = null;
+  state.pctBounds = null;
+  state.pctBounds1d = null;
+  state.lastHasData = null;
 }
 
-['layerVisibleA', 'layerVisibleB'].forEach(id => {
+["layerVisibleA", "layerVisibleB"].forEach((id) => {
   const el = document.getElementById(id);
-  el.addEventListener('change', async () =>
-    await renderScatterOverlay(
-      { ...state.lastScatterOpts, scatterObj: state.scatterObj }));
+  el.addEventListener(
+    "change",
+    async () =>
+      await renderScatterOverlay({
+        ...state.lastScatterOpts,
+        scatterObj: state.scatterObj,
+      }),
+  );
 });
-
 
 /**
  * Computes a smoothed, normalized density weight from histogram counts.
@@ -1310,79 +2181,117 @@ function densityWeight(binCount, maxCount2d) {
  * @param {{width?:number,height?:number,pad?:number}} opts
  * @returns {SVGSVGElement}
  */
-// color top/right histograms in scatter using layer styles
 function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const w = opts.width ?? 400;
   const h = opts.height ?? 300;
   const pad = opts.pad ?? 40;
   const mSize = opts.marginalSize ?? 48;
   const percentileColor = opts.percentileColor ?? '#eeeeee';
-  const percentileDecimals = Number.isFinite(opts.percentileDecimals) ? opts.percentileDecimals : 2;
+  const percentileDecimals = Number.isFinite(opts.percentileDecimals)
+    ? opts.percentileDecimals
+    : 2;
   const percentilesRaw = Array.isArray(opts.percentiles) ? opts.percentiles : [];
   const blendMode = opts.blend || 'plus-lighter';
   const layerIdX = opts.layerIdX || 'A';
   const layerIdY = opts.layerIdY || 'B';
-  const point = opts.point || null
   const axisLabelX = opts.axisLabelX || '';
   const axisLabelY = opts.axisLabelY || '';
 
-  const parsePercent = p => {
-    if (typeof p === 'number' && Number.isFinite(p)) return p > 1 ? p / 100 : p;
-    if (typeof p === 'string') {
-      const s = p.trim(); if (!s) return null;
-      const num = parseFloat(s);
-      if (!Number.isFinite(num)) return null;
-      return (s.endsWith('%') || num > 1) ? num / 100 : num;
-    }
-    return null;
-  };
-  const percentiles = [...new Set(percentilesRaw.map(parsePercent).filter(p => p !== null && p >= 0 && p <= 1))].sort((a,b)=>a-b);
+  const percentiles = [
+    ...new Set(
+      percentilesRaw
+        .map((value) => value / 100)
+        .filter((value) => value >= 0 && value <= 1),
+    ),
+  ].sort((a, b) => a - b);
 
   const innerW = Math.max(1, w - pad * 2 - mSize);
   const innerH = Math.max(1, h - pad * 2 - mSize);
 
-  const xMin = Math.min(...xEdges), xMax = Math.max(...xEdges);
-  const yMin = Math.min(...yEdges), yMax = Math.max(...yEdges);
-  state.scatterBounds = [xMin, yMin, xMax, yMax];
-  const nx = hist2d.length, ny = hist2d[0].length;
+  const fullXMin = xEdges[0];
+  const fullXMax = xEdges[xEdges.length - 1];
+  const fullYMin = yEdges[0];
+  const fullYMax = yEdges[yEdges.length - 1];
+  const viewXMin = opts.viewXMin ?? fullXMin;
+  const viewXMax = opts.viewXMax ?? fullXMax;
+  const viewYMin = opts.viewYMin ?? fullYMin;
+  const viewYMax = opts.viewYMax ?? fullYMax;
 
-  const xCounts = new Array(nx).fill(0);
-  const yCounts = new Array(ny).fill(0);
+  state.scatterBounds = [viewXMin, viewYMin, viewXMax, viewYMax];
+  state.pctBounds = null;
+
+  const nx = hist2d.length;
+  const ny = hist2d[0].length;
+
+  const fullXCounts = new Array(nx).fill(0);
+  const fullYCounts = new Array(ny).fill(0);
+  const visibleXCounts = new Array(nx).fill(0);
+  const visibleYCounts = new Array(ny).fill(0);
+
   let maxCount2d = 1;
+
   for (let i = 0; i < nx; i++) {
-    let rowSum = 0;
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const xVisible = binXMax > viewXMin && binXMin < viewXMax;
+
     for (let j = 0; j < ny; j++) {
-      const v = Number(hist2d[i][j]) || 0;
-      rowSum += v; yCounts[j] += v; if (v > maxCount2d) maxCount2d = v;
+      const binYMin = yEdges[j];
+      const binYMax = yEdges[j + 1];
+      const yVisible = binYMax > viewYMin && binYMin < viewYMax;
+      const value = Number(hist2d[i][j]) || 0;
+
+      fullXCounts[i] += value;
+      fullYCounts[j] += value;
+
+      if (!(xVisible && yVisible)) continue;
+
+      visibleXCounts[i] += value;
+      visibleYCounts[j] += value;
+      if (value > maxCount2d) maxCount2d = value;
     }
-    xCounts[i] = rowSum;
   }
-  const maxCountTop = Math.max(1, ...xCounts);
-  const maxCountRight = Math.max(1, ...yCounts);
+
+  const maxCountTop = Math.max(1, ...visibleXCounts);
+  const maxCountRight = Math.max(1, ...visibleYCounts);
 
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', String(w)); svg.setAttribute('height', String(h));
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
 
   const axisColor = '#666';
-  const mkLine = (x1,y1,x2,y2, stroke=axisColor, sw='1') => {
-    const l = document.createElementNS(svgNS, 'line');
-    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
-    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-    l.setAttribute('stroke', stroke); l.setAttribute('stroke-width', sw);
-    return l;
-  };
-  const mkText = (txt, x, y, anchor='middle') => {
-    const t = document.createElementNS(svgNS, 'text');
-    t.textContent = txt; t.setAttribute('x', x); t.setAttribute('y', y);
-    t.setAttribute('fill', '#aaa'); t.setAttribute('font-size', '10'); t.setAttribute('text-anchor', anchor);
-    return t;
+  const mkLine = (x1, y1, x2, y2, stroke = axisColor, sw = '1') => {
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', stroke);
+    line.setAttribute('stroke-width', sw);
+    return line;
   };
 
-  const plotX0 = pad, plotY0 = pad + mSize;
-  const plotX1 = pad + innerW, plotY1 = pad + mSize + innerH;
-  const scaleX = v => plotX0 + ((v - xMin) / (xMax - xMin)) * innerW;
-  const scaleY = v => plotY1 - ((v - yMin) / (yMax - yMin)) * innerH;
+  const mkText = (text, x, y, anchor = 'middle') => {
+    const label = document.createElementNS(svgNS, 'text');
+    label.textContent = text;
+    label.setAttribute('x', x);
+    label.setAttribute('y', y);
+    label.setAttribute('fill', '#aaa');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', anchor);
+    return label;
+  };
+
+  const plotX0 = pad;
+  const plotY0 = pad + mSize;
+  const plotX1 = pad + innerW;
+  const plotY1 = pad + mSize + innerH;
+
+  const scaleX = (v) =>
+    plotX0 + ((v - viewXMin) / Math.max(1e-9, viewXMax - viewXMin)) * innerW;
+  const scaleY = (v) =>
+    plotY1 - ((v - viewYMin) / Math.max(1e-9, viewYMax - viewYMin)) * innerH;
 
   state.scaleX = scaleX;
   state.scaleY = scaleY;
@@ -1390,24 +2299,42 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const lerp = (a, b, t) => a + (b - a) * t;
 
   for (let i = 0; i < nx; i++) {
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const drawXMin = Math.max(binXMin, viewXMin);
+    const drawXMax = Math.min(binXMax, viewXMax);
+
+    if (drawXMax <= drawXMin) continue;
+
     for (let j = 0; j < ny; j++) {
+      const binYMin = yEdges[j];
+      const binYMax = yEdges[j + 1];
+      const drawYMin = Math.max(binYMin, viewYMin);
+      const drawYMax = Math.min(binYMax, viewYMax);
+
+      if (drawYMax <= drawYMin) continue;
+
       const binCount = Number(hist2d[i][j]) || 0;
       const t = densityWeight(binCount, maxCount2d);
       if (t <= 0) continue;
 
-      const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
-      const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
+      const x0 = scaleX(drawXMin);
+      const x1 = scaleX(drawXMax);
+      const y0 = scaleY(drawYMin);
+      const y1 = scaleY(drawYMax);
 
-      const xMid = (xEdges[i] + xEdges[i + 1]) / 2;
-      const yMid = (yEdges[j] + yEdges[j + 1]) / 2;
+      const xMid = (binXMin + binXMax) / 2;
+      const yMid = (binYMin + binYMax) / 2;
 
       const colA = styleColorArrForValue(layerIdX, xMid);
       const colB = styleColorArrForValue(layerIdY, yMid);
       const blended =
-        blendMode === 'screen' ? blendScreenRGB(colA, colB) : blendPlusLighterRGB(colA, colB);
+        blendMode === 'screen'
+          ? blendScreenRGB(colA, colB)
+          : blendPlusLighterRGB(colA, colB);
 
       const rect = document.createElementNS(svgNS, 'rect');
-      const shrink = -0.05+0.5*(1-t); // fraction of each bin to inset by default make it a little bigger
+      const shrink = -0.05 + 0.5 * (1 - t);
       const dx = x1 - x0;
       const dy = y0 - y1;
       const insetX = dx * shrink * 0.5;
@@ -1417,13 +2344,15 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
       rect.setAttribute('y', String(y1 + insetY));
       rect.setAttribute('width', String(dx * (1 - shrink)));
       rect.setAttribute('height', String(dy * (1 - shrink)));
-      let [h, s, l] = rgbToHsl(...blended);
-      const sMin = 0.08;
-      const sOut = lerp(sMin, s, t);
-      const lAnchor = 0.28;
-      const lOut = lerp(lAnchor, l, 0.25 + 0.75 * t);
-      const [r2, g2, b2] = hslToRgb(h, sOut, lOut);
-      rect.setAttribute('fill', `rgb(${r2|0},${g2|0},${b2|0})`);
+
+      let [hue, sat, light] = rgbToHsl(...blended);
+      const satMin = 0.08;
+      const satOut = lerp(satMin, sat, t);
+      const lightAnchor = 0.28;
+      const lightOut = lerp(lightAnchor, light, 0.25 + 0.75 * t);
+      const [r2, g2, b2] = hslToRgb(hue, satOut, lightOut);
+
+      rect.setAttribute('fill', `rgb(${r2 | 0},${g2 | 0},${b2 | 0})`);
       rect.setAttribute('stroke', 'rgba(0,0,0,0.7)');
       rect.setAttribute('stroke-opacity', (0.15 * Math.pow(t, 0.7)).toFixed(3));
       rect.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -1433,13 +2362,12 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     }
   }
 
-  // axes + labels
   svg.appendChild(mkLine(plotX0, plotY1, plotX1, plotY1));
   svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
-  svg.appendChild(mkText(xMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
-  svg.appendChild(mkText(xMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
-  svg.appendChild(mkText(yMin.toFixed(2), plotX0 - 6, plotY1, 'end'));
-  svg.appendChild(mkText(yMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'));
+  svg.appendChild(mkText(viewXMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
+  svg.appendChild(mkText(viewXMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+  svg.appendChild(mkText(viewYMin.toFixed(2), plotX0 - 6, plotY1, 'end'));
+  svg.appendChild(mkText(viewYMax.toFixed(2), plotX0 - 6, plotY0 + 4, 'end'));
 
   if (axisLabelX) {
     const xMid = (plotX0 + plotX1) / 2;
@@ -1452,6 +2380,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     xTitle.setAttribute('text-anchor', 'middle');
     svg.appendChild(xTitle);
   }
+
   if (axisLabelY) {
     const yMid = (plotY0 + plotY1) / 2;
     const yTitle = document.createElementNS(svgNS, 'text');
@@ -1467,34 +2396,55 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     svg.appendChild(yTitle);
   }
 
-  // top histogram (x)
-  const topY1 = pad + mSize, topY0 = pad;
+  const topY1 = plotY0;
   const topInnerH = Math.max(1, mSize - 6);
-  const scaleTopH = c => ((Number.isFinite(c) ? c : 0) / maxCountTop) * topInnerH;
+  const scaleTopH = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCountTop) * topInnerH;
+
   for (let i = 0; i < nx; i++) {
-    const x0 = scaleX(xEdges[i]), x1 = scaleX(xEdges[i + 1]);
+    const binXMin = xEdges[i];
+    const binXMax = xEdges[i + 1];
+    const drawXMin = Math.max(binXMin, viewXMin);
+    const drawXMax = Math.min(binXMax, viewXMax);
+
+    if (drawXMax <= drawXMin) continue;
+
+    const x0 = scaleX(drawXMin);
+    const x1 = scaleX(drawXMax);
     const barW = Math.max(1, x1 - x0);
-    const hPix = scaleTopH(xCounts[i]);
-    const mid = (xEdges[i] + xEdges[i + 1]) / 2;
+    const hPix = scaleTopH(visibleXCounts[i]);
+    const mid = (binXMin + binXMax) / 2;
     const rgbArray = styleColorArrForValue(layerIdX, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
+
     const rect = document.createElementNS(svgNS, 'rect');
-    rect.setAttribute('x', String(x0)); rect.setAttribute('y', String(topY1 - hPix));
-    rect.setAttribute('width', String(barW)); rect.setAttribute('height', String(hPix));
-    rect.setAttribute('fill', rgbStr); rect.setAttribute('fill-opacity', '0.85');
+    rect.setAttribute('x', String(x0));
+    rect.setAttribute('y', String(topY1 - hPix));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(hPix));
+    rect.setAttribute('fill', rgbStr);
+    rect.setAttribute('fill-opacity', '0.85');
     svg.appendChild(rect);
   }
 
-  // right histogram (y)
-  const rightX0 = pad + innerW, rightX1 = pad + innerW + mSize;
+  const rightX0 = plotX1;
   const rightInnerW = Math.max(1, mSize - 6);
-  const scaleRightW = c => ((Number.isFinite(c) ? c : 0) / maxCountRight) * rightInnerW;
+  const scaleRightW = (count) =>
+    ((Number.isFinite(count) ? count : 0) / maxCountRight) * rightInnerW;
 
   for (let j = 0; j < ny; j++) {
-    const y0 = scaleY(yEdges[j]), y1 = scaleY(yEdges[j + 1]);
+    const binYMin = yEdges[j];
+    const binYMax = yEdges[j + 1];
+    const drawYMin = Math.max(binYMin, viewYMin);
+    const drawYMax = Math.min(binYMax, viewYMax);
+
+    if (drawYMax <= drawYMin) continue;
+
+    const y0 = scaleY(drawYMin);
+    const y1 = scaleY(drawYMax);
     const barH = Math.max(1, y0 - y1);
-    const wPix = scaleRightW(yCounts[j]);
-    const mid = (yEdges[j] + yEdges[j + 1]) / 2;
+    const wPix = scaleRightW(visibleYCounts[j]);
+    const mid = (binYMin + binYMax) / 2;
     const rgbArray = styleColorArrForValue(layerIdY, mid);
     const rgbStr = `rgb(${rgbArray[0]},${rgbArray[1]},${rgbArray[2]})`;
 
@@ -1508,76 +2458,89 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     svg.appendChild(rect);
   }
 
-  const totalX = xCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
-  const totalY = yCounts.reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
-  const getQuantileX = q => {
-    if (totalX <= 0) return xMin;
-    const target = q * totalX; let cum = 0;
-    for (let i = 0; i < nx; i++) {
-      const c = Number.isFinite(xCounts[i]) ? xCounts[i] : 0;
-      const next = cum + c; if (target <= next) {
-        const e0 = xEdges[i], e1 = xEdges[i+1]; const f = c>0 ? (target-cum)/c : 0;
-        return e0 + f * (e1 - e0);
-      } cum = next;
-    } return xMax;
-  };
-  const getQuantileY = q => {
-    if (totalY <= 0) return yMin;
-    const target = q * totalY; let cum = 0;
-    for (let j = 0; j < ny; j++) {
-      const c = Number.isFinite(yCounts[j]) ? yCounts[j] : 0;
-      const next = cum + c; if (target <= next) {
-        const e0 = yEdges[j], e1 = yEdges[j+1]; const f = c>0 ? (target-cum)/c : 0;
-        return e0 + f * (e1 - e0);
-      } cum = next;
-    } return yMax;
-  };
-  const pctLabel = (p, val) => `${Math.round(p * 100)}% (${val.toFixed(percentileDecimals)})`;
-  const attachPctHover = (guideEl, lblEl, text) => {
-    [guideEl, lblEl].forEach(el => {
+  const attachPctHover = (guideEl, labelEl, text) => {
+    [guideEl, labelEl].forEach((el) => {
       el.style.cursor = 'pointer';
-      el.addEventListener('mouseenter', e => {
-        guideEl.setAttribute('stroke-width', '2'); guideEl.setAttribute('opacity', '1');
-        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mouseenter', (e) => {
+        guideEl.setAttribute('stroke-width', '2');
+        guideEl.setAttribute('opacity', '1');
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
-      el.addEventListener('mousemove', e => {
-        if (typeof showPctTooltip === 'function') showPctTooltip(text, e.clientX, e.clientY);
+      el.addEventListener('mousemove', (e) => {
+        showPctTooltip?.(text, e.clientX, e.clientY);
       });
       el.addEventListener('mouseleave', () => {
-        guideEl.setAttribute('stroke-width', '1'); guideEl.setAttribute('opacity', '0.9');
-        if (typeof hidePctTooltip === 'function') hidePctTooltip();
+        guideEl.setAttribute('stroke-width', '1');
+        guideEl.setAttribute('opacity', '0.9');
+        hidePctTooltip?.();
       });
     });
   };
 
-  for (const p of percentiles) {
-    const xv = getQuantileX(p), x = scaleX(xv);
-    const gx = mkLine(x, pad, x, plotY1, percentileColor);
-    gx.setAttribute('stroke-dasharray', '4,3'); gx.setAttribute('opacity', '0.5');
-    svg.appendChild(gx);
-    const lx = mkText(pctLabel(p, xv), x, pad - 6, 'middle');
-    lx.setAttribute('fill', percentileColor); svg.appendChild(lx);
-    attachPctHover(gx, lx, `${Math.round(p*100)}% • ${xv.toFixed(percentileDecimals)}`);
-  }
-  for (const p of percentiles) {
-    const yv = getQuantileY(p), y = scaleY(yv);
-    const gy = mkLine(plotX0, y, pad + innerW + mSize, y, percentileColor);
-    gy.setAttribute('stroke-dasharray', '4,3'); gy.setAttribute('opacity', '0.5');
-    svg.appendChild(gy);
-    const ly = mkText(pctLabel(p, yv), pad + innerW + mSize + 4, y + 3, 'start');
-    ly.setAttribute('fill', percentileColor); svg.appendChild(ly);
-    attachPctHover(gy, ly, `${Math.round(p*100)}% • ${yv.toFixed(percentileDecimals)}`);
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(xEdges, fullXCounts, percentile);
+    if (value < viewXMin || value > viewXMax) continue;
+
+    const x = scaleX(value);
+    const guide = mkLine(x, pad, x, plotY1, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = mkText(
+      `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`,
+      x,
+      pad - 6,
+      'middle',
+    );
+    label.setAttribute('fill', percentileColor);
+    svg.appendChild(label);
+
+    attachPctHover(
+      guide,
+      label,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
+    );
   }
 
-  if (Array.isArray(percentiles) && percentiles.length) {
-    const minP = Math.min(...percentiles);
-    const maxP = Math.max(...percentiles);
-    const xmin = getQuantileX(minP);
-    const xmax = getQuantileX(maxP);
-    const ymin = getQuantileY(minP);
-    const ymax = getQuantileY(maxP);
-    state.pctBounds = { xmin, xmax, ymin, ymax };
+  for (const percentile of percentiles) {
+    const value = getHistogramQuantile(yEdges, fullYCounts, percentile);
+    if (value < viewYMin || value > viewYMax) continue;
+
+    const y = scaleY(value);
+    const guide = mkLine(plotX0, y, plotX1 + mSize, y, percentileColor);
+    guide.setAttribute('stroke-dasharray', '4,3');
+    guide.setAttribute('opacity', '0.5');
+    svg.appendChild(guide);
+
+    const label = mkText(
+      `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`,
+      plotX1 + mSize + 4,
+      y + 3,
+      'start',
+    );
+    label.setAttribute('fill', percentileColor);
+    svg.appendChild(label);
+
+    attachPctHover(
+      guide,
+      label,
+      `${Math.round(percentile * 100)}% • ${value.toFixed(percentileDecimals)}`,
+    );
   }
+
+  if (percentiles.length) {
+    const minPercentile = Math.min(...percentiles);
+    const maxPercentile = Math.max(...percentiles);
+
+    state.pctBounds = {
+      xmin: getHistogramQuantile(xEdges, fullXCounts, minPercentile),
+      xmax: getHistogramQuantile(xEdges, fullXCounts, maxPercentile),
+      ymin: getHistogramQuantile(yEdges, fullYCounts, minPercentile),
+      ymax: getHistogramQuantile(yEdges, fullYCounts, maxPercentile),
+    };
+  }
+
   return svg;
 }
 
@@ -1586,15 +2549,18 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
  * @returns {void}
  */
 function disableLeafletScrollOnAlt() {
-  const mapEl = state.map.getContainer()
-  mapEl.addEventListener('wheel', e => {
-    if (e.altKey) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-    }
-  }, { passive: false, capture: true })
+  const mapEl = state.map.getContainer();
+  mapEl.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.altKey) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    { passive: false, capture: true },
+  );
 }
-
 
 /**
  * Wire the "Set Min/Med/Max from Histogram" button to automatically
@@ -1611,28 +2577,33 @@ function disableLeafletScrollOnAlt() {
  *
  */
 async function wireAutoStyleFromHistogram() {
-  const btn = document.getElementById('applyAutoStyleBtn');
+  const btn = document.getElementById("applyAutoStyleBtn");
 
   const getMinMedMaxFromEdges = (edges) => {
     if (!edges || !edges.length) return null;
     const min = edges[0];
     const max = edges[edges.length - 1];
     const mid = (edges.length - 1) / 2;
-    const med = Number.isInteger(mid) ? edges[mid] : (edges[Math.floor(mid)] + edges[Math.ceil(mid)]) / 2;
+    const med = Number.isInteger(mid)
+      ? edges[mid]
+      : (edges[Math.floor(mid)] + edges[Math.ceil(mid)]) / 2;
     return { min, med, max };
   };
 
   const setTriple = (layerId, triple) => {
-    const fmt = (v) => Number.isFinite(v) ? +v.toPrecision(6) : '';
+    const fmt = (v) => (Number.isFinite(v) ? +v.toPrecision(6) : "");
     const minEl = document.getElementById(`layer${layerId}MinInput`);
     const medEl = document.getElementById(`layer${layerId}MedInput`);
     const maxEl = document.getElementById(`layer${layerId}MaxInput`);
-    minEl.value = fmt(triple.min); minEl.dispatchEvent(new Event('input', { bubbles: true }));
-    medEl.value = fmt(triple.med); medEl.dispatchEvent(new Event('input', { bubbles: true }));
-    maxEl.value = fmt(triple.max); maxEl.dispatchEvent(new Event('input', { bubbles: true }));
+    minEl.value = fmt(triple.min);
+    minEl.dispatchEvent(new Event("input", { bubbles: true }));
+    medEl.value = fmt(triple.med);
+    medEl.dispatchEvent(new Event("input", { bubbles: true }));
+    maxEl.value = fmt(triple.max);
+    maxEl.dispatchEvent(new Event("input", { bubbles: true }));
   };
 
-  btn.addEventListener('click', async () => {
+  btn.addEventListener("click", async () => {
     const so = state.scatterObj;
     const xEdges = so?.x_edges;
     const yEdges = so?.y_edges;
@@ -1656,39 +2627,43 @@ async function wireAutoStyleFromHistogram() {
       b.med = (pb.ymin + pb.ymax) / 2;
     }
 
-    if (a) setTriple('A', a);
-    if (b) setTriple('B', b);
+    if (a) setTriple("A", a);
+    if (b) setTriple("B", b);
 
-    const previousOptions = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
+    const previousOptions = {
+      ...state.lastScatterOpts,
+      scatterObj: state.scatterObj,
+    };
     await clearScatterOverlay();
-    await renderScatterOverlay(previousOptions)
+    await renderScatterOverlay(previousOptions);
   });
 }
 
 async function wirePercentiles() {
-  const percentilesInput = document.getElementById('percentiles')
+  const percentilesInput = document.getElementById("percentiles");
 
-  let raf = null
+  let raf = null;
   const rerender = async () => {
     // ensure we pass a scatterObj so it renders immediately (1D or 2D as appropriate)
     if (state.lastScatterOpts && state.scatterObj) {
-      const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj }
-      await renderScatterOverlay(opts)
+      const opts = { ...state.lastScatterOpts, scatterObj: state.scatterObj };
+      await renderScatterOverlay(opts);
     }
-  }
+  };
 
   function handlePercentileInput() {
-    const raw = percentilesInput.value
-    state.percentiles = raw.split(/[,\s]+/)
-      .map(s => parseInt(s.trim(), 10))
-      .filter(n => Number.isFinite(n))
-      .sort((a, b) => a - b)
-    if (raf) cancelAnimationFrame(raf)
-    raf = requestAnimationFrame(rerender)
+    const raw = percentilesInput.value;
+    state.percentiles = raw
+      .split(/[,\s]+/)
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(rerender);
   }
-  percentilesInput.addEventListener('input', handlePercentileInput)
+  percentilesInput.addEventListener("input", handlePercentileInput);
   // trigger default value
-  handlePercentileInput()
+  handlePercentileInput();
 }
 
 /**
@@ -1725,52 +2700,55 @@ async function wirePercentiles() {
  * - `#windowSize`, `#windowSizeNumber`, `#shpInput`
  */
 function wireControlGroup() {
-  const group = document.querySelector('.control-group.tools');
-  const buttons = Array.from(group.querySelectorAll('.tool-toggle .mode-btn'));
+  const group = document.querySelector(".control-group.tools");
+  const buttons = Array.from(group.querySelectorAll(".tool-toggle .mode-btn"));
   const sections = {
     window: group.querySelector("[data-section='window']"),
-    shapefile: group.querySelector("[data-section='shapefile']")
+    shapefile: group.querySelector("[data-section='shapefile']"),
   };
   const inputs = {
-    window: [group.querySelector('#windowSize'), group.querySelector('#windowSizeNumber')],
-    shapefile: [group.querySelector('#shpInput')]
+    window: [
+      group.querySelector("#windowSize"),
+      group.querySelector("#windowSizeNumber"),
+    ],
+    shapefile: [group.querySelector("#shpInput")],
   };
   const shpInput = inputs.shapefile[0];
-  let mode = group.getAttribute('data-mode') || 'window';
+  let mode = group.getAttribute("data-mode") || "window";
 
-  const setMode = selectedMode => {
-    group.setAttribute('data-mode', selectedMode);
+  const setMode = (selectedMode) => {
+    group.setAttribute("data-mode", selectedMode);
     state.sampleMode = selectedMode;
 
-    buttons.forEach(button => {
-      const isSelected = button.getAttribute('data-mode') === selectedMode;
-      button.classList.toggle('is-selected', isSelected);
-      button.setAttribute('aria-pressed', String(isSelected));
+    buttons.forEach((button) => {
+      const isSelected = button.getAttribute("data-mode") === selectedMode;
+      button.classList.toggle("is-selected", isSelected);
+      button.setAttribute("aria-pressed", String(isSelected));
     });
 
-    const activeSection = selectedMode === 'window' ? 'window' : 'shapefile';
-    const inactiveSection = selectedMode === 'window' ? 'shapefile' : 'window';
+    const activeSection = selectedMode === "window" ? "window" : "shapefile";
+    const inactiveSection = selectedMode === "window" ? "shapefile" : "window";
 
-    sections[activeSection].classList.add('is-active');
-    sections[activeSection].classList.remove('is-inactive');
-    sections[inactiveSection].classList.add('is-inactive');
-    sections[inactiveSection].classList.remove('is-active');
+    sections[activeSection].classList.add("is-active");
+    sections[activeSection].classList.remove("is-inactive");
+    sections[inactiveSection].classList.add("is-inactive");
+    sections[inactiveSection].classList.remove("is-active");
 
-    if (selectedMode === 'window' && state.uploadedLayer) {
+    if (selectedMode === "window" && state.uploadedLayer) {
       state.map.removeLayer(state.uploadedLayer);
       state.uploadedLayer = null;
-    } else if (selectedMode === 'shapefile' && state.lastFeatureCollection) {
+    } else if (selectedMode === "shapefile" && state.lastFeatureCollection) {
       setAOIAndRenderOverlay(state.lastFeatureCollection);
     }
 
-    inputs[activeSection].forEach(inputElement => {
+    inputs[activeSection].forEach((inputElement) => {
       if (inputElement) {
         inputElement.disabled = false;
         inputElement.tabIndex = 0;
       }
     });
 
-    inputs[inactiveSection].forEach(inputElement => {
+    inputs[inactiveSection].forEach((inputElement) => {
       if (inputElement) {
         inputElement.disabled = true;
         inputElement.tabIndex = -1;
@@ -1781,75 +2759,80 @@ function wireControlGroup() {
     setSamplingMode(selectedMode);
   };
 
-
-  buttons.forEach(b => b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
-  shpInput.addEventListener('change', () => {
+  buttons.forEach((b) =>
+    b.addEventListener("click", () => setMode(b.getAttribute("data-mode"))),
+  );
+  shpInput.addEventListener("change", () => {
     const f = shpInput.files && shpInput.files[0];
-    if (f) setMode('shapefile');
+    if (f) setMode("shapefile");
   });
   setMode(mode);
 
-  document.getElementById('exportAreaBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('exportAreaBtn');
-    try {
-      btn.classList.add('disabled');
+  document
+    .getElementById("exportAreaBtn")
+    .addEventListener("click", async () => {
+      const btn = document.getElementById("exportAreaBtn");
+      try {
+        btn.classList.add("disabled");
 
-      const lyrA = state.availableLayers[state.activeLayerIdxA];
-      const lyrB = state.availableLayers[state.activeLayerIdxB];
+        const lyrA = state.availableLayers[state.activeLayerIdxA];
+        const lyrB = state.availableLayers[state.activeLayerIdxB];
 
-      const lyrAChecked = !!document.getElementById(`layerVisibleA`)?.checked;
-      const lyrBChecked = !!document.getElementById(`layerVisibleB`)?.checked;
+        const lyrAChecked = !!document.getElementById(`layerVisibleA`)?.checked;
+        const lyrBChecked = !!document.getElementById(`layerVisibleB`)?.checked;
 
-      const raster_id_x = lyrAChecked ? lyrA?.name ?? null : null;
-      const raster_id_y = lyrBChecked ? lyrB?.name ?? null : null;
+        const raster_id_x = lyrAChecked ? (lyrA?.name ?? null) : null;
+        const raster_id_y = lyrBChecked ? (lyrB?.name ?? null) : null;
 
-      const selectedBtn = buttons.find(b => b.classList.contains('is-selected'));
-      const selectedMode = selectedBtn?.getAttribute('data-mode') ?? null;
-      let geometry = null;
-      if (selectedMode == 'window') {
-        geometry = state.sampleBox.toGeoJSON();
-      } else {
-        geometry = state.lastFeatureCollection;
+        const selectedBtn = buttons.find((b) =>
+          b.classList.contains("is-selected"),
+        );
+        const selectedMode = selectedBtn?.getAttribute("data-mode") ?? null;
+        let geometry = null;
+        if (selectedMode == "window") {
+          geometry = state.sampleBox.toGeoJSON();
+        } else {
+          geometry = state.lastFeatureCollection;
+        }
+        if (!geometry) return;
+
+        const payload = {
+          raster_id_x,
+          raster_id_y,
+          geometry,
+          from_crs: "EPSG:4326",
+        };
+
+        const res = await fetch(`${state.baseStatsUrl}/download/clip`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`clip request failed (${res.status}): ${errText}`);
+        }
+
+        const blob = await res.blob();
+        const dispo = res.headers.get("Content-Disposition");
+        const match = dispo && dispo.match(/filename="?([^"]+)"?/i);
+        const filename = match ? match[1] : "clip.zip";
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        btn.classList.remove("disabled");
       }
-      if (!geometry) return;
-
-      const payload = {
-        raster_id_x,
-        raster_id_y,
-        geometry,
-        from_crs: 'EPSG:4326'
-      };
-
-      const res = await fetch(`${state.baseStatsUrl}/download/clip`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`clip request failed (${res.status}): ${errText}`);
-      }
-
-      const blob = await res.blob();
-      const dispo = res.headers.get('Content-Disposition');
-      const match = dispo && dispo.match(/filename="?([^"]+)"?/i);
-      const filename = match ? match[1] : 'clip.zip';
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      btn.classList.remove('disabled');
-    }
-  });
+    });
 }
 
 /**
@@ -1858,26 +2841,25 @@ function wireControlGroup() {
  * @returns {HTMLDivElement} The tooltip element.
  */
 function ensurePctTooltip() {
-  let tip = document.querySelector('.pct-tooltip')
+  let tip = document.querySelector(".pct-tooltip");
   if (!tip) {
-    tip = document.createElement('div')
-    tip.className = 'pct-tooltip'
+    tip = document.createElement("div");
+    tip.className = "pct-tooltip";
     Object.assign(tip.style, {
-      position: 'fixed',
-      background: '#111',
-      color: '#fff',
-      padding: '4px 6px',
-      borderRadius: '4px',
-      fontSize: '11px',
-      pointerEvents: 'none',
-      display: 'none',
-      zIndex: 9999
-    })
-    document.body.appendChild(tip)
+      position: "fixed",
+      background: "#111",
+      color: "#fff",
+      padding: "4px 6px",
+      borderRadius: "4px",
+      fontSize: "11px",
+      pointerEvents: "none",
+      display: "none",
+      zIndex: 9999,
+    });
+    document.body.appendChild(tip);
   }
-  return tip
+  return tip;
 }
-
 
 /**
  * Display the percentile tooltip near the specified screen coordinates.
@@ -1887,11 +2869,11 @@ function ensurePctTooltip() {
  * @param {number} y - Mouse Y coordinate (in client space).
  */
 function showPctTooltip(text, x, y) {
-  const tip = ensurePctTooltip()
-  tip.textContent = text
-  tip.style.left = `${x + 8}px`
-  tip.style.top = `${y + 8}px`
-  tip.style.display = 'block'
+  const tip = ensurePctTooltip();
+  tip.textContent = text;
+  tip.style.left = `${x + 8}px`;
+  tip.style.top = `${y + 8}px`;
+  tip.style.display = "block";
 }
 
 /**
@@ -1899,8 +2881,8 @@ function showPctTooltip(text, x, y) {
  * Clears its display without removing the element from the DOM.
  */
 function hidePctTooltip() {
-  const tip = document.querySelector('.pct-tooltip')
-  if (tip) tip.style.display = 'none'
+  const tip = document.querySelector(".pct-tooltip");
+  if (tip) tip.style.display = "none";
 }
 
 /**
@@ -1912,11 +2894,19 @@ function hidePctTooltip() {
  */
 function styleColorArrForValue(layerId, v) {
   const s = readStyleInputsFromUI(layerId);
-  const min = parseFloat(s.min), med = parseFloat(s.med), max = parseFloat(s.max);
-  const cmin = hexToRgb(s.cmin || '#000000');
-  const cmed = hexToRgb(s.cmed || '#888888');
-  const cmax = hexToRgb(s.cmax || '#ffffff');
-  if (!Number.isFinite(v) || !Number.isFinite(min) || !Number.isFinite(med) || !Number.isFinite(max)) return [136,136,136];
+  const min = parseFloat(s.min),
+    med = parseFloat(s.med),
+    max = parseFloat(s.max);
+  const cmin = hexToRgb(s.cmin || "#000000");
+  const cmed = hexToRgb(s.cmed || "#888888");
+  const cmax = hexToRgb(s.cmax || "#ffffff");
+  if (
+    !Number.isFinite(v) ||
+    !Number.isFinite(min) ||
+    !Number.isFinite(med) ||
+    !Number.isFinite(max)
+  )
+    return [136, 136, 136];
   if (v <= min) return cmin.slice();
   if (v >= max) return cmax.slice();
   function _interpRgbArr(c1, c2, t) {
@@ -1928,10 +2918,10 @@ function styleColorArrForValue(layerId, v) {
     ];
   }
   if (v <= med) {
-    const t = (v - min) / Math.max(1e-9, (med - min));
+    const t = (v - min) / Math.max(1e-9, med - min);
     return _interpRgbArr(cmin, cmed, t);
   } else {
-    const t = (v - med) / Math.max(1e-9, (max - med));
+    const t = (v - med) / Math.max(1e-9, max - med);
     return _interpRgbArr(cmed, cmax, t);
   }
 }
@@ -1960,11 +2950,18 @@ function blendPlusLighterRGB(a, b) {
  */
 function blendScreenRGB(a, b) {
   return [
-    255 - Math.round((255 - a[0]) * (255 - b[0]) / 255),
-    255 - Math.round((255 - a[1]) * (255 - b[1]) / 255),
-    255 - Math.round((255 - a[2]) * (255 - b[2]) / 255),
+    255 - Math.round(((255 - a[0]) * (255 - b[0])) / 255),
+    255 - Math.round(((255 - a[1]) * (255 - b[1])) / 255),
+    255 - Math.round(((255 - a[2]) * (255 - b[2])) / 255),
   ];
 }
+
+const layerId = (idx) => state.availableLayers?.[idx]?.name ?? "(none)";
+const baseLayerId = (idx) => state.availableBaseLayers?.[idx]?.name ?? "(none)";
+const layerUiName = (idx) =>
+  layerLabel(state.availableLayers?.[idx]) ?? layerId(idx);
+const baseLayerUiName = (idx) =>
+  layerLabel(state.availableBaseLayers?.[idx]) ?? layerId(idx);
 
 /**
  * Wire a pixel probe that follows the mouse and displays live raster values.
@@ -1990,70 +2987,70 @@ function blendScreenRGB(a, b) {
  * @returns {void}
  */
 function wirePixelProbe() {
-  const map = state.map
+  const map = state.map;
 
   // create probe element
-  let probe = document.querySelector('.pixel-probe')
+  let probe = document.querySelector(".pixel-probe");
 
-  const overlay = document.querySelector('#statsOverlay');
-  const header = document.querySelector('header');
+  const overlay = document.querySelector("#statsOverlay");
+  const header = document.querySelector("header");
 
-  overlay.addEventListener('mouseover', () => {
+  overlay.addEventListener("mouseover", () => {
     state.probeSuppressed = true;
-    probe.style.display = 'none';
+    probe.style.display = "none";
   });
-  overlay.addEventListener('mouseleave', () => {
+  overlay.addEventListener("mouseleave", () => {
     state.probeSuppressed = false;
-    probe.style.display = 'block';
+    probe.style.display = "block";
   });
 
-  header.addEventListener('mouseover', () => {
+  header.addEventListener("mouseover", () => {
     state.probeSuppressed = true;
-    probe.style.display = 'none';
+    probe.style.display = "none";
   });
-  header.addEventListener('mouseleave', () => {
+  header.addEventListener("mouseleave", () => {
     state.probeSuppressed = false;
-    probe.style.display = 'block';
+    probe.style.display = "block";
   });
 
   // then in your global mousemove logic (or Leaflet map.on('mousemove'))
-  document.addEventListener('mousemove', e => {
+  document.addEventListener("mousemove", (e) => {
     if (state.probeSuppressed) return;
     probe.style.left = `${e.clientX + 12}px`;
     probe.style.top = `${e.clientY + 12}px`;
   });
 
   if (!probe) {
-    probe = document.createElement('div')
-    probe.className = 'pixel-probe'
+    probe = document.createElement("div");
+    probe.className = "pixel-probe";
     Object.assign(probe.style, {
-      position: 'fixed',
-      left: '0',
-      top: '0',
-      padding: '6px 8px',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-      fontSize: '11px',
-      color: '#e5e7eb',
-      background: 'rgba(17, 21, 28, 0.92)',
-      border: '1px solid #334155',
-      borderRadius: '6px',
-      pointerEvents: 'none',
+      position: "fixed",
+      left: "0",
+      top: "0",
+      padding: "6px 8px",
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: "11px",
+      color: "#e5e7eb",
+      background: "rgba(17, 21, 28, 0.92)",
+      border: "1px solid #334155",
+      borderRadius: "6px",
+      pointerEvents: "none",
       zIndex: 9999,
-      display: 'none',
-      whiteSpace: 'pre',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
-      maxWidth: '320px'
-    })
-    document.body.appendChild(probe)
+      display: "none",
+      whiteSpace: "pre",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
+      maxWidth: "320px",
+    });
+    document.body.appendChild(probe);
   }
 
-  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : '-')
-  const layerName = (idx) => state.availableLayers?.[idx]?.name ?? '(none)'
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : "-");
 
-  let lastFetchTs = 0
-  let inFlight = null
-  let pending = null
-  const RATE_MS = 100
+  let lastFetchTs = 0;
+  let inFlight = null;
+  let pending = null;
+  const RATE_MS = 100;
 
   /**
    * Abort any in-flight pixel value request.
@@ -2067,10 +3064,12 @@ function wirePixelProbe() {
    */
   const abortPrev = () => {
     if (inFlight?.ac) {
-      try { inFlight.ac.abort() } catch {}
+      try {
+        inFlight.ac.abort();
+      } catch {}
     }
-    inFlight = null
-  }
+    inFlight = null;
+  };
 
   /**
    * Fetch the raster value for a given geographic coordinate from the backend.
@@ -2089,96 +3088,121 @@ function wirePixelProbe() {
    */
   async function fetchPixelVal(rasterId, lng, lat, ac) {
     const res = await fetch(`${state.baseStatsUrl}/stats/pixel_val`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       signal: ac?.signal,
       body: JSON.stringify({
         raster_id: rasterId,
         lon: lng,
         lat: lat,
-        from_crs: 'EPSG:4326'
-      })
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+        from_crs: "EPSG:4326",
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
   }
 
-  /**
-   * Query the backend for pixel values under the cursor and update the probe.
-   *
-   * Requests current values from active rasters (A and/or B) using `fetchPixelVal`,
-   * updates the `.pixel-probe` tooltip with results, and-if both values are
-   * finite-records the coordinate in `state.lastPixelPoint` for plotting on
-   * the scatterplot. Handles throttling, aborting prior requests, and tooltip
-   * placement relative to the mouse.
-   *
-   * @async
-   * @param {L.LatLng} latlng - Leaflet latitude/longitude of the cursor.
-   * @param {number} clientX - Screen X coordinate of the mouse pointer.
-   * @param {number} clientY - Screen Y coordinate of the mouse pointer.
-   * @returns {Promise<void>}
-   */
-  async function queryAndRender(latlng, clientX, clientY) {
-    const ts = Date.now()
-    lastFetchTs = ts
-    const ac = new AbortController()
-    inFlight = { ts, ac }
+/**
+ * Query the backend for pixel values under the cursor and update the probe.
+ *
+ * Requests current values from active rasters (A and/or B and/or Base) using `fetchPixelVal`,
+ * updates the `.pixel-probe` tooltip with results, and-if both A/B values are
+ * finite-records the coordinate in `state.lastPixelPoint` for plotting on
+ * the scatterplot. Handles throttling, aborting prior requests, and tooltip
+ * placement relative to the mouse.
+ *
+ * @async
+ * @param {L.LatLng} latlng - Leaflet latitude/longitude of the cursor.
+ * @param {number} clientX - Screen X coordinate of the mouse pointer.
+ * @param {number} clientY - Screen Y coordinate of the mouse pointer.
+ * @returns {Promise<void>}
+ */
+async function queryAndRender(latlng, clientX, clientY) {
+  const ts = Date.now();
+  lastFetchTs = ts;
 
-    const aIdx = state.activeLayerIdxA
-    const bIdx = state.activeLayerIdxB
-    const nameA = layerName(aIdx)
-    const nameB = layerName(bIdx)
+  const prev = inFlight;
+  if (prev?.ac) prev.ac.abort();
 
-    let valA = null
-    let valB = null
+  const ac = new AbortController();
+  inFlight = { ts, ac };
 
-    try {
-      const jobs = []
-      if (Number.isInteger(aIdx)) {
-        jobs.push(
-          fetchPixelVal(nameA, latlng.lng, latlng.lat, ac).then(o => { valA = o?.value ?? null })
-        )
-      }
-      if (Number.isInteger(bIdx)) {
-        jobs.push(
-          fetchPixelVal(nameB, latlng.lng, latlng.lat, ac).then(o => { valB = o?.value ?? null })
-        )
-      }
-      await Promise.all(jobs)
-    } catch (e) {
-      if (ac.signal.aborted) return
-    } finally {
-      if (inFlight?.ts === ts) inFlight = null
+  const aIdx = state.activeLayerIdxA;
+  const bIdx = state.activeLayerIdxB;
+  const baseIdx = state.activeBaseLayerIdx;
+
+  const idA = layerId(aIdx);
+  const idB = layerId(bIdx);
+  const idBase = baseLayerId(baseIdx);
+
+  const uiA = layerUiName(aIdx);
+  const uiB = layerUiName(bIdx);
+  const uiBase = baseLayerUiName(baseIdx);
+
+  let valA = null;
+  let valB = null;
+  let valBase = null;
+
+  try {
+    const jobs = [];
+    if (Number.isInteger(aIdx)) {
+      jobs.push(
+        fetchPixelVal(idA, latlng.lng, latlng.lat, ac).then((o) => {
+          valA = o?.value ?? null;
+        }),
+      );
     }
-
-    const lines = [
-      `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-      Number.isInteger(aIdx) ? `${nameA}: ${valA == null ? '-' : String(valA)}` : null,
-      Number.isInteger(bIdx) ? `${nameB}: ${valB == null ? '-' : String(valB)}` : null,
-    ].filter(Boolean)
-
-    probe.textContent = lines.join('\n')
-    probe.style.display = 'block'
-
-    const bothFinite = Number.isFinite(valA) && Number.isFinite(valB)
-    if (bothFinite) {
-      state.lastPixelPoint = {
-        x: valA,
-        y: valB,
-        label: `${nameA}: ${valA} • ${nameB}: ${valB}`
-      }
-      // if scatter is visible, refresh to draw marker
-      if (state.lastScatterOpts && state.scatterObj) {
-        renderScatterPoint(state.lastPixelPoint, 'A', 'B');
-      }
-    } else {
-      if (state.lastPointMarker && state.lastPointMarker.parentNode) {
-        state.lastPointMarker.remove();
-        state.lastPointMarker = null;
-      }
-      state.lastPixelPoint = null
+    if (Number.isInteger(bIdx)) {
+      jobs.push(
+        fetchPixelVal(idB, latlng.lng, latlng.lat, ac).then((o) => {
+          valB = o?.value ?? null;
+        }),
+      );
     }
+    if (Number.isInteger(baseIdx)) {
+      jobs.push(
+        fetchPixelVal(idBase, latlng.lng, latlng.lat, ac).then((o) => {
+          valBase = o?.value ?? null;
+        }),
+      );
+    }
+    await Promise.all(jobs);
+  } catch (e) {
+    if (ac.signal.aborted) return;
+  } finally {
+    if (inFlight?.ts === ts) inFlight = null;
   }
+
+  const lines = [
+    `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
+    Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
+    Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
+    Number.isInteger(baseIdx)
+      ? `${uiBase}: ${valBase == null ? '-' : String(valBase)}`
+      : null,
+  ].filter(Boolean);
+
+  probe.textContent = lines.join('\n');
+  probe.style.display = 'block';
+
+  const bothFinite = Number.isFinite(valA) && Number.isFinite(valB);
+  if (bothFinite) {
+    state.lastPixelPoint = {
+      x: valA,
+      y: valB,
+      label: `${uiA}: ${valA} * ${uiB}: ${valB}`,
+    };
+    if (state.lastScatterOpts && state.scatterObj) {
+      renderScatterPoint(state.lastPixelPoint, 'A', 'B');
+    }
+  } else {
+    if (state.lastPointMarker && state.lastPointMarker.parentNode) {
+      state.lastPointMarker.remove();
+      state.lastPointMarker = null;
+    }
+    state.lastPixelPoint = null;
+  }
+}
 
   /**
    * Schedule a new pixel value query with simple rate-limiting.
@@ -2193,51 +3217,53 @@ function wirePixelProbe() {
    * @returns {void}
    */
   function schedule(latlng, clientX, clientY) {
-    const now = Date.now()
+    const now = Date.now();
     if (inFlight) {
-      pending = { latlng, clientX, clientY }
-      abortPrev() // prefer newest pointer position
+      pending = { latlng, clientX, clientY };
+      abortPrev(); // prefer newest pointer position
     }
     if (now - lastFetchTs < RATE_MS) {
-      pending = { latlng, clientX, clientY }
-      return
+      pending = { latlng, clientX, clientY };
+      return;
     }
-    queryAndRender(latlng, clientX, clientY)
+    queryAndRender(latlng, clientX, clientY);
   }
 
   const drainTimer = setInterval(() => {
-    if (!pending) return
-    if (inFlight) return
-    const p = pending
-    pending = null
-    queryAndRender(p.latlng, p.clientX, p.clientY)
-  }, 60)
+    if (!pending) return;
+    if (inFlight) return;
+    const p = pending;
+    pending = null;
+    queryAndRender(p.latlng, p.clientX, p.clientY);
+  }, 60);
 
-  map.on('mousemove', (e) => {
-    const latlng = e.latlng
-    const oe = e.originalEvent
-    const cx = oe?.clientX ?? 0
-    const cy = oe?.clientY ?? 0
-    schedule(latlng, cx, cy)
-  })
+  map.on("mousemove", (e) => {
+    const latlng = e.latlng;
+    const oe = e.originalEvent;
+    const cx = oe?.clientX ?? 0;
+    const cy = oe?.clientY ?? 0;
+    schedule(latlng, cx, cy);
+  });
 
-  map.on('mouseout', () => {
-    probe.style.display = 'none'
-    abortPrev()
-    pending = null
-  })
+  map.on("mouseout", () => {
+    probe.style.display = "none";
+    abortPrev();
+    pending = null;
+  });
 
-  overlay.addEventListener('mouseenter', () => { probe.style.display = 'none' })
-  overlay.addEventListener('mouseleave', () => { })
+  overlay.addEventListener("mouseenter", () => {
+    probe.style.display = "none";
+  });
+  overlay.addEventListener("mouseleave", () => {});
 
   map._pixelProbeTeardown = () => {
-    clearInterval(drainTimer)
-    abortPrev()
-    pending = null
-    map.off('mousemove')
-    map.off('mouseout')
-    probe.parentNode.removeChild(probe)
-  }
+    clearInterval(drainTimer);
+    abortPrev();
+    pending = null;
+    map.off("mousemove");
+    map.off("mouseout");
+    probe.parentNode.removeChild(probe);
+  };
 }
 
 /**
@@ -2257,13 +3283,14 @@ function wirePixelProbe() {
  * @param {string} [selectId='bivariatePaletteSelect'] - The ID of the <select> element used for palette selection.
  * @returns {void}
  */
-function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
+function wireBivariatePalettePicker(selectId = "bivariatePaletteSelect") {
   const ensureSelectElement = () => {
     let selectElement = document.getElementById(selectId);
     if (!selectElement) {
-      selectElement = document.createElement('select');
+      selectElement = document.createElement("select");
       selectElement.id = selectId;
-      const container = document.getElementById('bivariatePaletteContainer') || document.body;
+      const container =
+        document.getElementById("bivariatePaletteContainer") || document.body;
       container.appendChild(selectElement);
     }
     return selectElement;
@@ -2273,16 +3300,18 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
 
   const refreshSelectOptions = (selectElement) => {
     const currentValue = selectElement.value;
-    selectElement.innerHTML = '';
-    getPaletteKeys().forEach(paletteKey => {
-      const optionElement = document.createElement('option');
+    selectElement.innerHTML = "";
+    getPaletteKeys().forEach((paletteKey) => {
+      const optionElement = document.createElement("option");
       optionElement.value = paletteKey;
       optionElement.textContent = paletteKey;
       selectElement.appendChild(optionElement);
     });
     const availableKeys = getPaletteKeys();
     if (availableKeys.length) {
-      selectElement.value = availableKeys.includes(currentValue) ? currentValue : availableKeys[0];
+      selectElement.value = availableKeys.includes(currentValue)
+        ? currentValue
+        : availableKeys[0];
     }
   };
 
@@ -2290,9 +3319,9 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
     const selectedPalette = state.bivariatePalette[paletteKey];
     if (!selectedPalette) return;
 
-    if (typeof selectedPalette === 'function') {
+    if (typeof selectedPalette === "function") {
       applyBivariateColormapToAB(selectedPalette);
-    } else if (typeof selectedPalette.cmap === 'function') {
+    } else if (typeof selectedPalette.cmap === "function") {
       applyBivariateColormapToAB(selectedPalette.cmap);
     } else if (selectedPalette.A && selectedPalette.B) {
       applyBivariatePalette(selectedPalette);
@@ -2301,7 +3330,7 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
     if (state.lastScatterOpts) {
       await renderScatterOverlay({
         ...state.lastScatterOpts,
-        scatterObj: state.scatterObj
+        scatterObj: state.scatterObj,
       });
     }
   };
@@ -2311,12 +3340,14 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
   refreshSelectOptions(selectElement);
 
   if (selectElement.querySelector('option[value="orangeBlue"]')) {
-    selectElement.value = 'orangeBlue';
+    selectElement.value = "orangeBlue";
   }
 
   applySelectedPalette(selectElement.value);
 
-  selectElement.addEventListener('change', () => applySelectedPalette(selectElement.value));
+  selectElement.addEventListener("change", () =>
+    applySelectedPalette(selectElement.value),
+  );
 
   // Expose manual refresh for dynamic palette registration
   state.refreshBivariatePalettePicker = () => {
@@ -2324,7 +3355,6 @@ function wireBivariatePalettePicker(selectId = 'bivariatePaletteSelect') {
     applySelectedPalette(selectElement.value);
   };
 }
-
 
 function addGeoJSONPolyToMap(fc) {
   if (state.uploadedLayer) {
@@ -2334,24 +3364,28 @@ function addGeoJSONPolyToMap(fc) {
 
   state.uploadedLayer = L.geoJSON(fc, {
     style: () => ({
-      color: '#0d6efd',
+      color: "#0d6efd",
       weight: 2,
       opacity: 0.9,
-      fillColor: '#74c0fc',
-      fillOpacity: 0.25
+      fillColor: "#74c0fc",
+      fillOpacity: 0.25,
     }),
-    pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
-      radius: 6,
-      color: '#0d6efd',
-      weight: 2,
-      fillColor: '#74c0fc',
-      fillOpacity: 0.7
-    }),
+    pointToLayer: (_feature, latlng) =>
+      L.circleMarker(latlng, {
+        radius: 6,
+        color: "#0d6efd",
+        weight: 2,
+        fillColor: "#74c0fc",
+        fillOpacity: 0.7,
+      }),
     onEachFeature: (feature, layer) => {
       const props = feature?.properties ?? {};
-      const rows = Object.entries(props).slice(0, 10).map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
+      const rows = Object.entries(props)
+        .slice(0, 10)
+        .map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`)
+        .join("");
       if (rows) layer.bindPopup(`<table class='popup'>${rows}</table>`);
-    }
+    },
   }).addTo(state.map);
 
   // Fit map to features if possible
@@ -2364,45 +3398,44 @@ function addGeoJSONPolyToMap(fc) {
 function toFeatureCollection(geo) {
   if (!geo) return null;
 
-  if (geo.type === 'FeatureCollection') return geo;
+  if (geo.type === "FeatureCollection") return geo;
   if (Array.isArray(geo)) {
     const features = [];
     for (const g of geo) {
-      if (g && g.type === 'FeatureCollection' && Array.isArray(g.features)) {
+      if (g && g.type === "FeatureCollection" && Array.isArray(g.features)) {
         features.push(...g.features);
       }
     }
-    return { type: 'FeatureCollection', features };
+    return { type: "FeatureCollection", features };
   }
 }
-
 
 function getGeoJSONCenter(geojson) {
   const coords = [];
 
   const extractCoords = (geom) => {
-    if (geom.type === 'Point') {
+    if (geom.type === "Point") {
       coords.push(geom.coordinates);
-    } else if (geom.type === 'MultiPoint' || geom.type === 'LineString') {
+    } else if (geom.type === "MultiPoint" || geom.type === "LineString") {
       coords.push(...geom.coordinates);
-    } else if (geom.type === 'MultiLineString' || geom.type === 'Polygon') {
-      geom.coordinates.forEach(part => coords.push(...part));
-    } else if (geom.type === 'MultiPolygon') {
-      geom.coordinates.forEach(polygon => {
-        polygon.forEach(part => coords.push(...part));
+    } else if (geom.type === "MultiLineString" || geom.type === "Polygon") {
+      geom.coordinates.forEach((part) => coords.push(...part));
+    } else if (geom.type === "MultiPolygon") {
+      geom.coordinates.forEach((polygon) => {
+        polygon.forEach((part) => coords.push(...part));
       });
-    } else if (geom.type === 'GeometryCollection') {
+    } else if (geom.type === "GeometryCollection") {
       geom.geometries.forEach(extractCoords);
     }
   };
 
-  geojson.features.forEach(f => extractCoords(f.geometry));
+  geojson.features.forEach((f) => extractCoords(f.geometry));
 
   if (!coords.length) return null;
 
   const [sumX, sumY] = coords.reduce(
     ([sx, sy], [x, y]) => [sx + x, sy + y],
-    [0, 0]
+    [0, 0],
   );
   const center = [sumX / coords.length, sumY / coords.length];
   return { lng: center[0], lat: center[1] };
@@ -2411,13 +3444,13 @@ function getGeoJSONCenter(geojson) {
 function collapseToMultiPolygon(fc) {
   const polygons = [];
 
-  fc.features.forEach(f => {
+  fc.features.forEach((f) => {
     const geom = f.geometry;
     if (!geom) return;
 
-    if (geom.type === 'Polygon') {
+    if (geom.type === "Polygon") {
       polygons.push(geom.coordinates);
-    } else if (geom.type === 'MultiPolygon') {
+    } else if (geom.type === "MultiPolygon") {
       polygons.push(...geom.coordinates);
     }
   });
@@ -2425,8 +3458,8 @@ function collapseToMultiPolygon(fc) {
   if (!polygons.length) return null;
 
   return {
-    type: 'MultiPolygon',
-    coordinates: polygons
+    type: "MultiPolygon",
+    coordinates: polygons,
   };
 }
 
@@ -2435,15 +3468,15 @@ function collapseToMultiPolygon(fc) {
  * GeoJSON FeatureCollection, and delegate rendering to `setAOIAndRenderOverlay`.
  */
 function wireShapefileAOIControl() {
-  const inputEl = document.getElementById('shpInput');
+  const inputEl = document.getElementById("shpInput");
 
-  inputEl.addEventListener('change', async evt => {
+  inputEl.addEventListener("change", async (evt) => {
     const file = evt.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      alert('Select a .zip containing the shapefile.');
-      evt.target.value = '';
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      alert("Select a .zip containing the shapefile.");
+      evt.target.value = "";
       return;
     }
 
@@ -2456,7 +3489,9 @@ function wireShapefileAOIControl() {
       enableDownloadButton();
     } catch (err) {
       console.error(err);
-      alert('Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).');
+      alert(
+        "Failed to read shapefile. Ensure the .zip contains .shp, .shx, .dbf (and optional .prj).",
+      );
     }
   });
 }
@@ -2482,8 +3517,8 @@ async function setAOIAndRenderOverlay(featureCollection) {
     !Array.isArray(featureCollection.features) ||
     featureCollection.features.length === 0
   ) {
-    alert('No features found.');
-    throw new Error('Empty or invalid FeatureCollection');
+    alert("No features found.");
+    throw new Error("Empty or invalid FeatureCollection");
   }
 
   const centerLngLat = getGeoJSONCenter(featureCollection);
@@ -2494,12 +3529,16 @@ async function setAOIAndRenderOverlay(featureCollection) {
 
   let scatterStats;
   try {
-    const aoiGeometry = typeof collapseToMultiPolygon === 'function'
-      ? collapseToMultiPolygon(featureCollection)
-      : featureCollection;
+    const aoiGeometry =
+      typeof collapseToMultiPolygon === "function"
+        ? collapseToMultiPolygon(featureCollection)
+        : featureCollection;
 
     scatterStats = await fetchScatterStats(
-      layerX?.name, layerY?.name, aoiGeometry);
+      layerX?.name,
+      layerY?.name,
+      aoiGeometry,
+    );
   } catch (err) {
     showOverlayError(`area sampler error: ${err.message || String(err)}`);
     throw err;
@@ -2508,12 +3547,12 @@ async function setAOIAndRenderOverlay(featureCollection) {
   const areaM2 = turf.area(featureCollection);
   const areaKm2 = areaM2 / 1e6;
   await renderScatterOverlay({
-    rasterX: layerX?.name,
-    rasterY: layerY?.name,
+    rasterX: layerLabel(layerX),
+    rasterY: layerLabel(layerY),
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
-    scatterObj: scatterStats
+    scatterObj: scatterStats,
   });
 }
 
@@ -2526,19 +3565,29 @@ async function setAOIAndRenderOverlay(featureCollection) {
  * - Stops propagation of pointer and mouse events from the overlay to the map.
  */
 function wireOverlayControls() {
-  const btn = document.getElementById('overlayClose');
-  btn.addEventListener('click', (e) => {
+  const btn = document.getElementById("overlayClose");
+  btn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const wrap = document.getElementById('statsOverlay');
-    const body = document.getElementById('overlayBody');
-    if (wrap) wrap.classList.add('hidden');
-    if (body) body.innerHTML = '';
+    const wrap = document.getElementById("statsOverlay");
+    const body = document.getElementById("overlayBody");
+    if (wrap) wrap.classList.add("hidden");
+    if (body) body.innerHTML = "";
   });
 
-  const overlay = document.getElementById('statsOverlay');
-  ['mousedown','mouseup','click','dblclick','contextmenu','touchstart','pointerdown','pointerup']
-    .forEach(evt => overlay.addEventListener(evt, ev => ev.stopPropagation()));
+  const overlay = document.getElementById("statsOverlay");
+  [
+    "mousedown",
+    "mouseup",
+    "click",
+    "dblclick",
+    "contextmenu",
+    "touchstart",
+    "pointerdown",
+    "pointerup",
+  ].forEach((evt) =>
+    overlay.addEventListener(evt, (ev) => ev.stopPropagation()),
+  );
 }
 
 /**
@@ -2560,7 +3609,9 @@ function enableWindowSampler() {
 
   // ensure hoverRect exists and is on the map
   if (!state.hoverRect) {
-    state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(map);
+    state.hoverRect = squarePolygonAt(map.getCenter(), state.boxSizeKm).addTo(
+      map,
+    );
   } else if (!map.hasLayer(state.hoverRect)) {
     state.hoverRect.addTo(map);
   }
@@ -2574,12 +3625,14 @@ function enableWindowSampler() {
 
   /** Hide hoverRect when leaving the map. */
   function onMouseOut() {
-    if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+    if (state.hoverRect && map.hasLayer(state.hoverRect))
+      map.removeLayer(state.hoverRect);
   }
 
   /** Show hoverRect when entering the map. */
   function onMouseOver() {
-    if (state.hoverRect && !map.hasLayer(state.hoverRect)) state.hoverRect.addTo(map);
+    if (state.hoverRect && !map.hasLayer(state.hoverRect))
+      state.hoverRect.addTo(map);
   }
 
   /** Perform sampling and render overlay on click. */
@@ -2591,22 +3644,22 @@ function enableWindowSampler() {
     await sampleAndRenderSampleBox(evt.latlng);
   }
 
-  map.on('mousemove', onMouseMove);
-  map.on('mouseout', onMouseOut);
-  map.on('mouseover', onMouseOver);
-  map.on('click', onClick);
+  map.on("mousemove", onMouseMove);
+  map.on("mouseout", onMouseOut);
+  map.on("mouseover", onMouseOver);
+  map.on("click", onClick);
 
   state._areaSampler = {
     enabled: true,
     onMouseMove,
     onMouseOut,
     onMouseOver,
-    onClick
+    onClick,
   };
 
   if (map._container) {
-    map._container.classList.add('mode-window');
-    map._container.classList.remove('mode-shapefile');
+    map._container.classList.add("mode-window");
+    map._container.classList.remove("mode-shapefile");
   }
 }
 
@@ -2614,8 +3667,8 @@ async function sampleAndRenderSampleBox(latlng) {
   let lyrA = state.availableLayers[state.activeLayerIdxA];
   let lyrB = state.availableLayers[state.activeLayerIdxB];
 
-  const visA = document.getElementById('layerVisibleA');
-  const visB = document.getElementById('layerVisibleB');
+  const visA = document.getElementById("layerVisibleA");
+  const visB = document.getElementById("layerVisibleB");
 
   if (!visA.checked) lyrA = null;
   if (!visB.checked) lyrB = null;
@@ -2631,27 +3684,27 @@ async function sampleAndRenderSampleBox(latlng) {
   }
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
-    scatterObj: null
+    scatterObj: null,
   });
 
   const scatterStats = await fetchScatterStats(
     lyrA?.name ?? null,
     lyrB?.name ?? null,
-    state.sampleBox.toGeoJSON()
+    state.sampleBox.toGeoJSON(),
   );
 
   await renderScatterOverlay({
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
-    scatterObj: scatterStats
+    scatterObj: scatterStats,
   });
 
   state.lastScatterOpts = {
@@ -2676,8 +3729,8 @@ async function sampleAndRenderSampleBox(latlng) {
  * */
 
 function enableDownloadButton() {
-  document.getElementById('exportAreaBtn').classList.remove('disabled');
-  document.getElementById('exportAreaBtn').textContent = 'Download Area';
+  document.getElementById("exportAreaBtn").classList.remove("disabled");
+  document.getElementById("exportAreaBtn").textContent = "Download Area";
 }
 
 /**
@@ -2692,18 +3745,21 @@ function disableWindowSampler() {
   const map = state.map;
   if (!state._areaSampler?.enabled) return;
 
-  map.off('mousemove', state._areaSampler.onMouseMove);
-  map.off('mouseout', state._areaSampler.onMouseOut);
-  map.off('mouseover', state._areaSampler.onMouseOver);
-  map.off('click', state._areaSampler.onClick);
+  map.off("mousemove", state._areaSampler.onMouseMove);
+  map.off("mouseout", state._areaSampler.onMouseOut);
+  map.off("mouseover", state._areaSampler.onMouseOver);
+  map.off("click", state._areaSampler.onClick);
 
-  if (state.hoverRect && map.hasLayer(state.hoverRect)) map.removeLayer(state.hoverRect);
+  if (state.hoverRect && map.hasLayer(state.hoverRect))
+    map.removeLayer(state.hoverRect);
 
   state._areaSampler.enabled = false;
   if (map._container) {
-    map._container.classList.remove('mode-window');
-    map._container.classList.add('mode-shapefile');
-    if (state.outlineLayer) {map.removeLayer(state.outlineLayer)};
+    map._container.classList.remove("mode-window");
+    map._container.classList.add("mode-shapefile");
+    if (state.outlineLayer) {
+      map.removeLayer(state.outlineLayer);
+    }
   }
 }
 
@@ -2717,13 +3773,13 @@ function disableWindowSampler() {
  * @param {string} mode - Sampling mode name ('window' or 'shapefile').
  */
 async function setSamplingMode(mode) {
-  state.sampleMode = mode.toLowerCase()
-  if (state.sampleMode === 'window') {
+  state.sampleMode = mode.toLowerCase();
+  if (state.sampleMode === "window") {
     enableWindowSampler();
   } else {
     disableWindowSampler();
   }
-  await clearScatterOverlay()
+  await clearScatterOverlay();
 }
 
 /**
@@ -2750,60 +3806,180 @@ async function setSamplingMode(mode) {
  *   void
  */
 function wireCollapsibleTopBar() {
-  const header = document.querySelector('header');
-  const content = document.getElementById('topbarContent');
-  const toggle = document.getElementById('headerToggle');
+  const header = document.querySelector("header");
+  const content = document.getElementById("topbarContent");
+  const toggle = document.getElementById("headerToggle");
 
   const setExpanded = (expanded) => {
     if (expanded) {
-      content.style.maxHeight = content.scrollHeight + 'px';
-      header.classList.remove('is-collapsed');
-      toggle.setAttribute('aria-expanded', 'true');
-      toggle.textContent = '▲ Hide Control Panel';
+      content.style.maxHeight = content.scrollHeight + "px";
+      header.classList.remove("is-collapsed");
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.textContent = "▲ Hide Control Panel";
     } else {
-      content.style.maxHeight = '0px';
-      header.classList.add('is-collapsed');
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = '▼ Show Control Panel';
+      content.style.maxHeight = "0px";
+      header.classList.add("is-collapsed");
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.textContent = "▼ Show Control Panel";
     }
   };
 
   const onResize = () => {
-    if (toggle.getAttribute('aria-expanded') === 'true') {
-      content.style.maxHeight = content.scrollHeight + 'px';
+    if (toggle.getAttribute("aria-expanded") === "true") {
+      content.style.maxHeight = content.scrollHeight + "px";
     }
   };
 
   setExpanded(true);
-  toggle.addEventListener('click', () => {
-    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+  toggle.addEventListener("click", () => {
+    const expanded = toggle.getAttribute("aria-expanded") === "true";
     setExpanded(!expanded);
   });
-  window.addEventListener('resize', onResize);
+  window.addEventListener("resize", onResize);
+}
+
+function renderLayerMeta(layerId, lyr) {
+  let el = document.getElementById(`layerMeta${layerId}`);
+  if (!el) {
+    const sel = document.getElementById(`layerSelect${layerId}`);
+    if (!sel) return;
+    el = document.createElement("div");
+    el.id = `layerMeta${layerId}`;
+    el.className = "layer-meta";
+    sel.insertAdjacentElement("afterend", el);
+  }
+  const desc = layerDesc(lyr) || "";
+  el.replaceChildren();
+  if (!desc) return;
+  const d = document.createElement("div");
+  d.className = "layer-meta-desc";
+  d.textContent = desc;
+  el.appendChild(d);
+}
+
+/**
+ * Builds a WMS GetLegendGraphic URL for a given layer.
+ *
+ * @param {string} layerName - The name of the WMS layer.
+ * @param {Object} [opts={}] - Optional configuration.
+ * @param {number} [opts.width=18] - Legend graphic width in pixels.
+ * @param {number} [opts.height=18] - Legend graphic height in pixels.
+ * @param {string} [opts.style] - Optional WMS style name to apply.
+ * @param {Object.<string, string>} [opts.extraParams] - Additional query parameters to include in the request.
+ * @returns {string} Fully qualified GetLegendGraphic request URL.
+ */
+function getWmsLegendUrl(layerName, opts = {}) {
+  const wmsUrl = `${state.geoserverBaseUrl}/wms`;
+  const params = new URLSearchParams({
+    service: "WMS",
+    request: "GetLegendGraphic",
+    format: "image/png",
+    width: String(opts.width ?? 18),
+    height: String(opts.height ?? 18),
+    layer: layerName,
+    transparent: "true",
+    ...opts.extraParams,
+  });
+
+  if (opts.style) params.set("style", opts.style);
+
+  return `${wmsUrl}?${params.toString()}`;
+}
+
+/**
+ * Creates a Leaflet control for displaying a WMS legend associated with the
+ * currently selected base layer.
+ *
+ * The control renders in the bottom-right corner of the map and is hidden
+ * by default. Calling `setLayer(layerName, styleName)` updates the legend
+ * image using a GeoServer WMS GetLegendGraphic request and sets the legend
+ * title to the provided layer name. Passing a falsy `layerName` clears the
+ * legend content and hides the control.
+ *
+ * The returned control instance exposes:
+ *   - setLayer(layerName: string | null, styleName?: string): void
+ *       Updates the legend image and title, or hides the control if no layer.
+ *   - show(): void
+ *       Makes the legend visible.
+ *   - hide(): void
+ *       Hides the legend.
+ *
+ * @returns {L.Control & {
+ *   setLayer: (layerName: string | null, styleName?: string) => void,
+ *   show: () => void,
+ *   hide: () => void
+ * }} Configured Leaflet legend control instance.
+ */
+function createBaseLegendControl() {
+  const ctrl = L.control({ position: "bottomright" });
+
+  ctrl.onAdd = () => {
+    const div = L.DomUtil.create("div", "legend-control hidden");
+    div.innerHTML = `
+      <div class='legend-title'></div>
+      <div class='legend-body'></div>
+    `;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    ctrl._container = div;
+    return div;
+  };
+
+  ctrl.setLayer = (layerName, styleName) => {
+    const body = ctrl._container.querySelector(".legend-body");
+    const title = ctrl._container.querySelector(".legend-title");
+
+    if (!layerName) {
+      body.innerHTML = "";
+      title.textContent = "";
+      ctrl.hide();
+      return;
+    }
+
+    title.textContent = layerName;
+
+    const url = getWmsLegendUrl(layerName, { style: styleName });
+    body.innerHTML = `<img class='legend-img' src='${url}' />`;
+
+    ctrl.show();
+  };
+
+  ctrl.show = () => {
+    ctrl._container.classList.remove("hidden");
+  };
+
+  ctrl.hide = () => {
+    ctrl._container.classList.add("hidden");
+  };
+
+  return ctrl;
 }
 
 /**
  * App entrypoint.
  */
-;(async function main() {
-  initMap()
-  wireSquareSamplerControls()
-  enableAltWheelSlider()
-  disableLeafletScrollOnAlt()
-  wireVisibilityCheckboxes()
-  wireAutoStyleFromHistogram()
-  wirePixelProbe()
-  wireBivariatePalettePicker('bivariatePaletteSelect')
-  wireShapefileAOIControl()
-  wireControlGroup()
-  wireOverlayControls()
-  wireCollapsibleTopBar()
-  setSamplingMode('window')
+(async function main() {
+  const cfg = await loadConfig();
+  const global_crs = cfg.global_crs;
+  initMap(cfg.global_crs);
+  wireSquareSamplerControls();
+  enableAltWheelSlider();
+  disableLeafletScrollOnAlt();
+  wireVisibilityCheckboxes();
+  wireAutoStyleFromHistogram();
+  wirePixelProbe();
+  wireBivariatePalettePicker("bivariatePaletteSelect");
+  wireBivariateLegend();
+  wireShapefileAOIControl();
+  wireControlGroup();
+  wireOverlayControls();
+  wireCollapsibleTopBar();
+  setSamplingMode("window");
 
-  const cfg = await loadConfig()
-  state.geoserverBaseUrl = cfg.geoserver_base_url
-  state.availableLayers = cfg.layers
-  state.baseStatsUrl = cfg.rstats_base_url
-  ;['A', 'B'].forEach(layerId => wireDynamicStyleControls(layerId))
-  populateLayerSelects()
-})()
+  state.geoserverBaseUrl = cfg.geoserver_base_url;
+  state.availableLayers = cfg.layers;
+  state.availableBaseLayers = cfg.baseLayers;
+  state.baseStatsUrl = cfg.rstats_base_url;
+  ["A", "B"].forEach((layerId) => wireDynamicStyleControls(layerId));
+  populateLayerSelects();
+})();

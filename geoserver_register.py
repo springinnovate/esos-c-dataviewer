@@ -39,14 +39,14 @@ import logging
 import os
 import secrets
 import sys
-import tempfile
 import time
+from xml.sax.saxutils import escape
+
 
 from dotenv import load_dotenv
 from ecoshard import taskgraph
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
-from rasterio.warp import calculate_default_transform, reproject
 from rasterio.windows import Window
 from requests.auth import HTTPBasicAuth
 import numpy as np
@@ -447,6 +447,7 @@ def ping_until_up(geoserver_client: Gs, timeout_sec: int) -> None:
             if r.status_code == 200:
                 return
         except requests.RequestException:
+            logger.exception("request failed")
             pass
         time.sleep(2)
     raise TimeoutError("geoserver REST did not become ready")
@@ -531,6 +532,117 @@ def create_style_if_not_exists(
         timeout=geoserver_client.timeout,
         verify=False,
     )
+    if upload_response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Failed to upload style {workspace_name}:{style_name}: "
+            f"{upload_response.status_code} {upload_response.text}"
+        )
+
+
+def create_categorical_raster_style(
+    geoserver_client,
+    workspace_name: str,
+    style_name: str,
+    layer_config: dict,
+) -> None:
+    rendering_config = layer_config.get("rendering") or {}
+    if (rendering_config.get("type") or "").lower() != "categorical":
+        raise ValueError("rendering.type must be categorical")
+
+    category_definitions = rendering_config.get("categories") or {}
+    if not category_definitions:
+        raise ValueError("rendering.categories is required")
+
+    default_opacity = float(rendering_config.get("opacity", 1.0))
+
+    def parse_numeric_value(value):
+        try:
+            return int(value)
+        except Exception:
+            return float(value)
+
+    color_map_entries = []
+    for category_value, category_spec in sorted(
+        category_definitions.items(),
+        key=lambda item: parse_numeric_value(item[0]),
+    ):
+        category_color = str(category_spec["color"]).strip()
+        category_label = escape(str(category_spec.get("label", category_value)))
+        category_opacity = float(category_spec.get("opacity", default_opacity))
+
+        color_map_entries.append(
+            f'<ColorMapEntry color="{category_color}" '
+            f'opacity="{category_opacity}" '
+            f'quantity="{category_value}" '
+            f'label="{category_label}"/>'
+        )
+
+    color_map_entries_xml = "\n              ".join(color_map_entries)
+
+    sld_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<sld:StyledLayerDescriptor xmlns="http://www.opengis.net/sld"
+  xmlns:sld="http://www.opengis.net/sld"
+  xmlns:ogc="http://www.opengis.net/ogc"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  version="1.0.0">
+  <sld:NamedLayer>
+    <sld:Name>{escape(style_name)}</sld:Name>
+    <sld:UserStyle>
+      <sld:Title>{escape(style_name)}</sld:Title>
+      <sld:FeatureTypeStyle>
+        <sld:Rule>
+          <sld:RasterSymbolizer>
+            <sld:Opacity>{default_opacity}</sld:Opacity>
+            <sld:ColorMap type="values">
+              {color_map_entries_xml}
+            </sld:ColorMap>
+          </sld:RasterSymbolizer>
+        </sld:Rule>
+      </sld:FeatureTypeStyle>
+    </sld:UserStyle>
+  </sld:NamedLayer>
+</sld:StyledLayerDescriptor>
+"""
+
+    get_style_response = geoserver_client.get(
+        f"/rest/workspaces/{workspace_name}/styles/{style_name}.json"
+    )
+
+    if get_style_response.status_code != 200:
+        style_creation_payload = {
+            "style": {
+                "name": style_name,
+                "filename": f"{style_name}.sld",
+                "format": "sld",
+            }
+        }
+
+        create_style_response = geoserver_client.post(
+            f"/rest/workspaces/{workspace_name}/styles",
+            style_creation_payload,
+        )
+
+        if create_style_response.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to create style {workspace_name}:{style_name}: "
+                f"{create_style_response.status_code} {create_style_response.text}\n"
+                f"Payload: {style_creation_payload}"
+            )
+
+    style_upload_url = geoserver_client._url(
+        f"/rest/workspaces/{workspace_name}/styles/{style_name}.sld?raw=true"
+    )
+
+    upload_response = requests.put(
+        style_upload_url,
+        auth=geoserver_client.auth,
+        headers={"Content-Type": "application/vnd.ogc.sld+xml"},
+        data=sld_body.encode("utf-8"),
+        timeout=geoserver_client.timeout,
+        verify=False,
+    )
+
     if upload_response.status_code not in (200, 201):
         raise RuntimeError(
             f"Failed to upload style {workspace_name}:{style_name}: "
@@ -657,119 +769,51 @@ def crop_to_valid(src_path: str, dst_path: str, tile: int, compress: str):
                 dst.update_tags(bidx, **src.tags(bidx))
 
 
-def reproject_and_build_overviews_if_needed(
+def check_for_valid_projection_and_overviews(
     src_path: Path,
     target_projection: str,
-    resampling: Resampling,
-    dst_path: Path,
 ) -> str:
-    """Reproject a raster to a target projection if not already aligned.
+    """Validate that a raster matches a target projection and report issues.
 
-    This function checks whether a source raster matches the target CRS. If it
-    differs, the raster is reprojected using a specified resampling method and
-    written to a new file. If the raster is already in the target projection,
-    no reprojection occurs and the original path is returned. Additionally,
-    internal overviews are built to improve rendering performance.
+    This function checks whether the source raster has a defined CRS and
+    whether it matches the provided target projection string.
+    The function returns an error message string if a raster was not
+    in the right projection and/or has overviews built. If the list
+    is empty, the raster CRS exists and matches the target projection.
 
     Args:
-        src_path (Path): Path to the source raster file.
-        target_projection (str): Target projection (e.g., 'EPSG:4326' or 'EPSG:3857').
-        resampling (Resampling): Resampling method to use during reprojection.
-            Defaults to nearest-neighbor for categorical data if unspecified.
-        dst_path (Path): Output path for the reprojected raster.
-            If None, a new filename is generated with the EPSG code appended.
+        src_path (Path): Path to the source raster file to validate.
+        target_projection (str): Target projection expressed in any format
+            accepted by ``rasterio.CRS.from_user_input``
+            (e.g., ``'EPSG:4326'``).
 
-    Raises:
-        ValueError: If the source raster lacks a valid CRS.
-
+    Returns:
+        list[str]: A list of descriptive error messages. The list is empty if
+        the raster has a valid CRS and it matches ``target_projection``.
     """
-    logger.debug(f"starting processing of {src_path}")
+    logger.debug(f"validating projection and overviews of {src_path}")
+    error_messages = []
     with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS"):
         with rasterio.open(src_path) as src:
             if src.crs is None:
-                raise ValueError(
-                    "source raster has no CRS; cannot reproject reliably"
+                error_messages.append(
+                    f"Source raster has no CRS; cannot verify alignment to "
+                    f"target projection: {target_projection} "
+                    f"(src_path={src_path})."
                 )
 
             src_crs = CRS.from_user_input(src.crs)
             dst_crs = CRS.from_user_input(target_projection)
-            same_crs = src_crs == dst_crs
 
-            # build destination profile (always enforce tiling/compression)
-            if same_crs:
-                transform, width, height = src.transform, src.width, src.height
-            else:
-                transform, width, height = calculate_default_transform(
-                    src_crs, dst_crs, src.width, src.height, *src.bounds
+            if src_crs != dst_crs:
+                error_messages.append(
+                    f"Source raster CRS does not match target projection; "
+                    f"refusing to reproject or build overviews "
+                    f"(src_path={src_path}, src_crs={src_crs.to_string()}, "
+                    f"target_projection={target_projection})."
                 )
 
-            dst_profile = src.profile.copy()
-            dst_profile.update(
-                {
-                    "crs": dst_crs,
-                    "transform": transform,
-                    "width": width,
-                    "height": height,
-                    "compress": "lzw",
-                    "tiled": True,
-                    "blockxsize": 256,
-                    "blockysize": 256,
-                    "BIGTIFF": "IF_SAFER",
-                }
-            )
-
-            os.makedirs(dst_path.parent, exist_ok=True)
-            rs = _pick_resampling(src.dtypes[0], resampling)
-
-            dst_dir = os.path.dirname(dst_path)
-            dst_base = os.path.basename(dst_path)
-
-            # create temporary file in same directory with unique suffix
-            tmp_fd, tmp_dst_path = tempfile.mkstemp(
-                prefix=dst_base + "_", suffix=".tmp", dir=dst_dir
-            )
-            os.close(
-                tmp_fd
-            )  # close descriptor immediately; we'll write manually later
-
-            with rasterio.open(tmp_dst_path, "w", **dst_profile) as dst:
-                if src.nodata is not None:
-                    dst.nodata = src.nodata
-
-                if same_crs:
-                    # rewrite to enforce tiling/compression, no reprojection
-                    for bidx in range(1, src.count + 1):
-                        dst.write(src.read(bidx), bidx)
-                else:
-                    # reproject first, then build overviews
-                    for bidx in range(1, src.count + 1):
-                        reproject(
-                            source=rasterio.band(src, bidx),
-                            destination=rasterio.band(dst, bidx),
-                            src_transform=src.transform,
-                            src_crs=src_crs,
-                            dst_transform=transform,
-                            dst_crs=dst_crs,
-                            resampling=rs,
-                            num_threads=0,
-                        )
-
-        crop_to_valid(tmp_dst_path, dst_path, 256, "LZW")
-        os.remove(tmp_dst_path)
-
-        # compute overview factors from the FINAL raster size
-        with rasterio.open(dst_path, "r+") as dst:
-            min_side = min(dst.width, dst.height)
-            factors = []
-            k = 1
-            while min_side / (2**k) > 256:
-                factors.append(2**k)
-                k += 1
-            overview_factors = tuple(factors)
-
-        out_path = str(dst_path)
-        _build_overviews_inplace(out_path, overview_factors)
-        return out_path
+    return "\n".join(error_messages)
 
 
 def main():
@@ -802,6 +846,8 @@ def main():
     Returns:
         None
     """
+    logger.info("Starting GeoServer init")
+
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
@@ -810,49 +856,131 @@ def main():
     )
     parsed_args = parser.parse_args()
 
+    logger.info("Config path: %s", parsed_args.config)
+
     with open(parsed_args.config, "r", encoding="utf-8") as yaml_file:
         raw_yaml = yaml_file.read()
+    logger.info("Read config file (%d bytes)", len(raw_yaml))
 
     expanded_yaml = os.path.expandvars(raw_yaml)
-    config_data = yaml.safe_load(expanded_yaml)
+    if expanded_yaml != raw_yaml:
+        logger.info("Expanded environment variables in config YAML")
 
+    config_data = yaml.safe_load(expanded_yaml)
+    logger.info(f"Parsed YAML config from {expanded_yaml}")
+    logger.info(config_data)
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
-    geoserver_password = config_data["geoserver"]["password"]
-
+    geoserver_base_password = config_data["geoserver"]["password"]
+    target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
-    # doing -1 here because i often ran out of memory when processing more than
-    # one raster at a time
+
+    logger.info("GeoServer base_url: %s", geoserver_base_url)
+    logger.info("Workspace: %s", config_data.get("workspace_id"))
+    logger.info("Target projection: %s", target_projection)
+    logger.info("Local working dir: %s", str(local_working_dir))
+    logger.info("Layers defined: %d", len(config_data.get("layers") or {}))
+
     task_graph = taskgraph.TaskGraph(local_working_dir, -1, 15.0)
+    logger.info("TaskGraph initialized (workers=%s, timeout=%.1f)", -1, 15.0)
 
     timeout_seconds = 30
     geoserver_client = Gs(
-        geoserver_base_url, geoserver_user, geoserver_password, timeout_seconds
+        geoserver_base_url,
+        geoserver_user,
+        geoserver_base_password,
+        timeout_seconds,
+    )
+    logger.info(
+        "GeoServer REST client initialized (timeout=%ss)", timeout_seconds
     )
 
     seconds_to_wait_for_geoserver_start = 420
+    logger.info(
+        "Waiting for GeoServer to become available at %s (timeout=%ss)...",
+        geoserver_base_url,
+        seconds_to_wait_for_geoserver_start,
+    )
     ping_until_up(geoserver_client, seconds_to_wait_for_geoserver_start)
+    logger.info("GeoServer is up")
 
     workspace_id = config_data["workspace_id"]
-    purge_and_create_workspace(
-        geoserver_client,
-        workspace_id,
-    )
+    logger.info("Purging and creating workspace: %s", workspace_id)
+    purge_and_create_workspace(geoserver_client, workspace_id)
+    logger.info("Workspace ready: %s", workspace_id)
 
-    style_path = config_data["style"]
-    style_id = Path(style_path).stem
+    style_path = os.environ["STYLE_PATH"]
+    base_style_id = Path(style_path).stem
+    logger.info(
+        "Ensuring style exists: %s (path=%s)", base_style_id, style_path
+    )
     create_style_if_not_exists(
         geoserver_client,
         workspace_id,
-        style_id,
+        base_style_id,
         "sld",
         style_path,
     )
+    logger.info("Style ready: %s", base_style_id)
 
-    for raster_id, layer_def in config_data.get("layers").items():
-        logger.info("Working on layer definition: %s", layer_def)
+    layers = config_data.get("layers") or {}
+    base_layers = config_data.get("baseLayers") or {}
+    all_layers = layers | base_layers
+    if not all_layers:
+        logger.warning('No layers found under config_data["layers"]')
+
+    scheduled_layers = 0
+    scheduled_tasks = 0
+
+    error_rasters = []
+    for raster_id, layer_def in all_layers.items():
         file_path = Path(layer_def["file_path"])
+        logger.debug("Checking (%s/%s): %s", raster_id, file_path, layer_def)
+        error_message = check_for_valid_projection_and_overviews(
+            file_path, target_projection
+        )
+        if error_message:
+            error_rasters.append((raster_id, error_message))
+
+        if error_rasters:
+            formatted = "\n-----\n".join(
+                f"{raster_id}: {error_message}"
+                for raster_id, error_message in error_rasters
+            )
+            raise ValueError(formatted)
+
+    for raster_id, layer_def in all_layers.items():
+        logger.debug("Layer definition (%s): %s", raster_id, layer_def)
+
+        file_path = Path(layer_def["file_path"])
+        target_path = local_working_dir / Path(file_path).name
+
+        logger.info(
+            "Layer %s file_path=%s target_path=%s",
+            raster_id,
+            str(file_path),
+            str(target_path),
+        )
+
+        if "rendering" in layer_def:
+            style_id = f"{raster_id}_categorical"
+            categorical_raster_style_task = task_graph.add_task(
+                func=create_categorical_raster_style,
+                args=(
+                    geoserver_client,
+                    workspace_id,
+                    style_id,
+                    layer_def,
+                ),
+                task_name=f"make style -- {style_id}",
+                transient_run=True,
+            )
+            categorical_raster_style_task.join()
+        else:
+            style_id = base_style_id
+
+        logger.info("Adding create-layer task for %s", raster_id)
         task_graph.add_task(
             func=create_layer,
             args=(
@@ -862,49 +990,69 @@ def main():
                 file_path,
                 style_id,
             ),
-            task_name=f"create layer {raster_id}",
+            task_name=f"register layer in geoserver: {raster_id}",
             transient_run=True,
         )
-    task_graph.join()
-    task_graph.close()
-    logger.info("All done.")
+        scheduled_tasks += 1
+        scheduled_layers += 1
 
-    # randomly change the master password first, then the admin password so
-    # it can never be guessed!
+    logger.info(
+        "All tasks scheduled (layers=%d, tasks=%d). Waiting for completion...",
+        scheduled_layers,
+        scheduled_tasks,
+    )
+
+    task_graph.join()
+    logger.info("TaskGraph join complete")
+    task_graph.close()
+    logger.info("TaskGraph closed")
+
+    logger.info("Rotate GeoServer passwords so they cannot be guessed")
+    new_master_password = secrets.token_urlsafe(PASSWORD_LENGTH)
+    new_admin_password = secrets.token_urlsafe(PASSWORD_LENGTH)
     http_jobs = [
         (  # master password
-            f"{geoserver_base_url}/rest/security/self/password",
-            {"newPassword": secrets.token_urlsafe(PASSWORD_LENGTH)},
-        ),
-        (  # admin password
             f"{geoserver_base_url}/rest/security/masterpw.json",
             {
                 "oldMasterPassword": "geoserver",
-                "newMasterPassword": secrets.token_urlsafe(PASSWORD_LENGTH),
+                "newMasterPassword": new_master_password,
             },
+        ),
+        (  # admin password
+            f"{geoserver_base_url}/rest/security/self/password",
+            {"newPassword": new_admin_password},
         ),
     ]
 
     for url, payload in http_jobs:
+        logger.info("PUT %s", url)
         try:
             resp = requests.put(
                 url,
                 json=payload,
-                auth=HTTPBasicAuth(geoserver_user, geoserver_password),
+                auth=HTTPBasicAuth(geoserver_user, geoserver_base_password),
                 timeout=30,
             )
             if resp.status_code != 200:
                 logger.error(
-                    f"Failed to update PUT with {url} and {payload} {resp.text}"
+                    "Password update failed: url=%s status=%s body=%s",
+                    url,
+                    resp.status_code,
+                    resp.text,
                 )
-        except Exception as e:
+            else:
+                logger.info("Password update succeeded: url=%s", url)
+        except Exception:
             logger.exception(
-                f"Failed to update PUT with {url} and {payload} {e}"
+                "Password update exception: url=%s payload=%s", url, payload
             )
+
+    logger.info("All done")
 
 
 if __name__ == "__main__":
     try:
+        logging.info("starting up")
         main()
     except Exception:
         logger.exception("Unhandled error during GeoServer configuration")

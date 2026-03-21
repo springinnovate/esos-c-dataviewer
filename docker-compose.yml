@@ -55,7 +55,7 @@ services:
       timeout: 5s
       retries: 20
     volumes:
-      - ${LOCAL_DATA}:${GEOSERVER_LOCAL_DATA_DIR}:ro
+      - ${LOCAL_DATA_DIR}:${GEOSERVER_LOCAL_DATA_DIR}:ro
     environment:
       - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
       - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}

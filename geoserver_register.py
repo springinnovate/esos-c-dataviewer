@@ -872,7 +872,6 @@ def main():
     geoserver_base_url = config_data["geoserver"]["base_url"]
     geoserver_user = config_data["geoserver"]["user"]
     geoserver_base_password = config_data["geoserver"]["password"]
-
     target_projection = config_data["target_projection"]
     local_working_dir = Path(config_data["local_working_dir"])
     local_working_dir.mkdir(parents=True, exist_ok=True)
@@ -911,7 +910,7 @@ def main():
     purge_and_create_workspace(geoserver_client, workspace_id)
     logger.info("Workspace ready: %s", workspace_id)
 
-    style_path = os.environ["STYLE_PATH"]
+    style_path = config_data["style_path"]
     base_style_id = Path(style_path).stem
     logger.info(
         "Ensuring style exists: %s (path=%s)", base_style_id, style_path

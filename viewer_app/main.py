@@ -6,7 +6,7 @@ a GeoServer instance and accessing associated raster statistics through
 a REST API.
 
 The application provides:
-    * A root endpoint ("/") rendering the main viewer HTML page.
+    * A root endpoint ("api") rendering the main viewer HTML page.
     * An API endpoint ("/api/config") returning configuration metadata,
       including GeoServer and raster stats base URLs, and available raster
       layers parsed from a YAML configuration file.
@@ -152,8 +152,16 @@ async def index(
         TemplateResponse: Rendered 'index.html' with initial layer state,
         asset paths, and application version.
     """
+    # The Geoserver is not case insensitive, rather it lowercases everything, but
+    # the layers.yaml from users might have capitalization. Contractor we're
+    # working with requires strict capitalization, so we lowercase them here so
+    # we can at least fetch the layers.
     logger.info(f"rendering {request} {layerA} {layerB}")
-    initial_layers = {"A": layerA or "", "B": layerB or "", "Base": baseLayer}
+    initial_layers = {
+        "A": layerA.lower() if layerA else "",
+        "B": layerB.lower() if layerB else "",
+        "Base": baseLayer.lower() if baseLayer else "",
+    }
     return templates.TemplateResponse(
         "index.html",
         {

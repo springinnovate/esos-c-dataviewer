@@ -853,15 +853,13 @@ def main():
     for raster_id, layer_def in config_data.get("layers").items():
         logger.info("Working on layer definition: %s", layer_def)
         file_path = Path(layer_def["file_path"])
-        target_path = local_working_dir / Path(file_path).name
-
         task_graph.add_task(
             func=create_layer,
             args=(
                 geoserver_client,
                 workspace_id,
                 raster_id.lower(),
-                target_path,
+                file_path,
                 style_id,
             ),
             task_name=f"create layer {raster_id}",

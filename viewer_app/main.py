@@ -152,7 +152,10 @@ async def index(
     # the layers.yaml from users might have capitalization. Contractor we're
     # working with requires strict capitalization, so we lowercase them here so
     # we can at least fetch the layers.
-    initial_layers = {"A": layerA.lower() or "", "B": layerB.lower() or ""}
+    initial_layers = {
+        "A": layerA.lower() if layerA else "",
+        "B": layerB.lower() if layerB else "",
+    }
     return templates.TemplateResponse(
         "index.html",
         {

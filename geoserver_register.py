@@ -910,7 +910,7 @@ def main():
     purge_and_create_workspace(geoserver_client, workspace_id)
     logger.info("Workspace ready: %s", workspace_id)
 
-    style_path = os.environ["STYLE_PATH"]
+    style_path = config_data["style_path"]
     base_style_id = Path(style_path).stem
     logger.info(
         "Ensuring style exists: %s (path=%s)", base_style_id, style_path

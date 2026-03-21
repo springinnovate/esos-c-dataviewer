@@ -144,7 +144,6 @@ services:
       - GEOSERVER_INTERNAL_BASE_URL=${GEOSERVER_INTERNAL_BASE_URL}
       - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
       - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
-      - STYLE_PATH=/app/styles/dynamic_style.sld
       - GLOBAL_CRS=${GLOBAL_CRS}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro

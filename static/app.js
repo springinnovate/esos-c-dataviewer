@@ -1959,6 +1959,100 @@ function enableAltWheelSlider() {
 }
 
 /**
+ * Format a sampled raster summary value for compact display.
+ * @param {number} value
+ * @returns {string}
+ */
+function formatSampleSummaryNumber(value) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  const absValue = Math.abs(value);
+  const options =
+    absValue >= 1_000_000 || (absValue > 0 && absValue < 0.001)
+      ? { maximumSignificantDigits: 5, notation: 'scientific' }
+      : { maximumSignificantDigits: 5 };
+  return new Intl.NumberFormat(undefined, options).format(value);
+}
+
+/**
+ * Append a per-layer sampled raster summary card.
+ * @param {HTMLElement} container
+ * @param {string} layerLabel
+ * @param {string} rasterId
+ * @param {{count:number,sum:number,mean:number}} summary
+ * @returns {void}
+ */
+function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
+  const card = document.createElement('div');
+  card.className = 'sample-summary-card';
+
+  const title = document.createElement('div');
+  title.className = 'sample-summary-title';
+  title.textContent = layerLabel;
+  card.appendChild(title);
+
+  const rasterName = document.createElement('div');
+  rasterName.className = 'sample-summary-raster';
+  rasterName.textContent = rasterId;
+  card.appendChild(rasterName);
+
+  [
+    ['Valid pixels', new Intl.NumberFormat().format(summary.count)],
+    ['Sum', formatSampleSummaryNumber(summary.sum)],
+    ['Average', formatSampleSummaryNumber(summary.mean)],
+  ].forEach(([labelText, valueText]) => {
+    const row = document.createElement('div');
+    row.className = 'sample-summary-row';
+
+    const label = document.createElement('span');
+    label.className = 'sample-summary-label';
+    label.textContent = labelText;
+
+    const value = document.createElement('span');
+    value.className = 'sample-summary-value';
+    value.textContent = valueText;
+
+    row.append(label, value);
+    card.appendChild(row);
+  });
+
+  container.appendChild(card);
+}
+
+/**
+ * Render sampled raster summaries next to the active histogram or scatter plot.
+ * @param {Object|null} scatterObj
+ * @param {{rasterX:string,rasterY:string,visA:boolean,visB:boolean}} opts
+ * @returns {void}
+ */
+function renderSampleSummary(scatterObj, opts) {
+  const summaryEl = document.getElementById('sampleSummary');
+  if (!summaryEl) {
+    return;
+  }
+
+  summaryEl.replaceChildren();
+  if (!scatterObj) {
+    return;
+  }
+
+  if (opts.visA && scatterObj.x_summary) {
+    appendSampleSummaryCard(summaryEl, 'Layer A', opts.rasterX, scatterObj.x_summary);
+  }
+  if (opts.visB && scatterObj.y_summary) {
+    appendSampleSummaryCard(summaryEl, 'Layer B', opts.rasterY, scatterObj.y_summary);
+  }
+
+  if (!summaryEl.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'sample-summary-empty';
+    empty.textContent = 'No valid continuous pixels';
+    summaryEl.appendChild(empty);
+  }
+}
+
+/**
  * Render a scatterplot of two rasters' values within a polygon.
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
@@ -2002,10 +2096,11 @@ async function renderScatterOverlay(opts) {
       </div>
 
       <div class='overlay-content'>
-        <div>
+        <div class='plot-report-layout'>
           <div id='scatterPlot' class='plot-holder'>
             ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
           </div>
+          <div id='sampleSummary' class='sample-summary'></div>
         </div>
         <div class='layer-group'>
           <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
@@ -2033,12 +2128,14 @@ async function renderScatterOverlay(opts) {
   state.lastHasData = hasData;
 
   const plotEl = document.getElementById('scatterPlot');
+  const summaryEl = document.getElementById('sampleSummary');
   const plotRangeControls = document.getElementById('plotRangeControls');
 
   overlay.classList.remove('hidden');
 
   if (!visA && !visB) {
     plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
+    summaryEl?.replaceChildren();
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2048,6 +2145,7 @@ async function renderScatterOverlay(opts) {
       plotEl.innerHTML =
         `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
     }
+    summaryEl?.replaceChildren();
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2097,6 +2195,7 @@ async function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 
   plotEl.innerHTML = '';
+  renderSampleSummary(scatterObj, { rasterX, rasterY, visA, visB });
 
   let svg = null;
 

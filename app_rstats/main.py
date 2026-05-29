@@ -106,6 +106,14 @@ class GeometryScatterIn(BaseModel):
     all_touched: bool
 
 
+class RasterSummary(BaseModel):
+    """Summary statistics for valid raster pixels."""
+
+    count: int
+    sum: float
+    mean: float
+
+
 class ScatterOut(BaseModel):
     """Output model for scatterplot and histogram statistics between two raster layers.
 
@@ -122,6 +130,8 @@ class ScatterOut(BaseModel):
         hist2d (Optional[List[List[int]]]): 2D histogram counts, or None if unavailable.
         x_edges (Optional[List[float]]): Bin edges for the X-axis histogram, or None if unavailable.
         y_edges (Optional[List[float]]): Bin edges for the Y-axis histogram, or None if unavailable.
+        x_summary (Optional[RasterSummary]): Valid-pixel summary for the X-axis raster.
+        y_summary (Optional[RasterSummary]): Valid-pixel summary for the Y-axis raster.
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
@@ -138,11 +148,34 @@ class ScatterOut(BaseModel):
     hist1d_y: Optional[List[int]] = None
     x_edges: Optional[List[float]] = None
     y_edges: Optional[List[float]] = None
+    x_summary: Optional[RasterSummary] = None
+    y_summary: Optional[RasterSummary] = None
     pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
     valid_pixels: Optional[int] = None
     geometry: dict
+
+
+def summary_from_valid_values(vals: Optional[np.ndarray]) -> Optional[RasterSummary]:
+    """Compute compact summary statistics from valid raster values.
+
+    Args:
+        vals: One-dimensional array of finite raster values from the sampled
+            geometry.
+
+    Returns:
+        Pixel count, sum, and mean for the sampled values, or None when no
+        valid values were read for the layer.
+    """
+
+    if vals is None:
+        return None
+    return RasterSummary(
+        count=int(vals.size),
+        sum=float(np.sum(vals)),
+        mean=float(np.mean(vals)),
+    )
 
 
 class PixelValIn(BaseModel):
@@ -971,6 +1004,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if results["y"]["hist"] is not None
                 else None
             ),
+            x_summary=summary_from_valid_values(results["x"]["vals"]),
+            y_summary=summary_from_valid_values(results["y"]["vals"]),
             geometry=scatter_request.geometry,
         )
 

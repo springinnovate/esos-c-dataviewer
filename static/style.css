@@ -497,6 +497,67 @@ input.num::-webkit-outer-spin-button {
     overflow: hidden;
 }
 
+.plot-report-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+    gap: var(--space-3);
+    align-items: start;
+}
+
+.sample-summary {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.sample-summary-card,
+.sample-summary-empty {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.48);
+    padding: var(--space-2);
+}
+
+.sample-summary-title {
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.sample-summary-raster {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.25;
+    margin: 2px 0 var(--space-2);
+    overflow-wrap: anywhere;
+}
+
+.sample-summary-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.sample-summary-label {
+    color: var(--muted);
+}
+
+.sample-summary-value {
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.sample-summary-empty {
+    color: var(--muted);
+    font-size: 12px;
+}
+
 #scatterPlot {
     display: flex;
     justify-content: center;
@@ -513,6 +574,12 @@ input.num::-webkit-outer-spin-button {
     stroke: rgba(0, 0, 0, 0.25);
     stroke-width: 0.3px;
     vector-effect: non-scaling-stroke;
+}
+
+@media (max-width: 760px) {
+    .plot-report-layout {
+        grid-template-columns: 1fr;
+    }
 }
 
 .spinner {

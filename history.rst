@@ -1,6 +1,12 @@
 History
 =======
 
+1.3.1 (2026-05-29)
+------------------
+* Fixed remote container startup by removing the unused ``ecoshard`` dependency
+  from the GeoServer registration path, avoiding a GDAL version mismatch during
+  imports.
+
 1.3.0 (2026-05-29)
 ------------------
 * Added support for categorical rasters as selectable A/B layers, including

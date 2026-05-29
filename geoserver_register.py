@@ -44,7 +44,6 @@ from xml.sax.saxutils import escape
 
 
 from dotenv import load_dotenv
-from ecoshard import taskgraph
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.windows import Window
@@ -95,7 +94,7 @@ class Gs:
         self.headers_xml = {"Content-Type": "text/xml"}
         self.headers_json = {"Content-Type": "application/json"}
 
-    # defining these so the identity is stable for the taskgraph
+    # defining these so the identity is stable in logs and collections
     def _key(self):
         return (self.base, self.auth[0], self._cred_fp, int(self.timeout))
 
@@ -818,9 +817,7 @@ def main():
     This function parses a configuration YAML file defining GeoServer connection
     parameters, workspaces, styles, and raster layers. It initializes a GeoServer
     REST client, ensures the server is online, recreates the target workspace,
-    uploads defined styles, and processes each raster for publication. Raster
-    processing tasks (including reprojection and registration) are executed in
-    parallel using a TaskGraph for efficiency.
+    uploads defined styles, and processes each raster for publication.
 
     Command-Line Arguments:
         config (str): Path to the YAML configuration file (e.g., `layers.yml`).
@@ -831,8 +828,7 @@ def main():
         3. Wait until the GeoServer instance responds to REST API pings.
         4. Purge and recreate the target workspace.
         5. Upload or create all defined styles.
-        6. Schedule raster processing and layer creation tasks.
-        7. Wait for all tasks to complete and close the TaskGraph.
+        6. Register raster layers in GeoServer.
 
     Raises:
         FileNotFoundError: If the configuration file cannot be found or opened.
@@ -876,9 +872,6 @@ def main():
     logger.info("Local working dir: %s", str(local_working_dir))
     logger.info("Layers defined: %d", len(config_data.get("layers") or {}))
 
-    task_graph = taskgraph.TaskGraph(local_working_dir, -1, 15.0)
-    logger.info("TaskGraph initialized (workers=%s, timeout=%.1f)", -1, 15.0)
-
     timeout_seconds = 30
     geoserver_client = Gs(
         geoserver_base_url,
@@ -921,7 +914,6 @@ def main():
         logger.warning('No layers found under config_data["layers"]')
 
     scheduled_layers = 0
-    scheduled_tasks = 0
 
     error_rasters = []
     for raster_id, layer_def in all_layers.items():
@@ -955,47 +947,29 @@ def main():
 
         if "rendering" in layer_def:
             style_id = f"{raster_id}_categorical"
-            categorical_raster_style_task = task_graph.add_task(
-                func=create_categorical_raster_style,
-                args=(
-                    geoserver_client,
-                    workspace_id,
-                    style_id,
-                    layer_def,
-                ),
-                task_name=f"make style -- {style_id}",
-                transient_run=True,
+            create_categorical_raster_style(
+                geoserver_client,
+                workspace_id,
+                style_id,
+                layer_def,
             )
-            categorical_raster_style_task.join()
         else:
             style_id = base_style_id
 
-        logger.info("Adding create-layer task for %s", raster_id)
-        task_graph.add_task(
-            func=create_layer,
-            args=(
-                geoserver_client,
-                workspace_id,
-                raster_id.lower(),
-                file_path,
-                style_id,
-            ),
-            task_name=f"register layer in geoserver: {raster_id}",
-            transient_run=True,
+        logger.info("Registering layer %s", raster_id)
+        create_layer(
+            geoserver_client,
+            workspace_id,
+            raster_id.lower(),
+            file_path,
+            style_id,
         )
-        scheduled_tasks += 1
         scheduled_layers += 1
 
     logger.info(
-        "All tasks scheduled (layers=%d, tasks=%d). Waiting for completion...",
+        "Registered layers in GeoServer (layers=%d).",
         scheduled_layers,
-        scheduled_tasks,
     )
-
-    task_graph.join()
-    logger.info("TaskGraph join complete")
-    task_graph.close()
-    logger.info("TaskGraph closed")
 
     logger.info("Rotate GeoServer passwords so they cannot be guessed")
     new_master_password = secrets.token_urlsafe(PASSWORD_LENGTH)

@@ -74,6 +74,7 @@ logging.getLogger("rasterio").setLevel(logging.WARN)
 
 _GEOD = Geod(ellps="WGS84")
 _SQUARE_METERS_PER_HECTARE = 10_000.0
+_LEGEND_KEY_SEPARATOR = "\x00"
 
 
 class RasterMinMaxIn(BaseModel):
@@ -119,6 +120,15 @@ class RasterSummary(BaseModel):
     mean: float
 
 
+class CategoryAreaSummary(BaseModel):
+    """Area summary for a configured categorical legend item."""
+
+    label: str
+    area_hectares: float
+    color: Optional[str] = None
+    opacity: Optional[float] = None
+
+
 class ScatterOut(BaseModel):
     """Output model for scatterplot and histogram statistics between two raster layers.
 
@@ -137,6 +147,8 @@ class ScatterOut(BaseModel):
         y_edges (Optional[List[float]]): Bin edges for the Y-axis histogram, or None if unavailable.
         x_summary (Optional[RasterSummary]): Valid-value summary for the X-axis raster.
         y_summary (Optional[RasterSummary]): Valid-value summary for the Y-axis raster.
+        x_categories (Optional[List[CategoryAreaSummary]]): Category area summaries for the X-axis raster.
+        y_categories (Optional[List[CategoryAreaSummary]]): Category area summaries for the Y-axis raster.
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
@@ -155,6 +167,8 @@ class ScatterOut(BaseModel):
     y_edges: Optional[List[float]] = None
     x_summary: Optional[RasterSummary] = None
     y_summary: Optional[RasterSummary] = None
+    x_categories: Optional[List[CategoryAreaSummary]] = None
+    y_categories: Optional[List[CategoryAreaSummary]] = None
     pearson_r: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
@@ -208,6 +222,150 @@ def valid_area_hectares(
         area_m2 += abs(cell_area_m2) * int(row_counts[row_index])
 
     return float(area_m2 / _SQUARE_METERS_PER_HECTARE)
+
+
+def legend_groups_for_rendering(rendering: dict) -> tuple[dict[int, str], dict[str, dict]]:
+    """Build code-to-legend grouping metadata from categorical rendering config.
+
+    Args:
+        rendering: Layer rendering metadata from the YAML registry.
+
+    Returns:
+        A tuple containing a raster-code to legend-group-key mapping and an
+        ordered dictionary of legend-group metadata.
+    """
+
+    categories = rendering.get("categories") or {}
+    configured_order = [
+        str(value) for value in (rendering.get("legend") or {}).get("order", [])
+    ]
+    category_keys = [str(value) for value in categories.keys()]
+    ordered_keys = [
+        *[
+            key
+            for key in configured_order
+            if key in category_keys or int(key) in categories
+        ],
+        *[
+            key
+            for key in sorted(category_keys, key=lambda value: float(value))
+            if key not in configured_order
+        ],
+    ]
+
+    code_to_group = {}
+    group_meta = {}
+    for key in ordered_keys:
+        category = categories.get(key)
+        if category is None:
+            category = categories.get(int(float(key)), {})
+        category = category or {}
+        label = str(category.get("label", key))
+        color = category.get("color")
+        opacity = category.get("opacity", rendering.get("opacity"))
+        color_key = "" if color is None else str(color)
+        opacity_key = "" if opacity is None else str(opacity)
+        group_key = _LEGEND_KEY_SEPARATOR.join(
+            [label, color_key, opacity_key]
+        )
+        code_to_group[int(float(key))] = group_key
+        if group_key not in group_meta:
+            group_meta[group_key] = {
+                "label": label,
+                "color": str(color) if color else None,
+                "opacity": float(opacity) if opacity is not None else None,
+            }
+
+    return code_to_group, group_meta
+
+
+def categorical_area_summaries(
+    arr: np.ndarray,
+    valid_mask: np.ndarray,
+    affine: Affine,
+    raster_crs: rasterio.crs.CRS,
+    rendering: dict,
+) -> list[CategoryAreaSummary]:
+    """Aggregate sampled categorical raster area by configured legend item.
+
+    Args:
+        arr: Sampled raster values with nodata and out-of-geometry cells masked
+            to NaN.
+        valid_mask: Boolean array where True marks finite, non-nodata sample
+            pixels inside the requested geometry.
+        affine: Affine transform for the sampled array.
+        raster_crs: Coordinate reference system for the sampled raster.
+        rendering: Layer rendering metadata from the YAML registry.
+
+    Returns:
+        Category summaries in legend order, with duplicate raster codes
+        collapsed into the same displayed legend item.
+    """
+
+    code_to_group, group_meta = legend_groups_for_rendering(rendering)
+    group_areas = {group_key: 0.0 for group_key in group_meta}
+
+    if raster_crs.is_projected:
+        unit_factor = raster_crs.linear_units_factor[1]
+        pixel_area = abs(affine.a * affine.e - affine.b * affine.d)
+        default_area = pixel_area * unit_factor**2 / _SQUARE_METERS_PER_HECTARE
+        row_area_hectares = {}
+        transformer_obj = None
+    else:
+        default_area = None
+        row_area_hectares = {}
+        transformer_obj = None
+        if raster_crs.to_epsg() != 4326:
+            transformer_obj = Transformer.from_crs(
+                raster_crs, "EPSG:4326", always_xy=True
+            )
+
+    for row_index in np.flatnonzero(np.count_nonzero(valid_mask, axis=1)):
+        if default_area is None:
+            corners = [
+                affine * (0, row_index),
+                affine * (1, row_index),
+                affine * (1, row_index + 1),
+                affine * (0, row_index + 1),
+            ]
+            xs, ys = zip(*corners)
+            if transformer_obj is not None:
+                xs, ys = transformer_obj.transform(xs, ys)
+            cell_area_m2, _ = _GEOD.polygon_area_perimeter(xs, ys)
+            row_area_hectares[row_index] = (
+                abs(cell_area_m2) / _SQUARE_METERS_PER_HECTARE
+            )
+
+        cell_area_hectares = default_area or row_area_hectares[row_index]
+        row_values = arr[row_index, valid_mask[row_index]]
+        values, counts = np.unique(row_values.astype("int64"), return_counts=True)
+
+        for value, count in zip(values, counts):
+            code = int(value)
+            group_key = code_to_group.get(code)
+            if group_key is None:
+                label = str(code)
+                group_key = _LEGEND_KEY_SEPARATOR.join([label, "", ""])
+                group_meta[group_key] = {
+                    "label": label,
+                    "color": None,
+                    "opacity": None,
+                }
+                group_areas[group_key] = 0.0
+                code_to_group[code] = group_key
+
+            group_areas[group_key] += int(count) * cell_area_hectares
+
+    return [
+        CategoryAreaSummary(
+            label=meta["label"],
+            color=meta["color"],
+            opacity=meta["opacity"],
+            area_hectares=group_areas[group_key],
+        )
+        for group_key, meta in group_meta.items()
+        if group_areas.get(group_key, 0.0) > 0
+    ]
 
 
 def summary_from_valid_values(
@@ -842,6 +1000,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     "hist": None,
                     "edges": None,
                     "area_hectares": None,
+                    "categories": None,
+                    "is_categorical": False,
                     "valid": False,
                 }
             ds = None
@@ -853,9 +1013,18 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             hist = None
             edges = None
             area_hectares = None
+            category_summaries = None
+            is_categorical = False
             valid = False
             try:
+                layer_cfg = REGISTRY.get(raster_id.lower(), {})
+                rendering = layer_cfg.get("rendering") or {}
+                is_categorical = (
+                    str(rendering.get("type", "")).lower() == "categorical"
+                )
                 ds, nodata_val = _open_raster(raster_id)
+                if nodata_val is None:
+                    nodata_val = rendering.get("nodata")
                 geom_ref_shape = _geom_in_ds_crs(ds)
 
                 win = _safe_window_for_geom(ds, geom_ref_shape)
@@ -888,12 +1057,21 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 vals = arr[valid_mask]
 
                 if vals.size > 0:
-                    hist, edges = np.histogram(vals, bins=bins)
                     area_hectares = valid_area_hectares(
                         valid_mask,
                         affine,
                         ds.crs,
                     )
+                    if is_categorical:
+                        category_summaries = categorical_area_summaries(
+                            arr,
+                            valid_mask,
+                            affine,
+                            ds.crs,
+                            rendering,
+                        )
+                    else:
+                        hist, edges = np.histogram(vals, bins=bins)
                     valid = True
             except ValueError as e:
                 logger.warning(f"{e} error on _read_clip_hist {raster_id}")
@@ -908,6 +1086,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 "hist": hist,
                 "edges": edges,
                 "area_hectares": area_hectares if valid else None,
+                "categories": category_summaries if valid else None,
+                "is_categorical": is_categorical,
                 "valid": valid,
             }
 
@@ -924,6 +1104,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
         x_valid = results["x"]["valid"]
         y_valid = results["y"]["valid"]
+        x_hist_valid = x_valid and not results["x"]["is_categorical"]
+        y_hist_valid = y_valid and not results["y"]["is_categorical"]
 
         # prepare outputs
         hist2d = None
@@ -936,7 +1118,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         x_plot, y_plot = None, None
 
         # compute 2D histogram on overlapping pixels if both are valid
-        if x_valid and y_valid:
+        if x_hist_valid and y_hist_valid:
             x_arr = results["x"]["arr"]
             x_affine = results["x"]["affine"]
             x_mask = results["x"]["mask"]
@@ -1028,7 +1210,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     )[0]
 
         # if only one is valid, prepare 1D scatter arrays directly from that raster
-        if x_valid ^ y_valid:  # XOR
+        if x_hist_valid ^ y_hist_valid:  # XOR
 
             def _sample(vals, max_points):
                 n = int(vals.size)
@@ -1039,7 +1221,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     return vals[idx], n
                 return vals, n
 
-            side = "x" if x_valid else "y"
+            side = "x" if x_hist_valid else "y"
             sampled, n_pairs = _sample(
                 results[side]["vals"], scatter_request.max_points
             )
@@ -1075,13 +1257,15 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 else None
             ),
             x_summary=summary_from_valid_values(
-                results["x"]["vals"],
-                results["x"]["area_hectares"],
+                results["x"]["vals"] if x_hist_valid else None,
+                results["x"]["area_hectares"] if x_hist_valid else None,
             ),
             y_summary=summary_from_valid_values(
-                results["y"]["vals"],
-                results["y"]["area_hectares"],
+                results["y"]["vals"] if y_hist_valid else None,
+                results["y"]["area_hectares"] if y_hist_valid else None,
             ),
+            x_categories=results["x"]["categories"],
+            y_categories=results["y"]["categories"],
             geometry=scatter_request.geometry,
         )
 

@@ -2,6 +2,8 @@
 # docker compose --env-file ./profiles/local_esosc/.env.app up --build -d
 name: essosc-viewer
 
+x-dynamic-style-path: &dynamic_style_path ${STYLE_PATH:-/app/styles/dynamic_style.sld}
+
 volumes:
   geoserver_data_dir:
   traefik_letsencrypt:
@@ -140,18 +142,21 @@ services:
     networks: [backend]
     restart: "no"
     environment:
-      - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
-      - GEOSERVER_INTERNAL_BASE_URL=${GEOSERVER_INTERNAL_BASE_URL}
-      - GEOSERVER_ADMIN_USER=${GEOSERVER_ADMIN_USER}
-      - GEOSERVER_ADMIN_PASSWORD=${GEOSERVER_ADMIN_PASSWORD}
-      - STYLE_PATH=/app/styles/dynamic_style.sld
-      - GLOBAL_CRS=${GLOBAL_CRS}
+      GEOSERVER_LOCAL_DATA_DIR: ${GEOSERVER_LOCAL_DATA_DIR}
+      GEOSERVER_INTERNAL_BASE_URL: ${GEOSERVER_INTERNAL_BASE_URL}
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD}
+      STYLE_PATH: *dynamic_style_path
+      GLOBAL_CRS: ${GLOBAL_CRS}
     volumes:
       - ./geoserver_register.py:/app/geoserver_register.py:ro
       - ${LAYERS_YML}:/app/layers.yml:ro
       - ./.env:/app/.env:ro
       - ${LOCAL_DATA:-${LOCAL_DATA_DIR}}:${GEOSERVER_LOCAL_DATA_DIR}:ro
-      - ./styles/dynamic_style.sld:/app/styles/dynamic_style.sld:ro
+      - type: bind
+        source: ./styles/dynamic_style.sld
+        target: *dynamic_style_path
+        read_only: true
     command: ["/app/layers.yml"]
 
   rstats:

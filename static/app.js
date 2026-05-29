@@ -1968,11 +1968,10 @@ function formatSampleSummaryNumber(value) {
     return '-';
   }
   const absValue = Math.abs(value);
-  const options =
-    absValue >= 1_000_000 || (absValue > 0 && absValue < 0.001)
-      ? { maximumSignificantDigits: 5, notation: 'scientific' }
-      : { maximumSignificantDigits: 5 };
-  return new Intl.NumberFormat(undefined, options).format(value);
+  if (absValue >= 1_000_000 || (absValue > 0 && absValue < 0.001)) {
+    return value.toExponential(4);
+  }
+  return Number(value.toPrecision(5)).toString();
 }
 
 /**
@@ -1980,7 +1979,7 @@ function formatSampleSummaryNumber(value) {
  * @param {HTMLElement} container
  * @param {string} layerLabel
  * @param {string} rasterId
- * @param {{count:number,sum:number,mean:number}} summary
+ * @param {{area_hectares:number,sum:number,mean:number}} summary
  * @returns {void}
  */
 function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
@@ -1998,7 +1997,7 @@ function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
   card.appendChild(rasterName);
 
   [
-    ['Valid pixels', new Intl.NumberFormat().format(summary.count)],
+    ['Valid area', `${formatSampleSummaryNumber(summary.area_hectares)} ha`],
     ['Sum', formatSampleSummaryNumber(summary.sum)],
     ['Average', formatSampleSummaryNumber(summary.mean)],
   ].forEach(([labelText, valueText]) => {

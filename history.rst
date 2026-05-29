@@ -3,8 +3,8 @@ History
 
 1.4.0 (2026-05-29)
 ------------------
-* Added valid-pixel count, sum, and average summaries beside histogram and
-  scatter plots for sampled continuous layers.
+* Added valid area, sum, and average summaries beside histogram and scatter
+  plots for sampled continuous layers.
 
 1.3.2 (2026-05-29)
 ------------------

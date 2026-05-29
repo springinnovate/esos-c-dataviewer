@@ -36,12 +36,13 @@ import tempfile
 import traceback
 import zipfile
 
+from affine import Affine
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from osgeo import gdal
 from pydantic import BaseModel
-from pyproj import Transformer
+from pyproj import Geod, Transformer
 from rasterio.errors import WindowError
 from rasterio.features import geometry_mask
 from rasterio.mask import mask as rio_mask
@@ -70,6 +71,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("rasterio").setLevel(logging.WARN)
+
+_GEOD = Geod(ellps="WGS84")
+_SQUARE_METERS_PER_HECTARE = 10_000.0
 
 
 class RasterMinMaxIn(BaseModel):
@@ -107,9 +111,10 @@ class GeometryScatterIn(BaseModel):
 
 
 class RasterSummary(BaseModel):
-    """Summary statistics for valid raster pixels."""
+    """Summary statistics for valid raster samples."""
 
     count: int
+    area_hectares: float
     sum: float
     mean: float
 
@@ -130,8 +135,8 @@ class ScatterOut(BaseModel):
         hist2d (Optional[List[List[int]]]): 2D histogram counts, or None if unavailable.
         x_edges (Optional[List[float]]): Bin edges for the X-axis histogram, or None if unavailable.
         y_edges (Optional[List[float]]): Bin edges for the Y-axis histogram, or None if unavailable.
-        x_summary (Optional[RasterSummary]): Valid-pixel summary for the X-axis raster.
-        y_summary (Optional[RasterSummary]): Valid-pixel summary for the Y-axis raster.
+        x_summary (Optional[RasterSummary]): Valid-value summary for the X-axis raster.
+        y_summary (Optional[RasterSummary]): Valid-value summary for the Y-axis raster.
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
@@ -157,22 +162,75 @@ class ScatterOut(BaseModel):
     geometry: dict
 
 
-def summary_from_valid_values(vals: Optional[np.ndarray]) -> Optional[RasterSummary]:
+def valid_area_hectares(
+    valid_mask: np.ndarray,
+    affine: Affine,
+    raster_crs: rasterio.crs.CRS,
+) -> float:
+    """Estimate sampled valid raster area in hectares.
+
+    Args:
+        valid_mask: Boolean array where True marks finite, non-nodata sample
+            pixels inside the requested geometry.
+        affine: Affine transform for the sampled array.
+        raster_crs: Coordinate reference system for the sampled raster.
+
+    Returns:
+        Valid sampled area in hectares.
+    """
+
+    if raster_crs.is_projected:
+        unit_factor = raster_crs.linear_units_factor[1]
+        pixel_area = abs(affine.a * affine.e - affine.b * affine.d)
+        area_m2 = np.count_nonzero(valid_mask) * pixel_area * unit_factor**2
+        return float(area_m2 / _SQUARE_METERS_PER_HECTARE)
+
+    row_counts = np.count_nonzero(valid_mask, axis=1)
+    rows = np.flatnonzero(row_counts)
+    transformer_obj = None
+    if raster_crs.to_epsg() != 4326:
+        transformer_obj = Transformer.from_crs(
+            raster_crs, "EPSG:4326", always_xy=True
+        )
+
+    area_m2 = 0.0
+    for row_index in rows:
+        corners = [
+            affine * (0, row_index),
+            affine * (1, row_index),
+            affine * (1, row_index + 1),
+            affine * (0, row_index + 1),
+        ]
+        xs, ys = zip(*corners)
+        if transformer_obj is not None:
+            xs, ys = transformer_obj.transform(xs, ys)
+        cell_area_m2, _ = _GEOD.polygon_area_perimeter(xs, ys)
+        area_m2 += abs(cell_area_m2) * int(row_counts[row_index])
+
+    return float(area_m2 / _SQUARE_METERS_PER_HECTARE)
+
+
+def summary_from_valid_values(
+    vals: Optional[np.ndarray],
+    area_hectares: Optional[float],
+) -> Optional[RasterSummary]:
     """Compute compact summary statistics from valid raster values.
 
     Args:
         vals: One-dimensional array of finite raster values from the sampled
             geometry.
+        area_hectares: Area represented by finite, non-nodata sampled pixels.
 
     Returns:
-        Pixel count, sum, and mean for the sampled values, or None when no
-        valid values were read for the layer.
+        Area, pixel count, sum, and mean for the sampled values, or None when
+        no valid values were read for the layer.
     """
 
     if vals is None:
         return None
     return RasterSummary(
         count=int(vals.size),
+        area_hectares=float(area_hectares),
         sum=float(np.sum(vals)),
         mean=float(np.mean(vals)),
     )
@@ -783,6 +841,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     "affine": None,
                     "hist": None,
                     "edges": None,
+                    "area_hectares": None,
                     "valid": False,
                 }
             ds = None
@@ -793,6 +852,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             affine = None
             hist = None
             edges = None
+            area_hectares = None
             valid = False
             try:
                 ds, nodata_val = _open_raster(raster_id)
@@ -807,7 +867,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     boundless=True,
                     masked=False,
                 ).astype("float64", copy=False)
-                affine = ds.window_transform(win)
+                affine = ds.window_transform(win) * Affine.scale(
+                    win.width / out_w,
+                    win.height / out_h,
+                )
 
                 mask = geometry_mask(
                     [mapping(geom_ref_shape)],
@@ -821,10 +884,16 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     data = np.where(np.isclose(data, nodata_val), np.nan, data)
 
                 arr = np.where(mask, data, np.nan)
-                vals = arr[np.isfinite(arr)]
+                valid_mask = np.isfinite(arr)
+                vals = arr[valid_mask]
 
                 if vals.size > 0:
                     hist, edges = np.histogram(vals, bins=bins)
+                    area_hectares = valid_area_hectares(
+                        valid_mask,
+                        affine,
+                        ds.crs,
+                    )
                     valid = True
             except ValueError as e:
                 logger.warning(f"{e} error on _read_clip_hist {raster_id}")
@@ -838,6 +907,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 "affine": affine,
                 "hist": hist,
                 "edges": edges,
+                "area_hectares": area_hectares if valid else None,
                 "valid": valid,
             }
 
@@ -1004,8 +1074,14 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if results["y"]["hist"] is not None
                 else None
             ),
-            x_summary=summary_from_valid_values(results["x"]["vals"]),
-            y_summary=summary_from_valid_values(results["y"]["vals"]),
+            x_summary=summary_from_valid_values(
+                results["x"]["vals"],
+                results["x"]["area_hectares"],
+            ),
+            y_summary=summary_from_valid_values(
+                results["y"]["vals"],
+                results["y"]["area_hectares"],
+            ),
             geometry=scatter_request.geometry,
         )
 

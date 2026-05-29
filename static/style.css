@@ -530,14 +530,8 @@ input.num::-webkit-outer-spin-button {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
-}
-
-.sample-summary-raster {
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.25;
-    margin: 2px 0 var(--space-2);
     overflow-wrap: anywhere;
+    margin-bottom: var(--space-2);
 }
 
 .sample-summary-row {

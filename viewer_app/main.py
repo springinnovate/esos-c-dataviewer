@@ -102,6 +102,7 @@ def _collect_layers(layer_key: str, config: dict) -> list:
                 "name": Path(layer["file_path"]).stem.lower(),
                 "title": layer.get("title"),
                 "description": layer.get("description"),
+                "rendering": layer.get("rendering"),
             }
         )
     return layers

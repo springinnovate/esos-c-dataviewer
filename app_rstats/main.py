@@ -116,7 +116,7 @@ class RasterSummary(BaseModel):
 
     count: int
     area_hectares: float
-    area_fraction: float
+    area_percent: float
     sum: float
     mean: float
 
@@ -126,7 +126,7 @@ class CategoryAreaSummary(BaseModel):
 
     label: str
     area_hectares: float
-    area_fraction: float
+    area_percent: float
     color: Optional[str] = None
     opacity: Optional[float] = None
 
@@ -366,7 +366,7 @@ def categorical_area_summaries(
             color=meta["color"],
             opacity=meta["opacity"],
             area_hectares=group_areas[group_key],
-            area_fraction=group_areas[group_key] / sample_area_hectares,
+            area_percent=group_areas[group_key] / sample_area_hectares * 100.0,
         )
         for group_key, meta in group_meta.items()
         if group_areas.get(group_key, 0.0) > 0
@@ -396,7 +396,7 @@ def summary_from_valid_values(
     return RasterSummary(
         count=int(vals.size),
         area_hectares=float(area_hectares),
-        area_fraction=float(area_hectares / sample_area_hectares),
+        area_percent=float(area_hectares / sample_area_hectares * 100.0),
         sum=float(np.sum(vals)),
         mean=float(np.mean(vals)),
     )

@@ -509,17 +509,89 @@ function setLayerVisibility(layerId, visible) {
   layer.setOpacity(visible ? 1 : 0);
 
   state.visibility[layerId] = visible;
+  if (layerId === "Base") state.baseVisibility = visible;
 
   const cb = document.getElementById(`layerVisible${layerId}`);
   if (cb) cb.checked = !!visible;
 
-  if (layerId == "Base") {
-    if (visible) {
-      state.baseLegendControl.setLayer(state.baseLayer.name);
-    } else {
-      state.baseLegendControl.setLayer(null);
-    }
+  updateContextLegend();
+}
+
+/**
+ * Return the active non-base layer metadata for a map slot.
+ * @param {'A'|'B'} layerId
+ * @returns {Object|null}
+ */
+function getActiveLayer(layerId) {
+  const idx = state[`activeLayerIdx${layerId}`];
+  return state.availableLayers?.[idx] ?? null;
+}
+
+/**
+ * Test whether a configured layer should be treated as categorical.
+ * @param {Object|null} layer
+ * @returns {boolean}
+ */
+function isCategoricalLayer(layer) {
+  return String(layer?.rendering?.type || "").toLowerCase() === "categorical";
+}
+
+/**
+ * Enable or disable the continuous-style controls for a layer slot.
+ * @param {'A'|'B'} layerId
+ * @param {boolean} enabled
+ */
+function setStyleControlsEnabled(layerId, enabled) {
+  const panel = document
+    .getElementById(`layer${layerId}MinInput`)
+    ?.closest(".style-panel");
+  if (panel) panel.classList.toggle("is-disabled", !enabled);
+
+  [
+    "MinInput",
+    "MedInput",
+    "MaxInput",
+    "CminInput",
+    "CmedInput",
+    "CmaxInput",
+  ].forEach((suffix) => {
+    const el = document.getElementById(`layer${layerId}${suffix}`);
+    if (el) el.disabled = !enabled;
+  });
+}
+
+/**
+ * Keep the map legend aligned with the visible contextual/categorical layer.
+ *
+ * A visible categorical A layer takes precedence, then B, then the base layer.
+ * Continuous A/B layers do not use GeoServer's static legend because their
+ * colors are controlled by dynamic SLD env parameters.
+ */
+function updateContextLegend() {
+  const legend = state.baseLegendControl;
+  if (!legend) return;
+
+  const layerA = getActiveLayer("A");
+  const layerB = getActiveLayer("B");
+  const visibleA = !!document.getElementById("layerVisibleA")?.checked;
+  const visibleB = !!document.getElementById("layerVisibleB")?.checked;
+
+  if (visibleA && isCategoricalLayer(layerA)) {
+    legend.setLayer(layerA.name);
+    return;
   }
+
+  if (visibleB && isCategoricalLayer(layerB)) {
+    legend.setLayer(layerB.name);
+    return;
+  }
+
+  if (state.baseVisibility && state.baseLayer) {
+    legend.setLayer(state.baseLayer.name);
+    return;
+  }
+
+  legend.setLayer(null);
 }
 
 /**
@@ -928,7 +1000,6 @@ function onBaseLayerChange(e) {
   const idx = parseInt(e.target.value, 10);
   const baseLayer = state.availableBaseLayers[idx];
   state.baseLayer = baseLayer;
-  state.baseLegendControl.setLayer(baseLayer.name);
   renderLayerMeta("Base", baseLayer);
 
   state.activeBaseLayerIdx = idx;
@@ -940,6 +1011,7 @@ function onBaseLayerChange(e) {
   document.getElementById("layerVisibleBase").checked = true;
   addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
   state.baseVisibility = true;
+  updateContextLegend();
 }
 
 function _xmlLocalName(el) {
@@ -1066,38 +1138,50 @@ async function _getWmsLayerLatLngBounds(qualifiedName) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10);
   const lyr = state.availableLayers[idx];
+  const isCategorical = isCategoricalLayer(lyr);
   const doInitialFit = !state.didInitialRasterFit && !!lyr?.name;
   if (doInitialFit) state.didInitialRasterFit = true;
   const initialFitBoundsPromise = doInitialFit
     ? _getWmsLayerLatLngBounds(lyr.name)
     : null;
   renderLayerMeta(layerId, lyr);
-  const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ raster_id: lyr.name }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const { min_, max_ } = await res.json();
-  const med = (max_ + min_) / 2;
+  setStyleControlsEnabled(layerId, !isCategorical);
 
-  // write values into the correct panel (A or B)
-  document.getElementById(`layer${layerId}MinInput`).value = min_;
-  document.getElementById(`layer${layerId}MedInput`).value = med;
-  document.getElementById(`layer${layerId}MaxInput`).value = max_;
+  if (!isCategorical) {
+    const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ raster_id: lyr.name }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { min_, max_ } = await res.json();
+    const med = (max_ + min_) / 2;
+
+    // write values into the correct panel (A or B)
+    document.getElementById(`layer${layerId}MinInput`).value = min_;
+    document.getElementById(`layer${layerId}MedInput`).value = med;
+    document.getElementById(`layer${layerId}MaxInput`).value = max_;
+  }
 
   // update state and map layer
   state[`activeLayerIdx${layerId}`] = idx;
-  const className = layerId === "A" ? "blend-screen" : "blend-base";
+  const className = isCategorical
+    ? "base-layer"
+    : layerId === "A"
+      ? "blend-screen"
+      : "blend-base";
   document.getElementById(`layerVisible${layerId}`).checked = true;
-  addWmsLayer(lyr.name, layerId, className);
-  applyDynamicStyle(layerId);
+  addWmsLayer(lyr.name, layerId, { className });
+  if (!isCategorical) applyDynamicStyle(layerId);
+  updateContextLegend();
   if (!state.sampleMode) {
     document.getElementById("statsOverlay").classList.add("hidden");
     document.getElementById("overlayBody").innerHTML = "";
   } else if (state.sampleMode == "shapefile") {
     // calculate new stats then re-render scatter overlay
-    setAOIAndRenderOverlay(state.lastFeatureCollection);
+    if (state.lastFeatureCollection) {
+      setAOIAndRenderOverlay(state.lastFeatureCollection);
+    }
   } else if (state.sampleMode == "window") {
     sampleAndRenderSampleBox();
   }
@@ -1137,6 +1221,41 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
 
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+/**
+ * Fetch histogram/scatter stats only for continuous layers.
+ * @param {Object|null} layerA
+ * @param {Object|null} layerB
+ * @param {Object} geojson
+ * @returns {Promise<{
+ *   scatterObj: Object|null,
+ *   histogramDisabled: boolean,
+ *   histogramDisabledMessage: string
+ * }>}
+ */
+async function fetchContinuousScatterStats(layerA, layerB, geojson) {
+  const categoricalA = isCategoricalLayer(layerA);
+  const categoricalB = isCategoricalLayer(layerB);
+  const rasterIdX = layerA && !categoricalA ? layerA.name : null;
+  const rasterIdY = layerB && !categoricalB ? layerB.name : null;
+
+  if (!rasterIdX && !rasterIdY) {
+    const bothCategorical = categoricalA && categoricalB;
+    return {
+      scatterObj: null,
+      histogramDisabled: true,
+      histogramDisabledMessage: bothCategorical
+        ? "Both rasters are categorical; histogram disabled."
+        : "Categorical raster selected; histogram disabled.",
+    };
+  }
+
+  return {
+    scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson),
+    histogramDisabled: false,
+    histogramDisabledMessage: "",
+  };
 }
 
 /**
@@ -1720,6 +1839,8 @@ function readStyleInputsFromUI(layerId) {
  * @param {'A'|'B'} layerId
  */
 function applyDynamicStyle(layerId) {
+  if (isCategoricalLayer(getActiveLayer(layerId))) return;
+
   const layer = state[`wmsLayer${layerId}`];
   if (layer) {
 
@@ -1808,10 +1929,13 @@ async function renderScatterOverlay(opts) {
 
   const { rasterX, rasterY, centerLng, centerLat, boxKm } = opts;
   let { scatterObj } = opts;
+  const histogramDisabled = !!opts.histogramDisabled;
+  const histogramDisabledMessage =
+    opts.histogramDisabledMessage || "Histogram disabled.";
 
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');
-  const hasData = !!scatterObj;
+  const hasData = !!scatterObj || histogramDisabled;
 
   const fmt = (value, digits = 3) =>
     value == null || Number.isNaN(value) ? '-' : Number(value).toFixed(digits);
@@ -1879,6 +2003,10 @@ async function renderScatterOverlay(opts) {
   }
 
   if (!scatterObj) {
+    if (histogramDisabled) {
+      plotEl.innerHTML =
+        `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
+    }
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -1913,6 +2041,8 @@ async function renderScatterOverlay(opts) {
     scatterObj,
     visA,
     visB,
+    histogramDisabled,
+    histogramDisabledMessage,
     palette: state.selectElement.value,
     percentiles: state.percentiles,
     plotView: state.plotView,
@@ -2151,11 +2281,14 @@ async function clearScatterOverlay() {
   const el = document.getElementById(id);
   el.addEventListener(
     "change",
-    async () =>
+    async () => {
+      updateContextLegend();
+      if (!state.lastScatterOpts) return;
       await renderScatterOverlay({
         ...state.lastScatterOpts,
         scatterObj: state.scatterObj,
-      }),
+      });
+    },
   );
 });
 
@@ -3524,19 +3657,24 @@ async function setAOIAndRenderOverlay(featureCollection) {
   const centerLngLat = getGeoJSONCenter(featureCollection);
   addGeoJSONPolyToMap(featureCollection);
 
-  const layerX = state.availableLayers[state.activeLayerIdxA];
-  const layerY = state.availableLayers[state.activeLayerIdxB];
+  const layerX = document.getElementById("layerVisibleA")?.checked
+    ? state.availableLayers[state.activeLayerIdxA]
+    : null;
+  const layerY = document.getElementById("layerVisibleB")?.checked
+    ? state.availableLayers[state.activeLayerIdxB]
+    : null;
+  if (!layerX && !layerY) return;
 
-  let scatterStats;
+  let statsResult;
   try {
     const aoiGeometry =
       typeof collapseToMultiPolygon === "function"
         ? collapseToMultiPolygon(featureCollection)
         : featureCollection;
 
-    scatterStats = await fetchScatterStats(
-      layerX?.name,
-      layerY?.name,
+    statsResult = await fetchContinuousScatterStats(
+      layerX,
+      layerY,
       aoiGeometry,
     );
   } catch (err) {
@@ -3552,7 +3690,9 @@ async function setAOIAndRenderOverlay(featureCollection) {
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
-    scatterObj: scatterStats,
+    scatterObj: statsResult.scatterObj,
+    histogramDisabled: statsResult.histogramDisabled,
+    histogramDisabledMessage: statsResult.histogramDisabledMessage,
   });
 }
 
@@ -3692,9 +3832,9 @@ async function sampleAndRenderSampleBox(latlng) {
     scatterObj: null,
   });
 
-  const scatterStats = await fetchScatterStats(
-    lyrA?.name ?? null,
-    lyrB?.name ?? null,
+  const statsResult = await fetchContinuousScatterStats(
+    lyrA,
+    lyrB,
     state.sampleBox.toGeoJSON(),
   );
 
@@ -3704,7 +3844,9 @@ async function sampleAndRenderSampleBox(latlng) {
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
-    scatterObj: scatterStats,
+    scatterObj: statsResult.scatterObj,
+    histogramDisabled: statsResult.histogramDisabled,
+    histogramDisabledMessage: statsResult.histogramDisabledMessage,
   });
 
   state.lastScatterOpts = {
@@ -3713,8 +3855,10 @@ async function sampleAndRenderSampleBox(latlng) {
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
+    histogramDisabled: statsResult.histogramDisabled,
+    histogramDisabledMessage: statsResult.histogramDisabledMessage,
   };
-  state.scatterObj = scatterStats;
+  state.scatterObj = statsResult.scatterObj;
 
   enableDownloadButton();
 }

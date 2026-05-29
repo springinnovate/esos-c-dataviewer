@@ -382,7 +382,7 @@ input.num::-webkit-outer-spin-button {
     top: 12px;
     left: 12px;
     z-index: var(--z-overlay);
-    width: min(480px, calc(100% - 24px));
+    width: min(760px, calc(100% - 24px));
     max-height: calc(100% - 24px);
     background: rgba(var(--bg-rgb), 0.96);
     border: 1px solid var(--border);
@@ -471,6 +471,7 @@ input.num::-webkit-outer-spin-button {
 .overlay-content {
     display: grid;
     grid-template-columns: 1fr !important;
+    gap: var(--space-3);
 }
 
 .stats-grid {
@@ -498,14 +499,20 @@ input.num::-webkit-outer-spin-button {
 }
 
 .plot-report-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
     align-items: start;
 }
 
+.plot-report-layout .plot-holder {
+    flex: 1 1 420px;
+    min-width: min(100%, 360px);
+}
+
 .sample-summary {
     display: grid;
+    flex: 0 1 260px;
     gap: var(--space-2);
     min-width: 0;
 }
@@ -577,8 +584,13 @@ input.num::-webkit-outer-spin-button {
 }
 
 @media (max-width: 760px) {
-    .plot-report-layout {
-        grid-template-columns: 1fr;
+    .plot-report-layout .plot-holder {
+        min-width: 0;
+    }
+
+    .sample-summary {
+        flex-basis: 100%;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     }
 }
 

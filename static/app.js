@@ -537,6 +537,47 @@ function isCategoricalLayer(layer) {
 }
 
 /**
+ * Return ordered unique legend entries for a categorical layer.
+ * @param {Object|null} layer
+ * @returns {{label: string, color: string, opacity: string}[]}
+ */
+function categoricalLegendItems(layer) {
+  const rendering = layer?.rendering || {};
+  const categories = rendering.categories || {};
+  const configuredOrder = Array.isArray(rendering.legend?.order)
+    ? rendering.legend.order.map((value) => String(value))
+    : [];
+  const categoryKeys = Object.keys(categories);
+  const orderedKeys = [
+    ...configuredOrder.filter((key) =>
+      Object.prototype.hasOwnProperty.call(categories, key)
+    ),
+    ...categoryKeys
+      .filter((key) => !configuredOrder.includes(key))
+      .sort((a, b) => Number(a) - Number(b)),
+  ];
+  const seen = new Set();
+  const items = [];
+
+  orderedKeys.forEach((key) => {
+    const category = categories[key];
+    if (!category) return;
+
+    const label = String(category.label ?? key);
+    const color = String(category.color || "").trim();
+    const opacity = String(category.opacity ?? rendering.opacity ?? 1);
+    const uniqueKey = `${label}\u0000${color}\u0000${opacity}`;
+
+    if (!color || seen.has(uniqueKey)) return;
+
+    seen.add(uniqueKey);
+    items.push({ label, color, opacity });
+  });
+
+  return items;
+}
+
+/**
  * Enable or disable the continuous-style controls for a layer slot.
  * @param {'A'|'B'} layerId
  * @param {boolean} enabled
@@ -577,17 +618,17 @@ function updateContextLegend() {
   const visibleB = !!document.getElementById("layerVisibleB")?.checked;
 
   if (visibleA && isCategoricalLayer(layerA)) {
-    legend.setLayer(layerA.name);
+    legend.setLayer(layerA);
     return;
   }
 
   if (visibleB && isCategoricalLayer(layerB)) {
-    legend.setLayer(layerB.name);
+    legend.setLayer(layerB);
     return;
   }
 
   if (state.baseVisibility && state.baseLayer) {
-    legend.setLayer(state.baseLayer.name);
+    legend.setLayer(state.baseLayer);
     return;
   }
 
@@ -4035,13 +4076,13 @@ function getWmsLegendUrl(layerName, opts = {}) {
  * currently selected base layer.
  *
  * The control renders in the bottom-right corner of the map and is hidden
- * by default. Calling `setLayer(layerName, styleName)` updates the legend
- * image using a GeoServer WMS GetLegendGraphic request and sets the legend
- * title to the provided layer name. Passing a falsy `layerName` clears the
- * legend content and hides the control.
+ * by default. Calling `setLayer(layer)` updates the legend content from
+ * configured categorical metadata when present, falling back to a GeoServer WMS
+ * GetLegendGraphic request. Passing a falsy layer clears the legend content and
+ * hides the control.
  *
  * The returned control instance exposes:
- *   - setLayer(layerName: string | null, styleName?: string): void
+ *   - setLayer(layer: Object|string|null, styleName?: string): void
  *       Updates the legend image and title, or hides the control if no layer.
  *   - show(): void
  *       Makes the legend visible.
@@ -4049,7 +4090,7 @@ function getWmsLegendUrl(layerName, opts = {}) {
  *       Hides the legend.
  *
  * @returns {L.Control & {
- *   setLayer: (layerName: string | null, styleName?: string) => void,
+ *   setLayer: (layer: Object|string|null, styleName?: string) => void,
  *   show: () => void,
  *   hide: () => void
  * }} Configured Leaflet legend control instance.
@@ -4069,18 +4110,56 @@ function createBaseLegendControl() {
     return div;
   };
 
-  ctrl.setLayer = (layerName, styleName) => {
+  ctrl.setLayer = (layer, styleName) => {
     const body = ctrl._container.querySelector(".legend-body");
     const title = ctrl._container.querySelector(".legend-title");
 
-    if (!layerName) {
+    if (!layer) {
       body.innerHTML = "";
       title.textContent = "";
       ctrl.hide();
       return;
     }
 
-    title.textContent = layerName;
+    const layerName = typeof layer === "string" ? layer : layer.name;
+    const layerTitle = typeof layer === "string" ? layer : layer.title || layer.name;
+    const legendTitle =
+      typeof layer === "string"
+        ? layerTitle
+        : layer.rendering?.legend?.title || layerTitle;
+    title.textContent = legendTitle;
+
+    if (typeof layer !== "string" && isCategoricalLayer(layer)) {
+      const items = categoricalLegendItems(layer);
+      if (items.length) {
+        body.innerHTML = "";
+
+        const list = document.createElement("div");
+        list.className = "legend-list";
+
+        items.forEach(({ label, color, opacity }) => {
+          const row = document.createElement("div");
+          row.className = "legend-row";
+
+          const swatch = document.createElement("span");
+          swatch.className = "legend-swatch";
+          swatch.style.backgroundColor = color;
+          swatch.style.opacity = opacity;
+
+          const labelEl = document.createElement("span");
+          labelEl.className = "legend-label";
+          labelEl.textContent = label;
+
+          row.appendChild(swatch);
+          row.appendChild(labelEl);
+          list.appendChild(row);
+        });
+
+        body.appendChild(list);
+        ctrl.show();
+        return;
+      }
+    }
 
     const url = getWmsLegendUrl(layerName, { style: styleName });
     body.innerHTML = `<img class='legend-img' src='${url}' />`;

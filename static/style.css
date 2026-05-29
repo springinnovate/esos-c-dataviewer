@@ -768,6 +768,32 @@ header.is-collapsed .topbar-content {
     height: auto;
 }
 
+.legend-list {
+    display: grid;
+    gap: 4px;
+    max-width: 260px;
+}
+
+.legend-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    min-height: 18px;
+}
+
+.legend-swatch {
+    width: 18px;
+    height: 18px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.legend-label {
+    color: #000000;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
 .bivariate-legend {
   --legend-size: 132px;
   --a-cmin: #000000;

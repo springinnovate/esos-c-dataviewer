@@ -1999,24 +1999,18 @@ function formatSampleSummaryNumber(value) {
 /**
  * Append a per-layer sampled raster summary card.
  * @param {HTMLElement} container
- * @param {string} layerLabel
  * @param {string} rasterId
  * @param {{area_hectares:number,sum:number,mean:number}} summary
  * @returns {void}
  */
-function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
+function appendSampleSummaryCard(container, rasterId, summary) {
   const card = document.createElement('div');
   card.className = 'sample-summary-card';
 
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
-  title.textContent = layerLabel;
+  title.textContent = rasterId;
   card.appendChild(title);
-
-  const rasterName = document.createElement('div');
-  rasterName.className = 'sample-summary-raster';
-  rasterName.textContent = rasterId;
-  card.appendChild(rasterName);
 
   [
     ['Valid area', `${formatSampleSummaryNumber(summary.area_hectares)} ha`],
@@ -2044,24 +2038,18 @@ function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
 /**
  * Append a sampled categorical area summary card.
  * @param {HTMLElement} container
- * @param {string} layerLabel
  * @param {string} rasterId
  * @param {{label:string,color?:string,opacity?:number,area_hectares:number}[]} categories
  * @returns {void}
  */
-function appendCategoricalSummaryCard(container, layerLabel, rasterId, categories) {
+function appendCategoricalSummaryCard(container, rasterId, categories) {
   const card = document.createElement('div');
   card.className = 'sample-summary-card sample-summary-card-categorical';
 
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
-  title.textContent = layerLabel;
+  title.textContent = rasterId;
   card.appendChild(title);
-
-  const rasterName = document.createElement('div');
-  rasterName.className = 'sample-summary-raster';
-  rasterName.textContent = rasterId;
-  card.appendChild(rasterName);
 
   const list = document.createElement('div');
   list.className = 'sample-category-list';
@@ -2114,21 +2102,19 @@ function renderSampleSummary(scatterObj, opts) {
   }
 
   if (opts.visA && scatterObj.x_summary) {
-    appendSampleSummaryCard(summaryEl, 'Layer A', opts.rasterX, scatterObj.x_summary);
+    appendSampleSummaryCard(summaryEl, opts.rasterX, scatterObj.x_summary);
   } else if (opts.visA && scatterObj.x_categories?.length) {
     appendCategoricalSummaryCard(
       summaryEl,
-      'Layer A',
       opts.rasterX,
       scatterObj.x_categories,
     );
   }
   if (opts.visB && scatterObj.y_summary) {
-    appendSampleSummaryCard(summaryEl, 'Layer B', opts.rasterY, scatterObj.y_summary);
+    appendSampleSummaryCard(summaryEl, opts.rasterY, scatterObj.y_summary);
   } else if (opts.visB && scatterObj.y_categories?.length) {
     appendCategoricalSummaryCard(
       summaryEl,
-      'Layer B',
       opts.rasterY,
       scatterObj.y_categories,
     );

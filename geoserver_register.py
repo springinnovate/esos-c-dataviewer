@@ -816,6 +816,22 @@ def check_for_valid_projection_and_overviews(
     return "\n".join(error_messages)
 
 
+def resolve_style_path(config_data: dict) -> str:
+    """Resolve the shared dynamic style path from config or environment.
+
+    Args:
+        config_data: Parsed layers YAML configuration.
+
+    Returns:
+        Path to the SLD file used as the default continuous-raster style.
+    """
+    return (
+        config_data.get("style_path")
+        or config_data.get("style")
+        or os.environ["STYLE_PATH"]
+    )
+
+
 def main():
     """Configure a GeoServer instance from a YAML definition file.
 
@@ -910,7 +926,7 @@ def main():
     purge_and_create_workspace(geoserver_client, workspace_id)
     logger.info("Workspace ready: %s", workspace_id)
 
-    style_path = config_data["style_path"]
+    style_path = resolve_style_path(config_data)
     base_style_id = Path(style_path).stem
     logger.info(
         "Ensuring style exists: %s (path=%s)", base_style_id, style_path

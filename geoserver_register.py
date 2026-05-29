@@ -125,7 +125,9 @@ class Gs:
         Returns:
             str: A concise representation showing base URL, user, and timeout.
         """
-        return f"Gs(base={self.base!r}, user={self.auth[0]!r}, timeout={self.timeout!r})"
+        return (
+            f"Gs(base={self.base!r}, user={self.auth[0]!r}, timeout={self.timeout!r})"
+        )
 
     def _url(self, path: str) -> str:
         """Builds a fully qualified GeoServer REST URL.
@@ -218,9 +220,7 @@ class Gs:
         )
 
 
-def purge_and_create_workspace(
-    geoserver_client: Gs, workspace_name: str
-) -> None:
+def purge_and_create_workspace(geoserver_client: Gs, workspace_name: str) -> None:
     """Deletes all existing GeoServer workspaces and creates a single new one.
 
     This deletes all workspaces from the GeoServer using its REST API.
@@ -254,9 +254,7 @@ def purge_and_create_workspace(
         name = ws.get("name")
         if not name:
             continue
-        del_resp = geoserver_client.delete(
-            f"/rest/workspaces/{name}?recurse=true"
-        )
+        del_resp = geoserver_client.delete(f"/rest/workspaces/{name}?recurse=true")
         if del_resp.status_code in (200, 202, 204, 404):
             logger.info("Deleted workspace '%s' (if existed).", name)
         else:
@@ -650,9 +648,7 @@ def create_categorical_raster_style(
         )
 
 
-def _pick_resampling(
-    dtype: str, explicit: Resampling | None = None
-) -> Resampling:
+def _pick_resampling(dtype: str, explicit: Resampling | None = None) -> Resampling:
     """Select an appropriate resampling method for the given data type.
 
     Args:
@@ -816,22 +812,6 @@ def check_for_valid_projection_and_overviews(
     return "\n".join(error_messages)
 
 
-def resolve_style_path(config_data: dict) -> str:
-    """Resolve the shared dynamic style path from config or environment.
-
-    Args:
-        config_data: Parsed layers YAML configuration.
-
-    Returns:
-        Path to the SLD file used as the default continuous-raster style.
-    """
-    return (
-        config_data.get("style_path")
-        or config_data.get("style")
-        or os.environ["STYLE_PATH"]
-    )
-
-
 def main():
     """Configure a GeoServer instance from a YAML definition file.
 
@@ -867,9 +847,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Configure GeoServer from a YAML definition file."
     )
-    parser.add_argument(
-        "config", help="Path to the layers.yml configuration file."
-    )
+    parser.add_argument("config", help="Path to the layers.yml configuration file.")
     parsed_args = parser.parse_args()
 
     logger.info("Config path: %s", parsed_args.config)
@@ -908,9 +886,7 @@ def main():
         geoserver_base_password,
         timeout_seconds,
     )
-    logger.info(
-        "GeoServer REST client initialized (timeout=%ss)", timeout_seconds
-    )
+    logger.info("GeoServer REST client initialized (timeout=%ss)", timeout_seconds)
 
     seconds_to_wait_for_geoserver_start = 420
     logger.info(
@@ -926,11 +902,9 @@ def main():
     purge_and_create_workspace(geoserver_client, workspace_id)
     logger.info("Workspace ready: %s", workspace_id)
 
-    style_path = resolve_style_path(config_data)
+    style_path = config_data["style_path"]
     base_style_id = Path(style_path).stem
-    logger.info(
-        "Ensuring style exists: %s (path=%s)", base_style_id, style_path
-    )
+    logger.info("Ensuring style exists: %s (path=%s)", base_style_id, style_path)
     create_style_if_not_exists(
         geoserver_client,
         workspace_id,

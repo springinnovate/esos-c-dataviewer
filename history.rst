@@ -1,6 +1,19 @@
 History
 =======
 
+1.3.0 (2026-05-29)
+------------------
+* Added support for categorical rasters as selectable A/B layers, including
+  categorical legends and disabled histogram states when categorical data cannot
+  be plotted as continuous values.
+* Fixed viewer startup compatibility with newer FastAPI/Starlette template
+  response handling and pinned the viewer Python dependency versions used by
+  the image build.
+* Fixed GeoServer initialization style configuration so the dynamic SLD path is
+  configurable via ``STYLE_PATH`` and mounted into ``geoserver-init``.
+* Improved local data directory compatibility in Docker Compose by supporting
+  both ``LOCAL_DATA`` and ``LOCAL_DATA_DIR`` environment variable names.
+
 1.2.0 (2026-03-20)
 ------------------
 * Added algorithm to pick no more than 1M pixels when determining histograms

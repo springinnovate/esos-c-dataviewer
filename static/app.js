@@ -1360,6 +1360,7 @@ function zoomToOutline(centerLng, centerLat) {
  * @param {number[]} edges - Array of histogram bin edges (length = N + 1).
  * @param {number[]} hist - Array of histogram bin counts (length = N).
  * @param {string} layerId - Identifier of the raster layer, used for color mapping.
+ * @param {{axisLabel?: string}} opts - Optional display settings.
  * @returns {SVGElement} The constructed histogram `<svg>` element.
  */
 function buildHistogramSVG(edges, hist, layerId, opts = {}) {
@@ -1426,6 +1427,17 @@ function buildHistogramSVG(edges, hist, layerId, opts = {}) {
   svg.appendChild(mkLine(plotX0, plotY0, plotX0, plotY1));
   svg.appendChild(mkText(viewMin.toFixed(2), plotX0, plotY1 + 12, 'start'));
   svg.appendChild(mkText(viewMax.toFixed(2), plotX1, plotY1 + 12, 'end'));
+
+  if (opts.axisLabel) {
+    const xTitle = document.createElementNS(svgNS, 'text');
+    xTitle.textContent = opts.axisLabel;
+    xTitle.setAttribute('x', String((plotX0 + plotX1) / 2));
+    xTitle.setAttribute('y', String(plotY1 + 28));
+    xTitle.setAttribute('fill', '#bbb');
+    xTitle.setAttribute('font-size', '11');
+    xTitle.setAttribute('text-anchor', 'middle');
+    svg.appendChild(xTitle);
+  }
 
   for (let i = 0; i < hist.length; i++) {
     const binMin = edges[i];
@@ -2312,11 +2324,13 @@ async function renderScatterOverlay(opts) {
     svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A', {
       viewMin: state.plotView.xMin,
       viewMax: state.plotView.xMax,
+      axisLabel: rasterX,
     });
   } else if (has1DY) {
     svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B', {
       viewMin: state.plotView.yMin,
       viewMax: state.plotView.yMax,
+      axisLabel: rasterY,
     });
   }
 

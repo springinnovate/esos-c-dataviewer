@@ -1997,10 +1997,24 @@ function formatSampleSummaryNumber(value) {
 }
 
 /**
+ * Format a sampled area and its share of the sampled geometry.
+ * @param {number} areaHectares
+ * @param {number} areaPercent
+ * @returns {string}
+ */
+function formatSampleAreaWithPercent(areaHectares, areaPercent) {
+  const areaText = `${formatSampleSummaryNumber(areaHectares)} ha`;
+  if (!Number.isFinite(areaPercent)) {
+    return areaText;
+  }
+  return `${areaText} (${areaPercent.toFixed(1)}%)`;
+}
+
+/**
  * Append a per-layer sampled raster summary card.
  * @param {HTMLElement} container
  * @param {string} rasterId
- * @param {{area_hectares:number,sum:number,mean:number}} summary
+ * @param {{area_hectares:number,area_percent:number,sum:number,mean:number}} summary
  * @returns {void}
  */
 function appendSampleSummaryCard(container, rasterId, summary) {
@@ -2013,7 +2027,10 @@ function appendSampleSummaryCard(container, rasterId, summary) {
   card.appendChild(title);
 
   [
-    ['Valid area', `${formatSampleSummaryNumber(summary.area_hectares)} ha`],
+    [
+      'Valid area (% of sample)',
+      formatSampleAreaWithPercent(summary.area_hectares, summary.area_percent),
+    ],
     ['Sum', formatSampleSummaryNumber(summary.sum)],
     ['Average', formatSampleSummaryNumber(summary.mean)],
   ].forEach(([labelText, valueText]) => {
@@ -2039,7 +2056,7 @@ function appendSampleSummaryCard(container, rasterId, summary) {
  * Append a sampled categorical area summary card.
  * @param {HTMLElement} container
  * @param {string} rasterId
- * @param {{label:string,color?:string,opacity?:number,area_hectares:number}[]} categories
+ * @param {{label:string,color?:string,opacity?:number,area_hectares:number,area_percent:number}[]} categories
  * @returns {void}
  */
 function appendCategoricalSummaryCard(container, rasterId, categories) {
@@ -2073,7 +2090,10 @@ function appendCategoricalSummaryCard(container, rasterId, categories) {
 
     const value = document.createElement('span');
     value.className = 'sample-summary-value';
-    value.textContent = `${formatSampleSummaryNumber(category.area_hectares)} ha`;
+    value.textContent = formatSampleAreaWithPercent(
+      category.area_hectares,
+      category.area_percent,
+    );
 
     nameWrap.append(swatch, label);
     row.append(nameWrap, value);

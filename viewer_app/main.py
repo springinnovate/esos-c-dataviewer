@@ -155,9 +155,9 @@ async def index(
     logger.info(f"rendering {request} {layerA} {layerB}")
     initial_layers = {"A": layerA or "", "B": layerB or "", "Base": baseLayer}
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "initial_layers": initial_layers,
             "main_js": _asset_path("app.js"),
             "main_css_list": _css_paths("app.js"),

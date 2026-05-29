@@ -1265,7 +1265,7 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
 }
 
 /**
- * Fetch histogram/scatter stats only for continuous layers.
+ * Fetch sampled stats for visible layers, with histograms only for continuous layers.
  * @param {Object|null} layerA
  * @param {Object|null} layerB
  * @param {Object} geojson
@@ -1278,13 +1278,23 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
 async function fetchContinuousScatterStats(layerA, layerB, geojson) {
   const categoricalA = isCategoricalLayer(layerA);
   const categoricalB = isCategoricalLayer(layerB);
-  const rasterIdX = layerA && !categoricalA ? layerA.name : null;
-  const rasterIdY = layerB && !categoricalB ? layerB.name : null;
+  const rasterIdX = layerA ? layerA.name : null;
+  const rasterIdY = layerB ? layerB.name : null;
+  const hasContinuousLayer =
+    (layerA && !categoricalA) || (layerB && !categoricalB);
 
   if (!rasterIdX && !rasterIdY) {
-    const bothCategorical = categoricalA && categoricalB;
     return {
       scatterObj: null,
+      histogramDisabled: true,
+      histogramDisabledMessage: "No layer selected.",
+    };
+  }
+
+  if (!hasContinuousLayer) {
+    const bothCategorical = categoricalA && categoricalB;
+    return {
+      scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson),
       histogramDisabled: true,
       histogramDisabledMessage: bothCategorical
         ? "Both rasters are categorical; histogram disabled."
@@ -2020,6 +2030,61 @@ function appendSampleSummaryCard(container, layerLabel, rasterId, summary) {
 }
 
 /**
+ * Append a sampled categorical area summary card.
+ * @param {HTMLElement} container
+ * @param {string} layerLabel
+ * @param {string} rasterId
+ * @param {{label:string,color?:string,opacity?:number,area_hectares:number}[]} categories
+ * @returns {void}
+ */
+function appendCategoricalSummaryCard(container, layerLabel, rasterId, categories) {
+  const card = document.createElement('div');
+  card.className = 'sample-summary-card sample-summary-card-categorical';
+
+  const title = document.createElement('div');
+  title.className = 'sample-summary-title';
+  title.textContent = layerLabel;
+  card.appendChild(title);
+
+  const rasterName = document.createElement('div');
+  rasterName.className = 'sample-summary-raster';
+  rasterName.textContent = rasterId;
+  card.appendChild(rasterName);
+
+  const list = document.createElement('div');
+  list.className = 'sample-category-list';
+
+  categories.forEach((category) => {
+    const row = document.createElement('div');
+    row.className = 'sample-category-row';
+
+    const nameWrap = document.createElement('span');
+    nameWrap.className = 'sample-category-name';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'sample-category-swatch';
+    if (category.color) {
+      swatch.style.backgroundColor = category.color;
+      swatch.style.opacity = category.opacity ?? 1;
+    }
+
+    const label = document.createElement('span');
+    label.textContent = category.label;
+
+    const value = document.createElement('span');
+    value.className = 'sample-summary-value';
+    value.textContent = `${formatSampleSummaryNumber(category.area_hectares)} ha`;
+
+    nameWrap.append(swatch, label);
+    row.append(nameWrap, value);
+    list.appendChild(row);
+  });
+
+  card.appendChild(list);
+  container.appendChild(card);
+}
+
+/**
  * Render sampled raster summaries next to the active histogram or scatter plot.
  * @param {Object|null} scatterObj
  * @param {{rasterX:string,rasterY:string,visA:boolean,visB:boolean}} opts
@@ -2038,15 +2103,29 @@ function renderSampleSummary(scatterObj, opts) {
 
   if (opts.visA && scatterObj.x_summary) {
     appendSampleSummaryCard(summaryEl, 'Layer A', opts.rasterX, scatterObj.x_summary);
+  } else if (opts.visA && scatterObj.x_categories?.length) {
+    appendCategoricalSummaryCard(
+      summaryEl,
+      'Layer A',
+      opts.rasterX,
+      scatterObj.x_categories,
+    );
   }
   if (opts.visB && scatterObj.y_summary) {
     appendSampleSummaryCard(summaryEl, 'Layer B', opts.rasterY, scatterObj.y_summary);
+  } else if (opts.visB && scatterObj.y_categories?.length) {
+    appendCategoricalSummaryCard(
+      summaryEl,
+      'Layer B',
+      opts.rasterY,
+      scatterObj.y_categories,
+    );
   }
 
   if (!summaryEl.children.length) {
     const empty = document.createElement('div');
     empty.className = 'sample-summary-empty';
-    empty.textContent = 'No valid continuous pixels';
+    empty.textContent = 'No sampled values';
     summaryEl.appendChild(empty);
   }
 }
@@ -2101,12 +2180,12 @@ async function renderScatterOverlay(opts) {
           </div>
           <div id='sampleSummary' class='sample-summary'></div>
         </div>
-        <div class='layer-group'>
+        <div id='histogramControls' class='layer-group'>
           <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
           <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
           <input id='percentiles' type='text' value="${state.percentiles}"/>
         </div>
-        <div class='layer-group'>
+        <div id='plotRangeGroup' class='layer-group'>
           <label class='tool-label'>Plot Range</label>
           <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
           <div id='plotRangeControls'></div>
@@ -2129,12 +2208,16 @@ async function renderScatterOverlay(opts) {
   const plotEl = document.getElementById('scatterPlot');
   const summaryEl = document.getElementById('sampleSummary');
   const plotRangeControls = document.getElementById('plotRangeControls');
+  const histogramControls = document.getElementById('histogramControls');
+  const plotRangeGroup = document.getElementById('plotRangeGroup');
 
   overlay.classList.remove('hidden');
 
   if (!visA && !visB) {
     plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
     summaryEl?.replaceChildren();
+    histogramControls?.classList.add('hidden');
+    plotRangeGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2145,6 +2228,8 @@ async function renderScatterOverlay(opts) {
         `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
     }
     summaryEl?.replaceChildren();
+    histogramControls?.classList.add('hidden');
+    plotRangeGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2167,6 +2252,9 @@ async function renderScatterOverlay(opts) {
     Array.isArray(scatterObj.y_edges);
 
   const plotKind = has2D ? '2d' : has1DX ? '1d-x' : has1DY ? '1d-y' : 'none';
+  const hasHistogram = plotKind !== 'none';
+  histogramControls?.classList.toggle('hidden', !hasHistogram);
+  plotRangeGroup?.classList.toggle('hidden', !hasHistogram);
 
   ensurePlotView(scatterObj, plotKind);
 
@@ -2250,6 +2338,10 @@ async function renderScatterOverlay(opts) {
     }
   } else {
     state.scatterSvg = null;
+    if (histogramDisabled) {
+      plotEl.innerHTML =
+        `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
+    }
     plotRangeControls?.replaceChildren();
   }
 }

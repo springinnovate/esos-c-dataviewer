@@ -5,6 +5,8 @@ History
 ------------------
 * Added valid area, sum, and average summaries beside histogram and scatter
   plots for sampled continuous layers.
+* Added categorical sampled area summaries, grouped by configured legend item
+  instead of raw raster code.
 
 1.3.2 (2026-05-29)
 ------------------

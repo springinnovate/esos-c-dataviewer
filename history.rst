@@ -1,6 +1,12 @@
 History
 =======
 
+1.3.2 (2026-05-29)
+------------------
+* Fixed categorical legends so labels are rendered from YAML metadata, preserving
+  commas in labels and collapsing repeated category codes with the same label
+  and color.
+
 1.3.1 (2026-05-29)
 ------------------
 * Fixed remote container startup by removing the unused ``ecoshard`` dependency

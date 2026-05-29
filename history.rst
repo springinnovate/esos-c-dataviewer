@@ -7,6 +7,7 @@ History
   plots for sampled continuous layers.
 * Added categorical sampled area summaries, grouped by configured legend item
   instead of raw raster code.
+* Added sampled-area percentages to continuous and categorical area summaries.
 
 1.3.2 (2026-05-29)
 ------------------

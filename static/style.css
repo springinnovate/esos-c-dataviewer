@@ -382,7 +382,7 @@ input.num::-webkit-outer-spin-button {
     top: 12px;
     left: 12px;
     z-index: var(--z-overlay);
-    width: min(760px, calc(100% - 24px));
+    width: min(960px, calc(100% - 24px));
     max-height: calc(100% - 24px);
     background: rgba(var(--bg-rgb), 0.96);
     border: 1px solid var(--border);
@@ -506,13 +506,13 @@ input.num::-webkit-outer-spin-button {
 }
 
 .plot-report-layout .plot-holder {
-    flex: 1 1 420px;
+    flex: 1 1 520px;
     min-width: min(100%, 360px);
 }
 
 .sample-summary {
     display: grid;
-    flex: 0 1 260px;
+    flex: 0 1 340px;
     gap: var(--space-2);
     min-width: 0;
 }
@@ -535,15 +535,17 @@ input.num::-webkit-outer-spin-button {
 }
 
 .sample-summary-row {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
     gap: var(--space-2);
+    align-items: baseline;
     font-size: 12px;
     line-height: 1.45;
 }
 
 .sample-summary-label {
     color: var(--muted);
+    white-space: nowrap;
 }
 
 .sample-summary-value {
@@ -626,6 +628,14 @@ input.num::-webkit-outer-spin-button {
     .sample-summary {
         flex-basis: 100%;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+
+    .sample-summary-row {
+        grid-template-columns: 1fr;
+    }
+
+    .sample-summary-label {
+        white-space: normal;
     }
 }
 

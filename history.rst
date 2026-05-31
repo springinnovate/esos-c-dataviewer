@@ -9,6 +9,7 @@ History
   instead of raw raster code.
 * Hid base-layer controls when the configuration does not define any base
   layers.
+* Added sampled-area percentages to continuous and categorical area summaries.
 
 1.3.2 (2026-05-29)
 ------------------

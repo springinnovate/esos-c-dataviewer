@@ -116,6 +116,7 @@ class RasterSummary(BaseModel):
 
     count: int
     area_hectares: float
+    area_percent: float
     sum: float
     mean: float
 
@@ -125,6 +126,7 @@ class CategoryAreaSummary(BaseModel):
 
     label: str
     area_hectares: float
+    area_percent: float
     color: Optional[str] = None
     opacity: Optional[float] = None
 
@@ -285,6 +287,7 @@ def categorical_area_summaries(
     affine: Affine,
     raster_crs: rasterio.crs.CRS,
     rendering: dict,
+    sample_area_hectares: float,
 ) -> list[CategoryAreaSummary]:
     """Aggregate sampled categorical raster area by configured legend item.
 
@@ -296,6 +299,7 @@ def categorical_area_summaries(
         affine: Affine transform for the sampled array.
         raster_crs: Coordinate reference system for the sampled raster.
         rendering: Layer rendering metadata from the YAML registry.
+        sample_area_hectares: Area represented by the sampled geometry.
 
     Returns:
         Category summaries in legend order, with duplicate raster codes
@@ -362,6 +366,7 @@ def categorical_area_summaries(
             color=meta["color"],
             opacity=meta["opacity"],
             area_hectares=group_areas[group_key],
+            area_percent=group_areas[group_key] / sample_area_hectares * 100.0,
         )
         for group_key, meta in group_meta.items()
         if group_areas.get(group_key, 0.0) > 0
@@ -371,6 +376,7 @@ def categorical_area_summaries(
 def summary_from_valid_values(
     vals: Optional[np.ndarray],
     area_hectares: Optional[float],
+    sample_area_hectares: Optional[float],
 ) -> Optional[RasterSummary]:
     """Compute compact summary statistics from valid raster values.
 
@@ -378,6 +384,7 @@ def summary_from_valid_values(
         vals: One-dimensional array of finite raster values from the sampled
             geometry.
         area_hectares: Area represented by finite, non-nodata sampled pixels.
+        sample_area_hectares: Area represented by the sampled geometry.
 
     Returns:
         Area, pixel count, sum, and mean for the sampled values, or None when
@@ -389,6 +396,7 @@ def summary_from_valid_values(
     return RasterSummary(
         count=int(vals.size),
         area_hectares=float(area_hectares),
+        area_percent=float(area_hectares / sample_area_hectares * 100.0),
         sum=float(np.sum(vals)),
         mean=float(np.mean(vals)),
     )
@@ -1000,6 +1008,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     "hist": None,
                     "edges": None,
                     "area_hectares": None,
+                    "sample_area_hectares": None,
                     "categories": None,
                     "is_categorical": False,
                     "valid": False,
@@ -1013,6 +1022,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             hist = None
             edges = None
             area_hectares = None
+            sample_area_hectares = None
             category_summaries = None
             is_categorical = False
             valid = False
@@ -1057,6 +1067,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 vals = arr[valid_mask]
 
                 if vals.size > 0:
+                    sample_area_hectares = valid_area_hectares(
+                        mask,
+                        affine,
+                        ds.crs,
+                    )
                     area_hectares = valid_area_hectares(
                         valid_mask,
                         affine,
@@ -1069,6 +1084,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                             affine,
                             ds.crs,
                             rendering,
+                            sample_area_hectares,
                         )
                     else:
                         hist, edges = np.histogram(vals, bins=bins)
@@ -1086,6 +1102,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 "hist": hist,
                 "edges": edges,
                 "area_hectares": area_hectares if valid else None,
+                "sample_area_hectares": sample_area_hectares if valid else None,
                 "categories": category_summaries if valid else None,
                 "is_categorical": is_categorical,
                 "valid": valid,
@@ -1259,10 +1276,12 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_summary=summary_from_valid_values(
                 results["x"]["vals"] if x_hist_valid else None,
                 results["x"]["area_hectares"] if x_hist_valid else None,
+                results["x"]["sample_area_hectares"] if x_hist_valid else None,
             ),
             y_summary=summary_from_valid_values(
                 results["y"]["vals"] if y_hist_valid else None,
                 results["y"]["area_hectares"] if y_hist_valid else None,
+                results["y"]["sample_area_hectares"] if y_hist_valid else None,
             ),
             x_categories=results["x"]["categories"],
             y_categories=results["y"]["categories"],

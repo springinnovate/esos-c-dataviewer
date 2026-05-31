@@ -1,6 +1,12 @@
 History
 =======
 
+Unreleased
+----------
+* Added a one-step raster preparation utility that stitches country manifests,
+  converts outputs to COGs with dtype-aware overview resampling, and publishes
+  them directly to a GeoServer-ready directory.
+
 1.4.0 (2026-05-29)
 ------------------
 * Added valid area, sum, and average summaries beside histogram and scatter

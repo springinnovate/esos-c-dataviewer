@@ -981,21 +981,38 @@ function populateLayerSelects() {
     sel.value = String(idx);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  ["Base"].forEach((layerId) => {
-    const sel = document.getElementById(`layerSelect${layerId}`);
-    fill(sel, state.availableBaseLayers);
 
-    const def = sel.dataset.default;
-    sel.addEventListener("change", (e) => onBaseLayerChange(e, layerId));
-    const idx = /^\d+$/.test(def)
-      ? parseInt(def, 10)
-      : state.availableBaseLayers.findIndex(
-          (l) => l.id === def || l.name === def,
-        );
-    if (idx < 0) return;
-    sel.value = String(idx);
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  const baseGroup = document.getElementById("layerGroupBase");
+  const baseSelect = document.getElementById("layerSelectBase");
+  const hasBaseLayers = state.availableBaseLayers.length > 0;
+  baseGroup?.classList.toggle("hidden", !hasBaseLayers);
+
+  if (!hasBaseLayers) {
+    state.baseLayer = null;
+    state.activeBaseLayerIdx = null;
+    state.baseVisibility = false;
+    state.visibility.Base = false;
+    if (state.wmsLayerBase) {
+      state.map.removeLayer(state.wmsLayerBase);
+      state.wmsLayerBase = null;
+    }
+    renderLayerMeta("Base", null);
+    updateContextLegend();
+    return;
+  }
+
+  fill(baseSelect, state.availableBaseLayers);
+
+  const def = baseSelect.dataset.default;
+  baseSelect.addEventListener("change", onBaseLayerChange);
+  const idx = /^\d+$/.test(def)
+    ? parseInt(def, 10)
+    : state.availableBaseLayers.findIndex(
+        (l) => l.id === def || l.name === def,
+      );
+  if (idx < 0) return;
+  baseSelect.value = String(idx);
+  baseSelect.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /**
@@ -1040,6 +1057,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
 function onBaseLayerChange(e) {
   const idx = parseInt(e.target.value, 10);
   const baseLayer = state.availableBaseLayers[idx];
+  if (!baseLayer) return;
   state.baseLayer = baseLayer;
   renderLayerMeta("Base", baseLayer);
 
@@ -4411,7 +4429,7 @@ function createBaseLegendControl() {
 
   state.geoserverBaseUrl = cfg.geoserver_base_url;
   state.availableLayers = cfg.layers;
-  state.availableBaseLayers = cfg.baseLayers;
+  state.availableBaseLayers = cfg.baseLayers || [];
   state.baseStatsUrl = cfg.rstats_base_url;
   ["A", "B"].forEach((layerId) => wireDynamicStyleControls(layerId));
   populateLayerSelects();

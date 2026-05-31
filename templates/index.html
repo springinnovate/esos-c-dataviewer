@@ -63,7 +63,7 @@
         <div class="controls-bar">
           {% macro layer_group(layer_id, label_text, default_value='',
           show_checked=true) %}
-          <div class="layer-group">
+          <div id="layerGroup{{ layer_id }}" class="layer-group">
             <label class="layer-label">{{ label_text }}</label>
             <select
               id="layerSelect{{ layer_id }}"

@@ -3,6 +3,17 @@ History
 
 Unreleased
 ----------
+* Added a one-step raster preparation utility that stitches country manifests,
+  converts outputs to COGs with dtype-aware overview resampling, and publishes
+  them directly to a GeoServer-ready directory.
+* Added configurable parallel COG conversion for the raster preparation
+  utility.
+* Added per-raster source/output nodata policies for the raster preparation
+  utility so problematic nodata values can be normalized before stitching.
+* Expanded raster preparation nodata policies to support multiple source
+  nodata values for one raster.
+* Fixed COG publication to preserve stitched raster nodata metadata instead of
+  overriding COG nodata independently of pixel values.
 * Hid the base-layer selector by default and only reveals it when configured
   base layers are returned by the viewer configuration API.
 

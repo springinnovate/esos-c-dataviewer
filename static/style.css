@@ -248,6 +248,10 @@ input.num::-webkit-outer-spin-button {
     gap: 4px;
 }
 
+.layer-group.hidden {
+    display: none;
+}
+
 .window-size {
     display: flex;
     align-items: center;

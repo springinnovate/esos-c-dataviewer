@@ -47,6 +47,22 @@ class RasterJob:
     resampling: str | None = None
 
 
+@dataclass(frozen=True)
+class NodataPolicy:
+    """Describes source-to-output nodata handling for one manifest.
+
+    Attributes:
+        raster_name: Manifest stem the policy applies to.
+        source_nodata: Value that should be treated as nodata before stitching.
+        output_nodata: Value that should be written as nodata for stitching and
+            COG publication.
+    """
+
+    raster_name: str
+    source_nodata: str
+    output_nodata: str
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments.
 
@@ -135,6 +151,32 @@ def parse_args() -> argparse.Namespace:
         help="gdalinfo executable to use for dtype inspection.",
     )
     parser.add_argument(
+        "--gdal-warp",
+        default="gdalwarp",
+        help="gdalwarp executable to use for nodata normalization.",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for temporary manifests and normalized nodata rasters. "
+            "Defaults to <manifest-dir>/_build_country_cogs."
+        ),
+    )
+    parser.add_argument(
+        "--nodata-policy",
+        action="append",
+        default=[],
+        metavar="NAME:SOURCE:OUTPUT",
+        help=(
+            "Per-raster nodata normalization applied before stitching. NAME "
+            "is the manifest stem without .txt, SOURCE is the value to treat "
+            "as nodata in source rasters, and OUTPUT is the nodata value to "
+            "write for stitching and COGs. Repeat for multiple rasters."
+        ),
+    )
+    parser.add_argument(
         "--resampling-option",
         default="RESAMPLING",
         help=(
@@ -203,6 +245,254 @@ def discover_manifests(manifest_dir: Path, manifest_glob: str) -> list[Path]:
     if not manifest_paths:
         raise RuntimeError(f"No manifests matched {manifest_glob!r} in {manifest_dir}")
     return manifest_paths
+
+
+def parse_nodata_policies(policy_values: Sequence[str]) -> dict[str, NodataPolicy]:
+    """Parse per-raster nodata policy CLI values.
+
+    Args:
+        policy_values: Values formatted as NAME:SOURCE:OUTPUT.
+
+    Returns:
+        Mapping of manifest stem to nodata policy.
+
+    Raises:
+        ValueError: If a policy value does not have exactly three parts.
+    """
+
+    policies = {}
+    for policy_value in policy_values:
+        parts = policy_value.split(":")
+        if len(parts) != 3:
+            raise ValueError(
+                "Nodata policies must use NAME:SOURCE:OUTPUT format. "
+                f"Got: {policy_value}"
+            )
+        raster_name, source_nodata, output_nodata = parts
+        policies[raster_name] = NodataPolicy(
+            raster_name=raster_name,
+            source_nodata=source_nodata,
+            output_nodata=output_nodata,
+        )
+    return policies
+
+
+def read_manifest_sources(manifest_path: Path) -> list[Path]:
+    """Read source raster paths from a stitch manifest.
+
+    Args:
+        manifest_path: Text file with one source raster path per line.
+
+    Returns:
+        Source raster paths listed in the manifest.
+    """
+
+    return [
+        Path(line.strip())
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def write_manifest(manifest_path: Path, source_paths: Sequence[Path]) -> None:
+    """Write a stitch manifest.
+
+    Args:
+        manifest_path: Destination manifest path.
+        source_paths: Source raster paths to write.
+    """
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        "\n".join(str(path) for path in source_paths) + "\n",
+        encoding="utf-8",
+    )
+
+
+def normalized_source_path(
+    source_path: Path, policy: NodataPolicy, output_dir: Path, index: int
+) -> Path:
+    """Build a deterministic path for a normalized source raster.
+
+    Args:
+        source_path: Original source raster path.
+        policy: Nodata policy being applied.
+        output_dir: Directory for normalized sources.
+        index: Source index within the manifest.
+
+    Returns:
+        Path for the normalized source raster or VRT.
+    """
+
+    suffix = ".vrt" if policy.source_nodata == policy.output_nodata else ".tif"
+    return output_dir / f"{index:05d}_{source_path.stem}{suffix}"
+
+
+def normalize_source_nodata(
+    source_path: Path,
+    output_path: Path,
+    policy: NodataPolicy,
+    gdal_translate_exe: str,
+    gdal_warp_exe: str,
+) -> None:
+    """Create a source raster view/copy with corrected nodata semantics.
+
+    When source and output nodata are the same, a lightweight VRT with corrected
+    nodata metadata is enough. When values differ, a temporary GeoTIFF is
+    written so source nodata pixels become the desired output nodata value.
+
+    Args:
+        source_path: Original source raster path.
+        output_path: Normalized source path to create.
+        policy: Nodata policy to apply.
+        gdal_translate_exe: gdal_translate executable.
+        gdal_warp_exe: gdalwarp executable.
+
+    Raises:
+        subprocess.CalledProcessError: If GDAL normalization fails.
+    """
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        output_path.unlink()
+
+    if policy.source_nodata == policy.output_nodata:
+        command = [
+            gdal_translate_exe,
+            str(source_path),
+            str(output_path),
+            "-of",
+            "VRT",
+            "-a_nodata",
+            policy.output_nodata,
+        ]
+    else:
+        command = [
+            gdal_warp_exe,
+            "-overwrite",
+            "-srcnodata",
+            policy.source_nodata,
+            "-dstnodata",
+            policy.output_nodata,
+            "-of",
+            "GTiff",
+            "-co",
+            "TILED=YES",
+            "-co",
+            "COMPRESS=DEFLATE",
+            "-co",
+            "PREDICTOR=YES",
+            str(source_path),
+            str(output_path),
+        ]
+    subprocess.run(command, check=True)
+
+
+def prepare_manifest_for_nodata_policy(
+    manifest_path: Path,
+    policy: NodataPolicy,
+    prepared_manifest_path: Path,
+    normalized_source_dir: Path,
+    gdal_translate_exe: str,
+    gdal_warp_exe: str,
+) -> Path:
+    """Create a temporary manifest with normalized source rasters.
+
+    Args:
+        manifest_path: Original stitch manifest path.
+        policy: Nodata policy to apply.
+        prepared_manifest_path: Temporary manifest path to write.
+        normalized_source_dir: Directory for normalized source rasters.
+        gdal_translate_exe: gdal_translate executable.
+        gdal_warp_exe: gdalwarp executable.
+
+    Returns:
+        Temporary manifest path.
+    """
+
+    source_paths = read_manifest_sources(manifest_path)
+    normalized_paths = []
+    total = len(source_paths)
+    print(
+        f"Preparing nodata policy for {manifest_path.stem}: "
+        f"{policy.source_nodata} -> {policy.output_nodata} ({total} source rasters)"
+    )
+    for index, source_path in enumerate(source_paths, start=1):
+        normalized_path = normalized_source_path(
+            source_path=source_path,
+            policy=policy,
+            output_dir=normalized_source_dir,
+            index=index,
+        )
+        print(f"  {index}/{total} {source_path.name}")
+        normalize_source_nodata(
+            source_path=source_path,
+            output_path=normalized_path,
+            policy=policy,
+            gdal_translate_exe=gdal_translate_exe,
+            gdal_warp_exe=gdal_warp_exe,
+        )
+        normalized_paths.append(normalized_path)
+    write_manifest(prepared_manifest_path, normalized_paths)
+    return prepared_manifest_path
+
+
+def prepare_manifests_for_stitching(
+    manifest_paths: Sequence[Path],
+    policies: dict[str, NodataPolicy],
+    work_dir: Path,
+    gdal_translate_exe: str,
+    gdal_warp_exe: str,
+    dry_run: bool,
+) -> tuple[list[Path], Path | None]:
+    """Prepare temporary manifests for nodata-aware stitching.
+
+    Args:
+        manifest_paths: Original stitch manifests.
+        policies: Per-manifest nodata policies.
+        work_dir: Temporary working directory.
+        gdal_translate_exe: gdal_translate executable.
+        gdal_warp_exe: gdalwarp executable.
+        dry_run: Whether to describe work without creating files.
+
+    Returns:
+        Prepared manifest paths and the directory containing them. If no
+        policies are defined, the original manifests and None are returned.
+    """
+
+    if not policies:
+        return list(manifest_paths), None
+
+    prepared_manifest_dir = work_dir / "manifests"
+    normalized_source_root = work_dir / "nodata_sources"
+    prepared_paths = []
+    for manifest_path in manifest_paths:
+        prepared_manifest_path = prepared_manifest_dir / manifest_path.name
+        policy = policies.get(manifest_path.stem)
+        if dry_run:
+            if policy is None:
+                print(f"Would copy manifest unchanged: {manifest_path.name}")
+            else:
+                print(
+                    f"Would normalize {manifest_path.name}: "
+                    f"{policy.source_nodata} -> {policy.output_nodata}"
+                )
+            prepared_paths.append(prepared_manifest_path)
+            continue
+
+        if policy is None:
+            write_manifest(prepared_manifest_path, read_manifest_sources(manifest_path))
+        else:
+            prepare_manifest_for_nodata_policy(
+                manifest_path=manifest_path,
+                policy=policy,
+                prepared_manifest_path=prepared_manifest_path,
+                normalized_source_dir=normalized_source_root / manifest_path.stem,
+                gdal_translate_exe=gdal_translate_exe,
+                gdal_warp_exe=gdal_warp_exe,
+            )
+        prepared_paths.append(prepared_manifest_path)
+    return prepared_paths, prepared_manifest_dir
 
 
 def make_jobs(
@@ -648,12 +938,34 @@ def main() -> None:
 
     args = parse_args()
     manifest_dir = args.manifest_dir.resolve()
-    stitched_dir = (args.stitched_dir or args.manifest_dir).resolve()
     publish_dir = args.publish_dir.resolve()
+    work_dir = (args.work_dir or (args.manifest_dir / "_build_country_cogs")).resolve()
+    policies = parse_nodata_policies(args.nodata_policy)
 
     manifest_paths = discover_manifests(manifest_dir, args.manifest_glob)
+    prepared_manifest_paths = manifest_paths
+    prepared_manifest_dir = None
+    if policies and not args.skip_stitch:
+        if not args.dry_run:
+            check_executable(args.gdal_translate)
+            check_executable(args.gdal_warp)
+        prepared_manifest_paths, prepared_manifest_dir = prepare_manifests_for_stitching(
+            manifest_paths=manifest_paths,
+            policies=policies,
+            work_dir=work_dir,
+            gdal_translate_exe=args.gdal_translate,
+            gdal_warp_exe=args.gdal_warp,
+            dry_run=args.dry_run,
+        )
+
+    stitch_manifest_dir = prepared_manifest_dir or manifest_dir
+    stitched_dir = (
+        args.stitched_dir.resolve()
+        if args.stitched_dir
+        else (prepared_manifest_dir or manifest_dir).resolve()
+    )
     jobs = make_jobs(
-        manifest_paths=manifest_paths,
+        manifest_paths=prepared_manifest_paths,
         stitched_dir=stitched_dir,
         publish_dir=publish_dir,
         output_suffix=args.output_suffix,
@@ -667,9 +979,9 @@ def main() -> None:
     if not args.skip_stitch:
         run_stitcher(
             stitch_script=args.stitch_script.resolve(),
-            manifest_dir=manifest_dir,
+            manifest_dir=stitch_manifest_dir,
             manifest_glob=args.manifest_glob,
-            manifest_paths=manifest_paths,
+            manifest_paths=prepared_manifest_paths,
             stitch_input_mode=args.stitch_input_mode,
             workers=args.workers,
             output_suffix=args.output_suffix,

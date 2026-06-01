@@ -8,6 +8,8 @@ Unreleased
   them directly to a GeoServer-ready directory.
 * Added configurable parallel COG conversion for the raster preparation
   utility.
+* Added per-raster source/output nodata policies for the raster preparation
+  utility so problematic nodata values can be normalized before stitching.
 
 1.4.0 (2026-05-29)
 ------------------

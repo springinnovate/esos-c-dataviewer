@@ -404,8 +404,6 @@ def normalize_source_nodata(
             "TILED=YES",
             "-co",
             "COMPRESS=DEFLATE",
-            "-co",
-            "PREDICTOR=YES",
             str(source_path),
             str(output_path),
         ]

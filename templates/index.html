@@ -62,8 +62,8 @@
       <div id="topbarContent" class="topbar-content">
         <div class="controls-bar">
           {% macro layer_group(layer_id, label_text, default_value='',
-          show_checked=true) %}
-          <div id="layerGroup{{ layer_id }}" class="layer-group">
+          show_checked=true, extra_class='') %}
+          <div id="layerGroup{{ layer_id }}" class="layer-group {{ extra_class }}">
             <label class="layer-label">{{ label_text }}</label>
             <select
               id="layerSelect{{ layer_id }}"
@@ -86,9 +86,10 @@
           {% endmacro %}
           <div class="control-group layers">
             {% for layer_id in ['A', 'B'] %} {{ layer_group( layer_id, 'Select a
-            layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id,
-            ''), true ) }} {% endfor %} {{ layer_group( 'Base', 'Select a base
-            layer to display', initial_layers.get('Base', ''), true ) }}
+            layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id, ''),
+            true ) }} {% endfor %} {{ layer_group(
+            'Base', 'Select a base layer to display', initial_layers.get('Base',
+            ''), true, 'hidden' ) }}
           </div>
 
           <div class="control-group style">

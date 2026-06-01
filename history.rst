@@ -1,6 +1,11 @@
 History
 =======
 
+Unreleased
+----------
+* Hid the base-layer selector by default and only reveals it when configured
+  base layers are returned by the viewer configuration API.
+
 1.4.0 (2026-05-29)
 ------------------
 * Added valid area, sum, and average summaries beside histogram and scatter

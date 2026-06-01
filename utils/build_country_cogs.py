@@ -583,6 +583,7 @@ def run_stitcher(
     manifest_dir: Path,
     manifest_glob: str,
     manifest_paths: Sequence[Path],
+    output_dir: Path,
     stitch_input_mode: str,
     workers: int,
     output_suffix: str,
@@ -596,6 +597,7 @@ def run_stitcher(
         manifest_dir: Directory containing manifests.
         manifest_glob: Glob used when stitch_input_mode is "glob".
         manifest_paths: Discovered manifest paths.
+        output_dir: Directory where stitched rasters should be written.
         stitch_input_mode: Whether to pass one glob or individual files.
         workers: Worker count passed to the stitcher.
         output_suffix: Output suffix passed to the stitcher.
@@ -619,6 +621,7 @@ def run_stitcher(
     else:
         command.extend(str(path) for path in manifest_paths)
     command.extend(["--workers", str(workers), "--output-suffix", output_suffix])
+    command.extend(["--output-dir", str(output_dir)])
     if nodata != "":
         command.extend(["--nodata", nodata])
 
@@ -980,12 +983,12 @@ def main() -> None:
             dry_run=args.dry_run,
         )
 
-    stitch_manifest_dir = prepared_manifest_dir or manifest_dir
     stitched_dir = (
         args.stitched_dir.resolve()
         if args.stitched_dir
-        else (prepared_manifest_dir or manifest_dir).resolve()
+        else manifest_dir.resolve()
     )
+    stitch_manifest_dir = prepared_manifest_dir or manifest_dir
     jobs = make_jobs(
         manifest_paths=prepared_manifest_paths,
         stitched_dir=stitched_dir,
@@ -1004,6 +1007,7 @@ def main() -> None:
             manifest_dir=stitch_manifest_dir,
             manifest_glob=args.manifest_glob,
             manifest_paths=prepared_manifest_paths,
+            output_dir=stitched_dir,
             stitch_input_mode=args.stitch_input_mode,
             workers=args.workers,
             output_suffix=args.output_suffix,

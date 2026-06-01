@@ -53,13 +53,14 @@ class NodataPolicy:
 
     Attributes:
         raster_name: Manifest stem the policy applies to.
-        source_nodata: Value that should be treated as nodata before stitching.
+        source_nodata_values: Values that should be treated as nodata before
+            stitching.
         output_nodata: Value that should be written as nodata for stitching and
             COG publication.
     """
 
     raster_name: str
-    source_nodata: str
+    source_nodata_values: tuple[str, ...]
     output_nodata: str
 
 
@@ -171,9 +172,10 @@ def parse_args() -> argparse.Namespace:
         metavar="NAME:SOURCE:OUTPUT",
         help=(
             "Per-raster nodata normalization applied before stitching. NAME "
-            "is the manifest stem without .txt, SOURCE is the value to treat "
-            "as nodata in source rasters, and OUTPUT is the nodata value to "
-            "write for stitching and COGs. Repeat for multiple rasters."
+            "is the manifest stem without .txt, SOURCE is one value or a "
+            "comma-separated list of values to treat as nodata in source "
+            "rasters, and OUTPUT is the nodata value to write for stitching "
+            "and COGs. Repeat for multiple rasters."
         ),
     )
     parser.add_argument(
@@ -251,7 +253,7 @@ def parse_nodata_policies(policy_values: Sequence[str]) -> dict[str, NodataPolic
     """Parse per-raster nodata policy CLI values.
 
     Args:
-        policy_values: Values formatted as NAME:SOURCE:OUTPUT.
+        policy_values: Values formatted as NAME:SOURCE[,SOURCE...]:OUTPUT.
 
     Returns:
         Mapping of manifest stem to nodata policy.
@@ -269,12 +271,51 @@ def parse_nodata_policies(policy_values: Sequence[str]) -> dict[str, NodataPolic
                 f"Got: {policy_value}"
             )
         raster_name, source_nodata, output_nodata = parts
+        source_nodata_values = tuple(
+            value.strip() for value in source_nodata.split(",") if value.strip()
+        )
+        if not source_nodata_values:
+            raise ValueError(f"Nodata policy has no source nodata values: {policy_value}")
         policies[raster_name] = NodataPolicy(
             raster_name=raster_name,
-            source_nodata=source_nodata,
+            source_nodata_values=source_nodata_values,
             output_nodata=output_nodata,
         )
     return policies
+
+
+def format_source_nodata_values(policy: NodataPolicy) -> str:
+    """Format source nodata values for logs.
+
+    Args:
+        policy: Nodata policy to format.
+
+    Returns:
+        Comma-separated source nodata values.
+    """
+
+    return ",".join(policy.source_nodata_values)
+
+
+def parse_nodata_value(value: str):
+    """Parse a nodata value as an int where possible, otherwise float.
+
+    Args:
+        value: Nodata value from the command line.
+
+    Returns:
+        Numeric nodata value.
+    """
+
+    lowered_value = value.lower()
+    if any(char in lowered_value for char in ".e") or lowered_value in {
+        "nan",
+        "inf",
+        "+inf",
+        "-inf",
+    }:
+        return float(value)
+    return int(value)
 
 
 def read_manifest_sources(manifest_path: Path) -> list[Path]:
@@ -348,8 +389,7 @@ def normalized_source_path(
         Path for the normalized source raster or VRT.
     """
 
-    suffix = ".vrt" if policy.source_nodata == policy.output_nodata else ".tif"
-    return output_dir / f"{index:05d}_{source_path.stem}{suffix}"
+    return output_dir / f"{index:05d}_{source_path.stem}.tif"
 
 
 def normalize_source_nodata(
@@ -361,9 +401,9 @@ def normalize_source_nodata(
 ) -> None:
     """Create a source raster view/copy with corrected nodata semantics.
 
-    When source and output nodata are the same, a lightweight VRT with corrected
-    nodata metadata is enough. When values differ, a temporary GeoTIFF is
-    written so source nodata pixels become the desired output nodata value.
+    Every listed source nodata value is rewritten to the output nodata value so
+    the stitcher sees one consistent nodata value regardless of source raster
+    metadata.
 
     Args:
         source_path: Original source raster path.
@@ -373,41 +413,58 @@ def normalize_source_nodata(
         gdal_warp_exe: gdalwarp executable.
 
     Raises:
-        subprocess.CalledProcessError: If GDAL normalization fails.
+        ImportError: If rasterio is not available in the current Python
+            environment.
     """
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
 
-    if policy.source_nodata == policy.output_nodata:
-        command = [
-            gdal_translate_exe,
-            str(source_path),
-            str(output_path),
-            "-of",
-            "VRT",
-            "-a_nodata",
-            policy.output_nodata,
-        ]
-    else:
-        command = [
-            gdal_warp_exe,
-            "-overwrite",
-            "-srcnodata",
-            policy.source_nodata,
-            "-dstnodata",
-            policy.output_nodata,
-            "-of",
-            "GTiff",
-            "-co",
-            "TILED=YES",
-            "-co",
-            "COMPRESS=DEFLATE",
-            str(source_path),
-            str(output_path),
-        ]
-    subprocess.run(command, check=True)
+    normalize_source_nodata_with_rasterio(source_path, output_path, policy)
+
+
+def normalize_source_nodata_with_rasterio(
+    source_path: Path, output_path: Path, policy: NodataPolicy
+) -> None:
+    """Normalize source nodata values with block-wise rasterio IO.
+
+    Args:
+        source_path: Original source raster path.
+        output_path: Normalized raster path to create.
+        policy: Nodata policy to apply.
+    """
+
+    import numpy
+    import rasterio
+
+    output_nodata = parse_nodata_value(policy.output_nodata)
+    source_nodata_values = [
+        parse_nodata_value(value) for value in policy.source_nodata_values
+    ]
+
+    with rasterio.open(source_path) as source:
+        profile = source.profile.copy()
+        profile.update(
+            driver="GTiff",
+            nodata=output_nodata,
+            tiled=True,
+            compress="DEFLATE",
+        )
+        with rasterio.open(output_path, "w", **profile) as target:
+            for _, window in source.block_windows(1):
+                data = source.read(window=window)
+                nodata_mask = numpy.zeros(data.shape, dtype=bool)
+                for source_nodata in source_nodata_values:
+                    if (
+                        numpy.issubdtype(data.dtype, numpy.floating)
+                        and numpy.isnan(source_nodata)
+                    ):
+                        nodata_mask |= numpy.isnan(data)
+                    else:
+                        nodata_mask |= data == source_nodata
+                data[nodata_mask] = output_nodata
+                target.write(data, window=window)
 
 
 def prepare_manifest_for_nodata_policy(
@@ -437,7 +494,8 @@ def prepare_manifest_for_nodata_policy(
     total = len(source_paths)
     print(
         f"Preparing nodata policy for {manifest_path.stem}: "
-        f"{policy.source_nodata} -> {policy.output_nodata} ({total} source rasters)"
+        f"{format_source_nodata_values(policy)} -> {policy.output_nodata} "
+        f"({total} source rasters)"
     )
     for index, source_path in enumerate(source_paths, start=1):
         normalized_path = normalized_source_path(
@@ -497,7 +555,7 @@ def prepare_manifests_for_stitching(
             else:
                 print(
                     f"Would normalize {manifest_path.name}: "
-                    f"{policy.source_nodata} -> {policy.output_nodata}"
+                    f"{format_source_nodata_values(policy)} -> {policy.output_nodata}"
                 )
             prepared_paths.append(prepared_manifest_path)
             continue

@@ -10,6 +10,8 @@ Unreleased
   utility.
 * Added per-raster source/output nodata policies for the raster preparation
   utility so problematic nodata values can be normalized before stitching.
+* Expanded raster preparation nodata policies to support multiple source
+  nodata values for one raster.
 
 1.4.0 (2026-05-29)
 ------------------

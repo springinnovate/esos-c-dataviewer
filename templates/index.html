@@ -86,9 +86,10 @@
           {% endmacro %}
           <div class="control-group layers">
             {% for layer_id in ['A', 'B'] %} {{ layer_group( layer_id, 'Select a
-            layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id,
-            ''), true ) }} {% endfor %} {{ layer_group( 'Base', 'Select a base
-            layer to display', initial_layers.get('Base', ''), true ) }}
+            layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id, ''),
+            true ) }} {% endfor %} {% if show_base_layers %} {{ layer_group(
+            'Base', 'Select a base layer to display', initial_layers.get('Base',
+            ''), true ) }} {% endif %}
           </div>
 
           <div class="control-group style">

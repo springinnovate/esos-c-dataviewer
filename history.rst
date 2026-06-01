@@ -1,6 +1,10 @@
 History
 =======
 
+Unreleased
+----------
+* Hid the base-layer selector markup when no base layers are configured.
+
 1.4.0 (2026-05-29)
 ------------------
 * Added valid area, sum, and average summaries beside histogram and scatter

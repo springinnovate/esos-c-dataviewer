@@ -985,9 +985,9 @@ function populateLayerSelects() {
   const baseGroup = document.getElementById("layerGroupBase");
   const baseSelect = document.getElementById("layerSelectBase");
   const hasBaseLayers = state.availableBaseLayers.length > 0;
-  baseGroup?.classList.toggle("hidden", !hasBaseLayers);
 
-  if (!hasBaseLayers) {
+  if (!baseGroup || !baseSelect || !hasBaseLayers) {
+    baseGroup?.classList.toggle("hidden", true);
     state.baseLayer = null;
     state.activeBaseLayerIdx = null;
     state.baseVisibility = false;
@@ -1067,7 +1067,8 @@ function onBaseLayerChange(e) {
   url.searchParams.set("baseLayer", baseLayer?.name ?? "");
   history.replaceState(null, "", url.toString());
 
-  document.getElementById("layerVisibleBase").checked = true;
+  const visibleCheckbox = document.getElementById("layerVisibleBase");
+  if (visibleCheckbox) visibleCheckbox.checked = true;
   addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
   state.baseVisibility = true;
   updateContextLegend();

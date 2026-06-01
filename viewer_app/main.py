@@ -108,6 +108,20 @@ def _collect_layers(layer_key: str, config: dict) -> list:
     return layers
 
 
+def _has_configured_layers(layer_key: str, config: dict) -> bool:
+    """Return whether a layer section contains any configured layers.
+
+    Args:
+        layer_key (str): The layer section in the configuration file.
+        config (dict): Loaded configuration data.
+
+    Returns:
+        bool: True when the requested layer section has at least one entry.
+    """
+
+    return bool(config.get(layer_key) or {})
+
+
 def _read_version():
     """Return the application version from environment or a baked file.
 
@@ -158,6 +172,16 @@ async def index(
     # working with requires strict capitalization, so we lowercase them here so
     # we can at least fetch the layers.
     logger.info(f"rendering {request} {layerA} {layerB}")
+    show_base_layers = False
+    config_path = os.getenv("LAYERS_YAML_PATH")
+    if config_path:
+        try:
+            show_base_layers = _has_configured_layers(
+                "baseLayers", _load_layers_config(config_path)
+            )
+        except FileNotFoundError:
+            logger.warning("layers.yml not found at %s", config_path)
+
     initial_layers = {
         "A": layerA.lower() if layerA else "",
         "B": layerB.lower() if layerB else "",
@@ -172,6 +196,7 @@ async def index(
             "main_css_list": _css_paths("app.js"),
             "app_version": _read_version(),
             "app_title": os.getenv("APP_TITLE"),
+            "show_base_layers": show_base_layers,
         },
     )
 

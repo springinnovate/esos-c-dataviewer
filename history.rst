@@ -14,6 +14,8 @@ Unreleased
   nodata values for one raster.
 * Fixed COG publication to preserve stitched raster nodata metadata instead of
   overriding COG nodata independently of pixel values.
+* Hid the base-layer selector by default and only reveals it when configured
+  base layers are returned by the viewer configuration API.
 
 1.4.0 (2026-05-29)
 ------------------

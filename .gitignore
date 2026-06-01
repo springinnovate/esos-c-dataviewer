@@ -1,5 +1,7 @@
 /.env
 /local_data/
 /geoserver_data_dir/
-static/
+/static/node_modules/
+/static/dist/
+/static/layers.yml
 profiles/

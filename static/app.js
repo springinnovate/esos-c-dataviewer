@@ -1001,6 +1001,7 @@ function populateLayerSelects() {
     return;
   }
 
+  baseGroup.classList.toggle("hidden", false);
   fill(baseSelect, state.availableBaseLayers);
 
   const def = baseSelect.dataset.default;

@@ -287,11 +287,35 @@ def read_manifest_sources(manifest_path: Path) -> list[Path]:
         Source raster paths listed in the manifest.
     """
 
+    manifest_text = read_manifest_text(manifest_path)
     return [
         Path(line.strip())
-        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        for line in manifest_text.splitlines()
         if line.strip()
     ]
+
+
+def read_manifest_text(manifest_path: Path) -> str:
+    """Read a stitch manifest using common text encodings.
+
+    Args:
+        manifest_path: Text file with one source raster path per line.
+
+    Returns:
+        Decoded manifest text.
+
+    Raises:
+        UnicodeDecodeError: If the manifest cannot be decoded with supported
+            encodings.
+    """
+
+    manifest_bytes = manifest_path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
+        try:
+            return manifest_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return manifest_bytes.decode("utf-8")
 
 
 def write_manifest(manifest_path: Path, source_paths: Sequence[Path]) -> None:

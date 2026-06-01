@@ -137,8 +137,8 @@ def parse_args() -> argparse.Namespace:
         "--nodata",
         default="0",
         help=(
-            "Nodata value passed to the stitcher and assigned to output COGs. "
-            "Use an empty string to skip -a_nodata during COG creation."
+            "Nodata value passed to the stitcher. Use an empty string to skip "
+            "passing --nodata to the stitcher."
         ),
     )
     parser.add_argument(
@@ -829,7 +829,6 @@ def ensure_stitched_outputs(jobs: Sequence[RasterJob]) -> None:
 def convert_to_cog(
     gdal_translate_exe: str,
     job: RasterJob,
-    nodata: str,
     resampling_option: str,
     compression: str,
     blocksize: str,
@@ -841,7 +840,6 @@ def convert_to_cog(
     Args:
         gdal_translate_exe: gdal_translate executable.
         job: Raster conversion job with dtype/resampling populated.
-        nodata: Nodata value assigned with -a_nodata, or empty string to skip.
         resampling_option: COG creation option name for overview resampling.
         compression: Compression creation option value.
         blocksize: Block size creation option value.
@@ -872,8 +870,6 @@ def convert_to_cog(
         "-co",
         f"NUM_THREADS={gdal_threads}",
     ]
-    if nodata != "":
-        command.extend(["-a_nodata", nodata])
 
     if dry_run:
         print(f"COG command: {format_command(command)}")
@@ -889,7 +885,6 @@ def convert_to_cog(
 def convert_jobs_to_cogs(
     gdal_translate_exe: str,
     jobs: Sequence[RasterJob],
-    nodata: str,
     resampling_option: str,
     compression: str,
     blocksize: str,
@@ -902,7 +897,6 @@ def convert_jobs_to_cogs(
     Args:
         gdal_translate_exe: gdal_translate executable.
         jobs: Raster jobs to convert.
-        nodata: Nodata value assigned with -a_nodata, or empty string to skip.
         resampling_option: COG creation option name for overview resampling.
         compression: Compression creation option value.
         blocksize: Block size creation option value.
@@ -916,7 +910,6 @@ def convert_jobs_to_cogs(
             convert_to_cog(
                 gdal_translate_exe=gdal_translate_exe,
                 job=job,
-                nodata=nodata,
                 resampling_option=resampling_option,
                 compression=compression,
                 blocksize=blocksize,
@@ -931,7 +924,6 @@ def convert_jobs_to_cogs(
                 convert_to_cog,
                 gdal_translate_exe=gdal_translate_exe,
                 job=job,
-                nodata=nodata,
                 resampling_option=resampling_option,
                 compression=compression,
                 blocksize=blocksize,
@@ -1084,7 +1076,6 @@ def main() -> None:
     convert_jobs_to_cogs(
         gdal_translate_exe=args.gdal_translate,
         jobs=inspected_jobs,
-        nodata=args.nodata,
         resampling_option=args.resampling_option,
         compression=args.compression,
         blocksize=args.blocksize,

@@ -12,6 +12,8 @@ Unreleased
   utility so problematic nodata values can be normalized before stitching.
 * Expanded raster preparation nodata policies to support multiple source
   nodata values for one raster.
+* Fixed COG publication to preserve stitched raster nodata metadata instead of
+  overriding COG nodata independently of pixel values.
 
 1.4.0 (2026-05-29)
 ------------------

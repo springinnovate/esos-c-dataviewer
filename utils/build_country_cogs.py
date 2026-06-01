@@ -14,6 +14,7 @@ This utility wraps the local raster preparation workflow:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from dataclasses import dataclass
@@ -156,6 +157,16 @@ def parse_args() -> argparse.Namespace:
         "--gdal-threads",
         default="1",
         help="NUM_THREADS creation option passed to gdal_translate.",
+    )
+    parser.add_argument(
+        "--cog-workers",
+        type=int,
+        default=min(4, os.cpu_count() or 1),
+        help=(
+            "Number of rasters to convert to COGs in parallel. Keep "
+            "--gdal-threads low when raising this to avoid oversubscribing "
+            "CPU and memory. Defaults to min(4, CPU count)."
+        ),
     )
     parser.add_argument(
         "--skip-stitch",
@@ -370,6 +381,34 @@ def progress_iter(items: Sequence[RasterJob], label: str) -> Iterator[RasterJob]
         yield from tqdm(items, desc=label, unit="raster")
 
 
+def progress_completed(
+    futures: dict, total: int, label: str
+) -> Iterator[tuple[RasterJob, object]]:
+    """Yield completed futures with tqdm-style progress output.
+
+    Args:
+        futures: Mapping of future objects to raster jobs.
+        total: Total number of futures.
+        label: Progress label.
+
+    Yields:
+        Raster jobs and future results in completion order.
+    """
+
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        for index, future in enumerate(as_completed(futures), start=1):
+            job = futures[future]
+            result = future.result()
+            print(f"{label}: {index}/{total} {job.stitched_path.name}")
+            yield job, result
+    else:
+        for future in tqdm(as_completed(futures), total=total, desc=label, unit="raster"):
+            job = futures[future]
+            yield job, future.result()
+
+
 def inspect_jobs(gdalinfo_exe: str, jobs: Sequence[RasterJob]) -> list[RasterJob]:
     """Populate dtype and resampling for planned jobs.
 
@@ -482,6 +521,7 @@ def convert_jobs_to_cogs(
     compression: str,
     blocksize: str,
     gdal_threads: str,
+    cog_workers: int,
     dry_run: bool,
 ) -> None:
     """Convert all planned jobs to COGs.
@@ -494,20 +534,57 @@ def convert_jobs_to_cogs(
         compression: Compression creation option value.
         blocksize: Block size creation option value.
         gdal_threads: NUM_THREADS creation option value.
+        cog_workers: Number of COG conversions to run in parallel.
         dry_run: Whether to print without executing.
     """
 
-    for job in progress_iter(list(jobs), "Converting COGs"):
-        convert_to_cog(
-            gdal_translate_exe=gdal_translate_exe,
-            job=job,
-            nodata=nodata,
-            resampling_option=resampling_option,
-            compression=compression,
-            blocksize=blocksize,
-            gdal_threads=gdal_threads,
-            dry_run=dry_run,
-        )
+    if cog_workers <= 1 or dry_run:
+        for job in progress_iter(list(jobs), "Converting COGs"):
+            convert_to_cog(
+                gdal_translate_exe=gdal_translate_exe,
+                job=job,
+                nodata=nodata,
+                resampling_option=resampling_option,
+                compression=compression,
+                blocksize=blocksize,
+                gdal_threads=gdal_threads,
+                dry_run=dry_run,
+            )
+        return
+
+    with ThreadPoolExecutor(max_workers=cog_workers) as executor:
+        futures = {
+            executor.submit(
+                convert_to_cog,
+                gdal_translate_exe=gdal_translate_exe,
+                job=job,
+                nodata=nodata,
+                resampling_option=resampling_option,
+                compression=compression,
+                blocksize=blocksize,
+                gdal_threads=gdal_threads,
+                dry_run=dry_run,
+            ): job
+            for job in jobs
+        }
+        for _job, _result in progress_completed(
+            futures, total=len(futures), label="Converting COGs"
+        ):
+            pass
+
+
+def print_parallelism_note(cog_workers: int, gdal_threads: str) -> None:
+    """Print the configured COG conversion parallelism.
+
+    Args:
+        cog_workers: Number of COG conversion workers.
+        gdal_threads: NUM_THREADS value passed to each GDAL process.
+    """
+
+    print(
+        "COG conversion parallelism: "
+        f"{cog_workers} raster(s) at a time, GDAL NUM_THREADS={gdal_threads}"
+    )
 
 
 def check_executable(name: str) -> None:
@@ -585,6 +662,7 @@ def main() -> None:
     print(f"Found {len(manifest_paths)} manifest(s) in {manifest_dir}")
     print(f"Expected stitched rasters in {stitched_dir}")
     print(f"Publishing COGs to {publish_dir}")
+    print_parallelism_note(args.cog_workers, args.gdal_threads)
 
     if not args.skip_stitch:
         run_stitcher(
@@ -615,6 +693,7 @@ def main() -> None:
         compression=args.compression,
         blocksize=args.blocksize,
         gdal_threads=args.gdal_threads,
+        cog_workers=args.cog_workers,
         dry_run=args.dry_run,
     )
     print_summary(inspected_jobs)

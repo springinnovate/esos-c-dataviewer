@@ -6,6 +6,8 @@ Unreleased
 * Added a one-step raster preparation utility that stitches country manifests,
   converts outputs to COGs with dtype-aware overview resampling, and publishes
   them directly to a GeoServer-ready directory.
+* Added configurable parallel COG conversion for the raster preparation
+  utility.
 
 1.4.0 (2026-05-29)
 ------------------

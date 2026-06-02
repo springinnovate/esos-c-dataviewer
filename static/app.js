@@ -663,13 +663,6 @@ async function loadConfig() {
   return res.json();
 }
 
-function withoutCrsWrapping(crs) {
-  const appCrs = Object.create(crs);
-  appCrs.wrapLng = undefined;
-  appCrs.wrapLat = undefined;
-  return appCrs;
-}
-
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
@@ -677,7 +670,10 @@ function withoutCrsWrapping(crs) {
 function initMap(crsCode) {
   const baseLeafletCRS =
     L.CRS[String(crsCode).trim().toUpperCase().replace(":", "")];
-  const leafletCRS = withoutCrsWrapping(baseLeafletCRS);
+  const leafletCRS = Object.assign(Object.create(baseLeafletCRS), {
+    wrapLng: undefined,
+    wrapLat: undefined,
+  });
   const mapDiv = document.getElementById("map");
   const map = L.map(mapDiv, {
     crs: leafletCRS,
@@ -1049,7 +1045,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     className: opts.className ?? defaultClassName,
     noWrap: true,
     pane: paneBySlot[slot],
-    ...(opts.bounds ? { bounds: opts.bounds } : {}),
+    bounds: opts.bounds ?? null,
   });
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
@@ -1084,6 +1080,7 @@ async function onBaseLayerChange(e) {
   if (visibleCheckbox) visibleCheckbox.checked = true;
   let bounds = null;
   try {
+    // Fetches WMS capabilities once; later calls read state._wmsLayerBoundsCache.
     bounds = await _getWmsLayerLatLngBounds(baseLayer.name);
   } catch {}
   addWmsLayer(baseLayer.name, "base", {
@@ -1219,10 +1216,12 @@ async function _getWmsLayerLatLngBounds(qualifiedName) {
 async function onLayerChange(e, layerId) {
   const idx = parseInt(e.target.value, 10);
   const lyr = state.availableLayers[idx];
+  if (!lyr) return;
+  const layerName = lyr.name;
   const isCategorical = isCategoricalLayer(lyr);
-  const doInitialFit = !state.didInitialRasterFit && !!lyr?.name;
+  const doInitialFit = !state.didInitialRasterFit;
   if (doInitialFit) state.didInitialRasterFit = true;
-  const layerBoundsPromise = lyr?.name ? _getWmsLayerLatLngBounds(lyr.name) : null;
+  const layerBoundsPromise = _getWmsLayerLatLngBounds(layerName);
   renderLayerMeta(layerId, lyr);
   setStyleControlsEnabled(layerId, !isCategorical);
 
@@ -1230,7 +1229,7 @@ async function onLayerChange(e, layerId) {
     const res = await fetch(`${state.baseStatsUrl}/stats/minmax`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ raster_id: lyr.name }),
+      body: JSON.stringify({ raster_id: layerName }),
     });
     if (!res.ok) throw new Error(await res.text());
     const { min_, max_ } = await res.json();
@@ -1256,7 +1255,7 @@ async function onLayerChange(e, layerId) {
     } catch {}
   }
   document.getElementById(`layerVisible${layerId}`).checked = true;
-  addWmsLayer(lyr.name, layerId, { className, bounds });
+  addWmsLayer(layerName, layerId, { className, bounds });
   if (!isCategorical) applyDynamicStyle(layerId);
   updateContextLegend();
   if (!state.sampleMode) {
@@ -1271,7 +1270,7 @@ async function onLayerChange(e, layerId) {
     sampleAndRenderSampleBox();
   }
   const url = new URL(window.location.href);
-  url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name);
+  url.searchParams.set(`layer${layerId}`, layerName);
   history.replaceState(null, "", url.toString());
   if (doInitialFit && bounds) {
     try {

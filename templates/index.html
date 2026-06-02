@@ -54,178 +54,221 @@
     {% endfor %}
   </head>
   <body>
-    <header>
-      <div class="brand">
-        {{ app_title }}
-        <span id="appVersion" class="tool-description">{{ app_version }}</span>
+    <header class="map-shell">
+      <div class="shell-header">
+        <div class="brand">
+          {{ app_title }}
+          <span id="appVersion" class="tool-description">{{ app_version }}</span>
+        </div>
+        <button
+          id="headerToggle"
+          class="btn small shell-toggle"
+          type="button"
+          aria-expanded="true"
+          aria-controls="topbarContent"
+        >
+          Hide
+        </button>
       </div>
-      <div id="topbarContent" class="topbar-content">
-        <div class="controls-bar">
-          {% macro layer_group(layer_id, label_text, default_value='',
-          show_checked=true, extra_class='') %}
-          <div id="layerGroup{{ layer_id }}" class="layer-group {{ extra_class }}">
-            <label class="layer-label">{{ label_text }}</label>
-            <select
-              id="layerSelect{{ layer_id }}"
-              data-default="{{ default_value }}"
-            ></select>
-            <label class="vis-label">
-              <input
-                id="layerVisible{{ layer_id }}"
-                type="checkbox"
-                {%
-                if
-                show_checked
-                %}checked{%
-                endif
-                %}
-              />
-              <span>Show</span>
-            </label>
-          </div>
-          {% endmacro %}
-          <div class="control-group layers">
-            {% for layer_id in ['A', 'B'] %} {{ layer_group( layer_id, 'Select a
-            layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id, ''),
-            true ) }} {% endfor %} {{ layer_group(
-            'Base', 'Select a base layer to display', initial_layers.get('Base',
-            ''), true, 'hidden' ) }}
-          </div>
 
-          <div class="control-group style">
-            {% for layer_id in ['A', 'B'] %}
-            <details class="style-panel">
-              <summary>Style {{ layer_id }}</summary>
-              <div class="style-grid">
-                <div class="style-row">
-                  <label>Min</label>
-                  <input
-                    id="layer{{ layer_id }}MinInput"
-                    type="number"
-                    step="any"
-                  />
-                  <input id="layer{{ layer_id }}CminInput" type="color" />
-                </div>
-                <div class="style-row">
-                  <label>Med</label>
-                  <input
-                    id="layer{{ layer_id }}MedInput"
-                    type="number"
-                    step="any"
-                  />
-                  <input id="layer{{ layer_id }}CmedInput" type="color" />
-                </div>
-                <div class="style-row">
-                  <label>Max</label>
-                  <input
-                    id="layer{{ layer_id }}MaxInput"
-                    type="number"
-                    step="any"
-                  />
-                  <input id="layer{{ layer_id }}CmaxInput" type="color" />
-                </div>
+      <div class="workspace-tabs" role="tablist" aria-label="Viewer panels">
+        <button
+          type="button"
+          class="workspace-tab is-selected"
+          data-panel="layers"
+          aria-controls="layersPanel"
+          aria-pressed="true"
+        >
+          Layers
+        </button>
+        <button
+          type="button"
+          class="workspace-tab"
+          data-panel="style"
+          aria-controls="stylePanel"
+          aria-pressed="false"
+        >
+          Style
+        </button>
+        <button
+          type="button"
+          class="workspace-tab"
+          data-panel="sample"
+          aria-controls="samplingPanel"
+          aria-pressed="false"
+        >
+          Sample
+        </button>
+      </div>
+
+      <div id="topbarContent" class="topbar-content workspace-panels">
+        {% macro layer_group(layer_id, label_text, default_value='',
+        show_checked=true, extra_class='') %}
+        <div id="layerGroup{{ layer_id }}" class="layer-group {{ extra_class }}">
+          <label class="layer-label">{{ label_text }}</label>
+          <select
+            id="layerSelect{{ layer_id }}"
+            data-default="{{ default_value }}"
+          ></select>
+          <label class="vis-label">
+            <input
+              id="layerVisible{{ layer_id }}"
+              type="checkbox"
+              {%
+              if
+              show_checked
+              %}checked{%
+              endif
+              %}
+            />
+            <span>Show</span>
+          </label>
+        </div>
+        {% endmacro %}
+
+        <section
+          id="layersPanel"
+          class="control-group layers workspace-panel is-active"
+          data-panel="layers"
+        >
+          {% for layer_id in ['A', 'B'] %} {{ layer_group( layer_id, 'Select a
+          layer to display (' ~ layer_id ~ ')', initial_layers.get(layer_id, ''),
+          true ) }} {% endfor %} {{ layer_group(
+          'Base', 'Select a base layer to display', initial_layers.get('Base',
+          ''), true, 'hidden' ) }}
+        </section>
+
+        <section
+          id="stylePanel"
+          class="control-group style workspace-panel"
+          data-panel="style"
+          hidden
+        >
+          {% for layer_id in ['A', 'B'] %}
+          <details class="style-panel">
+            <summary>Style {{ layer_id }}</summary>
+            <div class="style-grid">
+              <div class="style-row">
+                <label>Min</label>
+                <input
+                  id="layer{{ layer_id }}MinInput"
+                  type="number"
+                  step="any"
+                />
+                <input id="layer{{ layer_id }}CminInput" type="color" />
               </div>
-            </details>
-            {% endfor %}
-            <div class="palette-control">
-              <label>
-                Palette
-                <select id="bivariatePaletteSelect"></select>
-              </label>
+              <div class="style-row">
+                <label>Med</label>
+                <input
+                  id="layer{{ layer_id }}MedInput"
+                  type="number"
+                  step="any"
+                />
+                <input id="layer{{ layer_id }}CmedInput" type="color" />
+              </div>
+              <div class="style-row">
+                <label>Max</label>
+                <input
+                  id="layer{{ layer_id }}MaxInput"
+                  type="number"
+                  step="any"
+                />
+                <input id="layer{{ layer_id }}CmaxInput" type="color" />
+              </div>
             </div>
-            <label for="applyAutoStyleBtn">
-              Sets Layer A and B color thresholds to the histogram's min and max
-              percentile values.
+          </details>
+          {% endfor %}
+          <div class="palette-control">
+            <label>
+              Palette
+              <select id="bivariatePaletteSelect"></select>
             </label>
-            <button class="btn small" id="applyAutoStyleBtn">
-              Apply Percentile Range
+          </div>
+          <label for="applyAutoStyleBtn">
+            Sets Layer A and B color thresholds to the histogram's min and max
+            percentile values.
+          </label>
+          <button class="btn small" id="applyAutoStyleBtn">
+            Apply Percentile Range
+          </button>
+        </section>
+
+        <section
+          id="samplingPanel"
+          class="control-group tools workspace-panel"
+          data-panel="sample"
+          data-mode="window"
+          hidden
+        >
+          <div
+            class="tool-toggle"
+            role="radiogroup"
+            aria-label="Sampling mode"
+          >
+            <button
+              type="button"
+              class="mode-btn is-selected"
+              data-mode="window"
+              aria-pressed="true"
+            >
+              Window
+            </button>
+            <button
+              type="button"
+              class="mode-btn"
+              data-mode="shapefile"
+              aria-pressed="false"
+            >
+              Shapefile
             </button>
           </div>
 
-          <div class="controls-bar">
-            <div class="control-group tools" data-mode="window">
-              <div
-                class="tool-toggle"
-                role="radiogroup"
-                aria-label="Sampling mode"
-              >
-                <button
-                  type="button"
-                  class="mode-btn is-selected"
-                  data-mode="window"
-                  aria-pressed="true"
-                >
-                  Window
-                </button>
-                <button
-                  type="button"
-                  class="mode-btn"
-                  data-mode="shapefile"
-                  aria-pressed="false"
-                >
-                  Shapefile
-                </button>
-              </div>
-
-              <div class="tool-section" data-section="window">
-                <label class="tool-label">Histogram Sampling Box</label>
-                <p class="tool-description">
-                  A square window of this size (in kilometers) follows your
-                  mouse to compute scatterplot statistics.
-                </p>
-                <div class="window-size">
-                  <label for="windowSlider">Size (km)</label>
-                  <input
-                    id="windowSlider"
-                    type="range"
-                  />
-                  <input id="windowSizeNumber" class="num" type="number" />
-                </div>
-              </div>
-
-              <div class="tool-section" data-section="shapefile">
-                <label class="tool-label" for="shpInput"
-                  >Upload Area of Interest (.zip shapefile)</label
-                >
-                <p class="tool-description">
-                  If uploaded, the shapefile defines the area for histogram and
-                  scatterplot stats, overriding the moving window.
-                </p>
-                <input id="shpInput" type="file" accept=".zip" />
-              </div>
-
-              <div class="tool-section" data-section="export">
-                <p class="tool-description">
-                  Download the raster layer(s) clipped to the current window or
-                  uploaded area.
-                </p>
-                <div class="export-actions">
-                  <button
-                    type="button"
-                    id="exportAreaBtn"
-                    class="btn solid export-btn disabled"
-                    aria-label="Download Sampling Area"
-                  >
-                    Download disabled: select area on map
-                  </button>
-                  <span
-                    id="exportStatus"
-                    class="small-mono muted"
-                    aria-live="polite"
-                  ></span>
-                </div>
-              </div>
+          <div class="tool-section" data-section="window">
+            <label class="tool-label">Histogram Sampling Box</label>
+            <p class="tool-description">
+              A square window of this size (in kilometers) follows your
+              mouse to compute scatterplot statistics.
+            </p>
+            <div class="window-size">
+              <label for="windowSlider">Size (km)</label>
+              <input id="windowSlider" type="range" />
+              <input id="windowSizeNumber" class="num" type="number" />
             </div>
           </div>
-        </div>
-      </div>
-      <div class="collapse-footer">
-        <button
-          id="headerToggle"
-          class="btn small collapse-toggle"
-          aria-expanded="true"
-          aria-controls="topbarContent"
-        ></button>
+
+          <div class="tool-section" data-section="shapefile">
+            <label class="tool-label" for="shpInput"
+              >Upload Area of Interest (.zip shapefile)</label
+            >
+            <p class="tool-description">
+              If uploaded, the shapefile defines the area for histogram and
+              scatterplot stats, overriding the moving window.
+            </p>
+            <input id="shpInput" type="file" accept=".zip" />
+          </div>
+
+          <div class="tool-section" data-section="export">
+            <p class="tool-description">
+              Download the raster layer(s) clipped to the current window or
+              uploaded area.
+            </p>
+            <div class="export-actions">
+              <button
+                type="button"
+                id="exportAreaBtn"
+                class="btn solid export-btn disabled"
+                aria-label="Download Sampling Area"
+              >
+                Download disabled: select area on map
+              </button>
+              <span
+                id="exportStatus"
+                class="small-mono muted"
+                aria-live="polite"
+              ></span>
+            </div>
+          </div>
+        </section>
       </div>
     </header>
 

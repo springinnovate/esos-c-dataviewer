@@ -1021,7 +1021,7 @@ function populateLayerSelects() {
  * Slots: 'base' (bottom), 'B' (middle), 'A' (top)
  * @param {string} qualifiedName
  * @param {'A'|'B'|'base'} slot
- * @param {{className?: string, transparent?: boolean, zIndex?: number}} [opts]
+ * @param {{className?: string, transparent?: boolean, zIndex?: number, bounds?: L.LatLngBounds}} [opts]
  */
 function addWmsLayer(qualifiedName, slot, opts = {}) {
   const wmsUrl = `${state.geoserverBaseUrl}/wms`;
@@ -1038,6 +1038,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     className: opts.className ?? defaultClassName,
     noWrap: true,
     pane: paneBySlot[slot],
+    ...(opts.bounds ? { bounds: opts.bounds } : {}),
   });
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
@@ -1055,7 +1056,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
  * Adds/updates the base WMS underneath A/B when the base checkbox is checked.
  * @param {Event & {target: HTMLSelectElement}} e
  */
-function onBaseLayerChange(e) {
+async function onBaseLayerChange(e) {
   const idx = parseInt(e.target.value, 10);
   const baseLayer = state.availableBaseLayers[idx];
   if (!baseLayer) return;
@@ -1070,7 +1071,15 @@ function onBaseLayerChange(e) {
 
   const visibleCheckbox = document.getElementById("layerVisibleBase");
   if (visibleCheckbox) visibleCheckbox.checked = true;
-  addWmsLayer(baseLayer.name, "base", { className: "base-layer", zIndex: 100 });
+  let bounds = null;
+  try {
+    bounds = await _getWmsLayerLatLngBounds(baseLayer.name);
+  } catch {}
+  addWmsLayer(baseLayer.name, "base", {
+    className: "base-layer",
+    zIndex: 100,
+    bounds,
+  });
   state.baseVisibility = true;
   updateContextLegend();
 }
@@ -1202,9 +1211,7 @@ async function onLayerChange(e, layerId) {
   const isCategorical = isCategoricalLayer(lyr);
   const doInitialFit = !state.didInitialRasterFit && !!lyr?.name;
   if (doInitialFit) state.didInitialRasterFit = true;
-  const initialFitBoundsPromise = doInitialFit
-    ? _getWmsLayerLatLngBounds(lyr.name)
-    : null;
+  const layerBoundsPromise = lyr?.name ? _getWmsLayerLatLngBounds(lyr.name) : null;
   renderLayerMeta(layerId, lyr);
   setStyleControlsEnabled(layerId, !isCategorical);
 
@@ -1231,8 +1238,14 @@ async function onLayerChange(e, layerId) {
     : layerId === "A"
       ? "blend-screen"
       : "blend-base";
+  let bounds = null;
+  if (layerBoundsPromise) {
+    try {
+      bounds = await layerBoundsPromise;
+    } catch {}
+  }
   document.getElementById(`layerVisible${layerId}`).checked = true;
-  addWmsLayer(lyr.name, layerId, { className });
+  addWmsLayer(lyr.name, layerId, { className, bounds });
   if (!isCategorical) applyDynamicStyle(layerId);
   updateContextLegend();
   if (!state.sampleMode) {
@@ -1249,10 +1262,9 @@ async function onLayerChange(e, layerId) {
   const url = new URL(window.location.href);
   url.searchParams.set(`layer${layerId}`, state.availableLayers[idx].name);
   history.replaceState(null, "", url.toString());
-  if (initialFitBoundsPromise) {
+  if (doInitialFit && bounds) {
     try {
-      const b = await initialFitBoundsPromise;
-      if (b && b.isValid()) state.map.fitBounds(b, { padding: [24, 24] });
+      if (bounds.isValid()) state.map.fitBounds(bounds, { padding: [24, 24] });
     } catch {}
   }
 }

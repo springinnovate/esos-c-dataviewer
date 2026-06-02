@@ -2066,6 +2066,7 @@ function appendSampleSummaryCard(container, rasterId, summary) {
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
   title.textContent = rasterId;
+  title.title = rasterId;
   card.appendChild(title);
 
   [
@@ -2108,6 +2109,7 @@ function appendCategoricalSummaryCard(container, rasterId, categories) {
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
   title.textContent = rasterId;
+  title.title = rasterId;
   card.appendChild(title);
 
   const list = document.createElement('div');
@@ -2190,6 +2192,12 @@ function renderSampleSummary(scatterObj, opts) {
   }
 }
 
+function compactAxisLabel(label, maxLength = 34) {
+  const text = String(label || "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
 /**
  * Render a scatterplot of two rasters' values within a polygon.
  * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
@@ -2226,7 +2234,7 @@ async function renderScatterOverlay(opts) {
 
   if (needsBodyRefresh) {
     body.innerHTML = `
-      <div class='overlay-header'>
+      <div class='sample-report-header'>
         <div>
           <div class='overlay-title'>${plotTitleHtml}</div>
           <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
@@ -2240,15 +2248,17 @@ async function renderScatterOverlay(opts) {
           </div>
           <div id='sampleSummary' class='sample-summary'></div>
         </div>
-        <div id='histogramControls' class='layer-group'>
-          <label class='tool-label' for='percentiles'>Histogram Percentiles</label>
-          <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
-          <input id='percentiles' type='text' value="${state.percentiles}"/>
-        </div>
-        <div id='plotRangeGroup' class='layer-group'>
-          <label class='tool-label'>Plot Range</label>
-          <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
-          <div id='plotRangeControls'></div>
+        <div class='sample-advanced-controls'>
+          <details id='histogramControls' class='layer-group sample-control-details'>
+            <summary>Histogram Percentiles</summary>
+            <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
+            <input id='percentiles' type='text' value="${state.percentiles}"/>
+          </details>
+          <details id='plotRangeGroup' class='layer-group sample-control-details'>
+            <summary>Plot Range</summary>
+            <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
+            <div id='plotRangeControls'></div>
+          </details>
         </div>
       </div>
     `;
@@ -2354,14 +2364,15 @@ async function renderScatterOverlay(opts) {
       {
         width: 420,
         height: 320,
-        pad: 40,
+        pad: 32,
+        marginalSize: 42,
         percentiles: state.percentiles,
         layerIdX: 'A',
         layerIdY: 'B',
         blend: 'plus-lighter',
         point: state.lastPixelPoint,
-        axisLabelX: rasterX,
-        axisLabelY: rasterY,
+        axisLabelX: compactAxisLabel(rasterX),
+        axisLabelY: compactAxisLabel(rasterY),
         viewXMin: state.plotView.xMin,
         viewXMax: state.plotView.xMax,
         viewYMin: state.plotView.yMin,
@@ -2372,13 +2383,15 @@ async function renderScatterOverlay(opts) {
     svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A', {
       viewMin: state.plotView.xMin,
       viewMax: state.plotView.xMax,
-      axisLabel: rasterX,
+      axisLabel: compactAxisLabel(rasterX, 42),
+      pad: 28,
     });
   } else if (has1DY) {
     svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B', {
       viewMin: state.plotView.yMin,
       viewMax: state.plotView.yMax,
-      axisLabel: rasterY,
+      axisLabel: compactAxisLabel(rasterY, 42),
+      pad: 28,
     });
   }
 

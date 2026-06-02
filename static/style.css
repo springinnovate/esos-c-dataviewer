@@ -13,6 +13,7 @@
     --radius: 8px;
     --shadow-lg: 0 6px 20px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.35);
+    --z-controls: 900;
     --z-overlay: 1000;
     --z-tooltip: 1001;
     --space-2: 8px;
@@ -44,9 +45,9 @@ body {
 }
 
 body {
-    display: flex;
-    flex-direction: column;
+    display: block;
     min-height: 100%;
+    overflow: hidden;
 }
 
 header {
@@ -61,8 +62,9 @@ header {
 }
 
 main {
-    flex: 1 1 auto;
-    min-height: 0;
+    position: fixed;
+    inset: 0;
+    min-height: 100%;
 }
 
 label {
@@ -99,6 +101,7 @@ input.num::-webkit-outer-spin-button {
 }
 
 .brand {
+    min-width: 0;
     font-weight: 700;
     color: var(--brand);
 }
@@ -185,15 +188,6 @@ input.num::-webkit-outer-spin-button {
     border-radius: 4px;
 }
 
-.controls-bar {
-    align-self: flex-start;
-    justify-content: flex-start;
-    gap: 20px;
-    flex-wrap: wrap;
-    display: flex;
-    margin-top: 0;
-}
-
 .control-group {
     background: var(--panel);
     padding: 10px 14px;
@@ -202,13 +196,14 @@ input.num::-webkit-outer-spin-button {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    min-width: 280px;
+    min-width: 0;
+    width: 100%;
 }
 
 .control-group.layers,
 .control-group.style,
 .control-group.tools {
-    flex: 1;
+    flex: 0 0 auto;
 }
 
 .tool-section {
@@ -312,7 +307,7 @@ input.num::-webkit-outer-spin-button {
 }
 
 .style-panel {
-    margin-left: 0.75rem;
+    margin-left: 0;
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -342,11 +337,6 @@ input.num::-webkit-outer-spin-button {
     grid-template-columns: 1fr;
     gap: 6px;
 }
-@media (max-width: 900px) {
-    .style-grid {
-        grid-template-columns: repeat(2, minmax(140px, 1fr));
-    }
-}
 
 .style-row {
     display: grid;
@@ -369,7 +359,7 @@ input.num::-webkit-outer-spin-button {
 
 #map {
     position: relative;
-    height: 100%;
+    height: 100vh;
     width: 100%;
     cursor: crosshair;
 }
@@ -386,7 +376,7 @@ input.num::-webkit-outer-spin-button {
     top: 12px;
     left: 12px;
     z-index: var(--z-overlay);
-    width: min(960px, calc(100% - 24px));
+    width: min(960px, calc(100% - 420px));
     max-height: calc(100% - 24px);
     background: rgba(var(--bg-rgb), 0.96);
     border: 1px solid var(--border);
@@ -738,48 +728,113 @@ input.num::-webkit-outer-spin-button {
     min-height: 1.25em;
 }
 
-/* collapsible top bar */
-header {
-    position: relative;
-}
-
-.topbar-content {
-    overflow: hidden;
-    transition:
-        max-height 220ms ease,
-        opacity 200ms ease,
-        transform 200ms ease;
-    will-change: max-height, opacity, transform;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.collapse-footer {
-    display: flex;
-    justify-content: center;
-    padding: 8px 0;
-    border-top: 1px solid var(--border);
-}
-
-.collapse-toggle {
-    background: var(--brand);
-    color: #081015;
-    font-weight: 600;
-    border: 1px solid var(--brand-hover);
+.map-shell {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: var(--z-controls);
+    width: min(360px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid rgba(42, 47, 58, 0.95);
     border-radius: var(--radius);
-    cursor: pointer;
-    transition: background 0.2s ease;
-}
-.collapse-toggle:hover {
-    background: var(--brand-hover);
+    background: rgba(var(--panel-rgb), 0.96);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    pointer-events: auto;
 }
 
-header.is-collapsed .topbar-content {
-    max-height: 0 !important;
-    opacity: 0;
-    transform: translateY(-4px);
-    pointer-events: none;
+.shell-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.shell-header .brand {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shell-toggle {
+    background: var(--input-bg);
+}
+
+.workspace-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+}
+
+.workspace-tab {
+    appearance: none;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--input-bg);
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+}
+
+.workspace-tab:hover {
+    border-color: var(--brand);
+    color: var(--brand-hover);
+}
+
+.workspace-tab.is-selected {
+    background: var(--brand);
+    border-color: var(--brand-hover);
+    color: #081015;
+}
+
+.workspace-panels {
+    max-height: calc(100vh - 132px);
+    overflow: auto;
+}
+
+.workspace-panel[hidden] {
+    display: none;
+}
+
+.workspace-panel.is-active {
+    display: flex;
+}
+
+.map-shell.is-collapsed {
+    width: auto;
+}
+
+.map-shell.is-collapsed .workspace-tabs,
+.map-shell.is-collapsed .topbar-content {
+    display: none;
+}
+
+.map-shell select {
+    width: 100%;
+    min-width: 0;
+}
+
+.map-shell .tool-description {
+    font-size: 12px;
+}
+
+#samplingPanel .tool-description {
+    display: none;
+}
+
+#samplingPanel .tool-section {
+    margin-bottom: 4px;
+}
+
+#samplingPanel .export-actions {
+    align-items: stretch;
+    flex-direction: column;
 }
 
 .layer-label {
@@ -1056,4 +1111,31 @@ header.is-collapsed .topbar-content {
   font-size: 11px;
   color: #94a3b8;
   line-height: 1;
+}
+
+@media (max-width: 1100px) {
+    .overlay {
+        top: auto;
+        left: 12px;
+        bottom: 12px;
+        width: calc(100% - 24px);
+        max-height: min(58vh, calc(100% - 24px));
+    }
+}
+
+@media (max-width: 640px) {
+    .map-shell {
+        left: 12px;
+        right: 12px;
+        width: auto;
+        max-height: min(52vh, calc(100vh - 24px));
+    }
+
+    .workspace-panels {
+        max-height: calc(52vh - 120px);
+    }
+
+    .layer-label {
+        font-size: 13px;
+    }
 }

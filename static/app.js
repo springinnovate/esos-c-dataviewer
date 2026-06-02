@@ -3134,7 +3134,7 @@ function wireControlGroup() {
   };
   const inputs = {
     window: [
-      group.querySelector("#windowSize"),
+      group.querySelector("#windowSlider"),
       group.querySelector("#windowSizeNumber"),
     ],
     shapefile: [group.querySelector("#shpInput")],
@@ -4220,54 +4220,59 @@ async function setSamplingMode(mode) {
 }
 
 /**
- * Initializes a collapsible top bar in the application header.
+ * Initializes the docked map shell and switches between control panels.
  *
- * This function binds click and resize event listeners to allow users
- * to toggle the visibility of the top bar section (`#topbarContent`)
- * using a button (`#headerToggle`). When expanded, the content smoothly
- * transitions to its full height; when collapsed, it animates closed.
- *
- * Behavior:
- * - Clicking the toggle button alternates between expanded and collapsed states.
- * - The header element gets the class `is-collapsed` when hidden.
- * - The button text and `aria-expanded` attribute are updated accordingly.
- * - On window resize, the expanded height readjusts to the content’s actual height.
- *
- * Requirements:
- * - The DOM must contain:
- *   - a `<header>` element,
- *   - a container with `id='topbarContent'`,
- *   - a toggle button with `id='headerToggle'`.
- *
- * Returns:
- *   void
+ * Layers, Style, and Sample panels share the same dock; the header toggle
+ * collapses the dock without removing the map from the viewport.
  */
-function wireCollapsibleTopBar() {
-  const header = document.querySelector("header");
+function wireMapShell() {
+  const header = document.querySelector(".map-shell");
   const content = document.getElementById("topbarContent");
   const toggle = document.getElementById("headerToggle");
+  const tabs = Array.from(document.querySelectorAll(".workspace-tab"));
+  const panels = Array.from(document.querySelectorAll(".workspace-panel"));
+  if (!header || !content || !toggle || !tabs.length || !panels.length) return;
+
+  const invalidateMapSize = () => {
+    requestAnimationFrame(() => state.map?.invalidateSize({ pan: false }));
+  };
+
+  const setActivePanel = (panelName) => {
+    tabs.forEach((tab) => {
+      const isSelected = tab.dataset.panel === panelName;
+      tab.classList.toggle("is-selected", isSelected);
+      tab.setAttribute("aria-pressed", String(isSelected));
+    });
+
+    panels.forEach((panel) => {
+      const isSelected = panel.dataset.panel === panelName;
+      panel.hidden = !isSelected;
+      panel.classList.toggle("is-active", isSelected);
+    });
+
+    invalidateMapSize();
+  };
 
   const setExpanded = (expanded) => {
-    if (expanded) {
-      content.style.maxHeight = content.scrollHeight + "px";
-      header.classList.remove("is-collapsed");
-      toggle.setAttribute("aria-expanded", "true");
-      toggle.textContent = "▲ Hide Control Panel";
-    } else {
-      content.style.maxHeight = "0px";
-      header.classList.add("is-collapsed");
-      toggle.setAttribute("aria-expanded", "false");
-      toggle.textContent = "▼ Show Control Panel";
-    }
+    header.classList.toggle("is-collapsed", !expanded);
+    toggle.setAttribute("aria-expanded", String(expanded));
+    toggle.textContent = expanded ? "Hide" : "Controls";
+    invalidateMapSize();
   };
 
   const onResize = () => {
-    if (toggle.getAttribute("aria-expanded") === "true") {
-      content.style.maxHeight = content.scrollHeight + "px";
-    }
+    invalidateMapSize();
   };
 
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setExpanded(true);
+      setActivePanel(tab.dataset.panel);
+    });
+  });
+
   setExpanded(true);
+  setActivePanel("layers");
   toggle.addEventListener("click", () => {
     const expanded = toggle.getAttribute("aria-expanded") === "true";
     setExpanded(!expanded);
@@ -4448,7 +4453,7 @@ function createBaseLegendControl() {
   wireShapefileAOIControl();
   wireControlGroup();
   wireOverlayControls();
-  wireCollapsibleTopBar();
+  wireMapShell();
   setSamplingMode("window");
 
   state.geoserverBaseUrl = cfg.geoserver_base_url;

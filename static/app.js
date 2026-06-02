@@ -2234,14 +2234,13 @@ async function renderScatterOverlay(opts) {
 
   if (needsBodyRefresh) {
     body.innerHTML = `
-      <div class='sample-report-header'>
-        <div>
-          <div class='overlay-title'>${plotTitleHtml}</div>
-          <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
+      <div class='overlay-content sample-report-shell'>
+        <div class='sample-report-header'>
+          <div>
+            <div class='overlay-title'>${plotTitleHtml}</div>
+            <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
+          </div>
         </div>
-      </div>
-
-      <div class='overlay-content'>
         <div class='plot-report-layout'>
           <div id='scatterPlot' class='plot-holder'>
             ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}

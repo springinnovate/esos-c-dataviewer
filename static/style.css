@@ -376,7 +376,9 @@ input.num::-webkit-outer-spin-button {
     top: 12px;
     left: 12px;
     z-index: var(--z-overlay);
-    width: min(960px, calc(100% - 420px));
+    width: fit-content;
+    min-width: min(720px, calc(100% - 420px));
+    max-width: calc(100% - 420px);
     max-height: calc(100% - 24px);
     background: rgba(var(--bg-rgb), 0.96);
     border: 1px solid var(--border);
@@ -419,6 +421,8 @@ input.num::-webkit-outer-spin-button {
 .overlay-body {
     padding: var(--space-3);
     overflow: auto;
+    width: max-content;
+    max-width: 100%;
 }
 .overlay-body pre {
     margin: 0 0 var(--space-2) 0;
@@ -466,6 +470,8 @@ input.num::-webkit-outer-spin-button {
     display: grid;
     grid-template-columns: 1fr !important;
     gap: var(--space-2);
+    width: max-content;
+    max-width: 100%;
 }
 
 .stats-grid {
@@ -628,6 +634,8 @@ input.num::-webkit-outer-spin-button {
 .sample-advanced-controls {
     display: grid;
     gap: 6px;
+    width: 100%;
+    max-width: 100%;
 }
 
 .sample-control-details {
@@ -1170,8 +1178,14 @@ input.num::-webkit-outer-spin-button {
         top: auto;
         left: 12px;
         bottom: 12px;
+        min-width: 0;
         width: calc(100% - 24px);
         max-height: min(58vh, calc(100% - 24px));
+    }
+
+    .overlay-body,
+    .overlay-content {
+        width: auto;
     }
 }
 

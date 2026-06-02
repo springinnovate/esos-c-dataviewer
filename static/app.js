@@ -2248,15 +2248,18 @@ async function renderScatterOverlay(opts) {
           <div id='sampleSummary' class='sample-summary'></div>
         </div>
         <div class='sample-advanced-controls'>
-          <details id='histogramControls' class='layer-group sample-control-details'>
-            <summary>Histogram Percentiles</summary>
-            <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
-            <input id='percentiles' type='text' value="${state.percentiles}"/>
-          </details>
-          <details id='plotRangeGroup' class='layer-group sample-control-details'>
-            <summary>Plot Range</summary>
-            <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
-            <div id='plotRangeControls'></div>
+          <details id='plotControlsGroup' class='layer-group sample-control-details'>
+            <summary>Plot Controls</summary>
+            <div class='sample-control-section'>
+              <div class='sample-control-label'>Histogram Percentiles</div>
+              <p class='tool-description'>Draw percentile threshold lines at (e.g., 10, 50, 90).</p>
+              <input id='percentiles' type='text' value="${state.percentiles}"/>
+            </div>
+            <div class='sample-control-section'>
+              <div class='sample-control-label'>Plot Range</div>
+              <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
+              <div id='plotRangeControls'></div>
+            </div>
           </details>
         </div>
       </div>
@@ -2277,16 +2280,14 @@ async function renderScatterOverlay(opts) {
   const plotEl = document.getElementById('scatterPlot');
   const summaryEl = document.getElementById('sampleSummary');
   const plotRangeControls = document.getElementById('plotRangeControls');
-  const histogramControls = document.getElementById('histogramControls');
-  const plotRangeGroup = document.getElementById('plotRangeGroup');
+  const plotControlsGroup = document.getElementById('plotControlsGroup');
 
   overlay.classList.remove('hidden');
 
   if (!visA && !visB) {
     plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
     summaryEl?.replaceChildren();
-    histogramControls?.classList.add('hidden');
-    plotRangeGroup?.classList.add('hidden');
+    plotControlsGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2297,8 +2298,7 @@ async function renderScatterOverlay(opts) {
         `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
     }
     summaryEl?.replaceChildren();
-    histogramControls?.classList.add('hidden');
-    plotRangeGroup?.classList.add('hidden');
+    plotControlsGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
   }
@@ -2322,8 +2322,7 @@ async function renderScatterOverlay(opts) {
 
   const plotKind = has2D ? '2d' : has1DX ? '1d-x' : has1DY ? '1d-y' : 'none';
   const hasHistogram = plotKind !== 'none';
-  histogramControls?.classList.toggle('hidden', !hasHistogram);
-  plotRangeGroup?.classList.toggle('hidden', !hasHistogram);
+  plotControlsGroup?.classList.toggle('hidden', !hasHistogram);
 
   ensurePlotView(scatterObj, plotKind);
 

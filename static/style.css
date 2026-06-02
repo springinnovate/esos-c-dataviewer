@@ -374,8 +374,7 @@ input.num::-webkit-outer-spin-button {
 .overlay {
     position: absolute;
     top: 12px;
-    right: 12px;
-    left: auto;
+    left: 12px;
     z-index: var(--z-overlay);
     width: min(960px, calc(100% - 420px));
     max-height: calc(100% - 24px);
@@ -732,7 +731,7 @@ input.num::-webkit-outer-spin-button {
 .map-shell {
     position: fixed;
     top: 12px;
-    left: 12px;
+    right: 12px;
     z-index: var(--z-controls);
     width: min(360px, calc(100vw - 24px));
     max-height: calc(100vh - 24px);
@@ -1117,7 +1116,7 @@ input.num::-webkit-outer-spin-button {
 @media (max-width: 1100px) {
     .overlay {
         top: auto;
-        right: 12px;
+        left: 12px;
         bottom: 12px;
         width: calc(100% - 24px);
         max-height: min(58vh, calc(100% - 24px));
@@ -1126,6 +1125,7 @@ input.num::-webkit-outer-spin-button {
 
 @media (max-width: 640px) {
     .map-shell {
+        left: 12px;
         right: 12px;
         width: auto;
         max-height: min(52vh, calc(100vh - 24px));

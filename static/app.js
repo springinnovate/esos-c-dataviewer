@@ -2217,6 +2217,7 @@ async function renderScatterOverlay(opts) {
   const histogramDisabled = !!opts.histogramDisabled;
   const histogramDisabledMessage =
     opts.histogramDisabledMessage || "Histogram disabled.";
+  const loadingMessage = opts.loadingMessage || "";
 
   const overlay = document.getElementById('statsOverlay');
   const body = document.getElementById('overlayBody');
@@ -2234,7 +2235,37 @@ async function renderScatterOverlay(opts) {
         ? `${rasterX}`
         : `${rasterY}`;
 
-  const needsBodyRefresh = !body.innerHTML || state.lastHasData !== hasData;
+  if (loadingMessage) {
+    body.innerHTML = `
+      <div class='overlay-content sample-report-shell'>
+        <div class='sample-report-header'>
+          <div>
+            <div class='overlay-title'>${plotTitleHtml}</div>
+            <div class='small-mono'>sample area: ${fmt(boxKm)} km / ${centerHtml}</div>
+          </div>
+        </div>
+        <div id='scatterPlot' class='plot-holder'>
+          <div class='no-layers-msg'><span></span></div>
+        </div>
+      </div>
+    `;
+
+    const centerZoomBtn = body.querySelector('.center-zoom-btn');
+    centerZoomBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomToOutline(centerLng, centerLat);
+    });
+
+    const loadingText = body.querySelector('.no-layers-msg span');
+    loadingText.textContent = loadingMessage;
+    state.lastHasData = false;
+    overlay.classList.remove('hidden');
+    return;
+  }
+
+  const needsBodyRefresh =
+    !body.innerHTML || state.lastHasData !== hasData;
 
   if (needsBodyRefresh) {
     body.innerHTML = `
@@ -3886,7 +3917,7 @@ async function selectSampleVectorFeature(label) {
   state.selectedSampleVectorFeature = feature;
   state.lastFeatureCollection = featureCollection;
   showSampleVectorOutline();
-  await setAOIAndRenderOverlay(featureCollection);
+  await setAOIAndRenderOverlay(featureCollection, { loadingLabel: feature.label });
   enableDownloadButton();
 }
 
@@ -4086,7 +4117,7 @@ function wireShapefileAOIControl() {
  * @param {GeoJSON.FeatureCollection} featureCollection - A valid GeoJSON FeatureCollection with at least one feature.
  * @returns {Promise<void>}
  */
-async function setAOIAndRenderOverlay(featureCollection) {
+async function setAOIAndRenderOverlay(featureCollection, opts = {}) {
   if (
     !featureCollection ||
     !Array.isArray(featureCollection.features) ||
@@ -4107,6 +4138,23 @@ async function setAOIAndRenderOverlay(featureCollection) {
     : null;
   if (!layerX && !layerY) return;
 
+  const areaM2 = turf.area(featureCollection);
+  const areaKm2 = areaM2 / 1e6;
+  const loadingMessage = opts.loadingLabel
+    ? `Calculating stats for ${opts.loadingLabel}`
+    : "";
+  if (loadingMessage) {
+    await renderScatterOverlay({
+      rasterX: layerLabel(layerX),
+      rasterY: layerLabel(layerY),
+      centerLng: centerLngLat.lng,
+      centerLat: centerLngLat.lat,
+      boxKm: areaKm2,
+      scatterObj: null,
+      loadingMessage,
+    });
+  }
+
   let statsResult;
   try {
     const aoiGeometry =
@@ -4124,8 +4172,6 @@ async function setAOIAndRenderOverlay(featureCollection) {
     throw err;
   }
 
-  const areaM2 = turf.area(featureCollection);
-  const areaKm2 = areaM2 / 1e6;
   await renderScatterOverlay({
     rasterX: layerLabel(layerX),
     rasterY: layerLabel(layerY),

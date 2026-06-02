@@ -494,7 +494,7 @@ input.num::-webkit-outer-spin-button {
 
 .plot-report-layout {
     display: grid;
-    grid-template-columns: minmax(420px, max-content) minmax(260px, 340px);
+    grid-template-columns: minmax(420px, max-content) max-content;
     gap: 10px;
     align-items: start;
     justify-content: start;
@@ -508,6 +508,8 @@ input.num::-webkit-outer-spin-button {
     display: grid;
     gap: 6px;
     min-width: 0;
+    width: max-content;
+    max-width: min(340px, 100%);
 }
 
 .sample-summary-card,
@@ -659,6 +661,7 @@ input.num::-webkit-outer-spin-button {
     }
 
     .sample-summary {
+        width: 100%;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     }
 
@@ -677,6 +680,7 @@ input.num::-webkit-outer-spin-button {
     }
 
     .sample-summary {
+        width: 100%;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     }
 }

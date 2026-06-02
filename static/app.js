@@ -2954,11 +2954,16 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
 
     const label = mkText(
       `${Math.round(percentile * 100)}% (${value.toFixed(percentileDecimals)})`,
-      plotX1 + mSize + 4,
-      y + 3,
-      'start',
+      plotX1 + mSize + 8,
+      y,
+      'middle',
     );
     label.setAttribute('fill', percentileColor);
+    label.setAttribute('dominant-baseline', 'middle');
+    label.setAttribute(
+      'transform',
+      `rotate(-90 ${plotX1 + mSize + 8} ${y})`,
+    );
     svg.appendChild(label);
 
     attachPctHover(

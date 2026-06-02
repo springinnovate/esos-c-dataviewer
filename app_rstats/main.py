@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Union
+import json
 import logging
 import os
 import shutil
@@ -40,7 +41,7 @@ from affine import Affine
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from osgeo import gdal
+from osgeo import gdal, ogr, osr
 from pydantic import BaseModel
 from pyproj import Geod, Transformer
 from rasterio.errors import WindowError
@@ -631,6 +632,14 @@ def _clip_and_write_tif(
         dst.write(out_image)
 
 
+def _load_layers_yaml() -> dict:
+    """Load expanded layers YAML config."""
+    if not RASTERS_YAML_PATH.exists():
+        raise RuntimeError(f"{RASTERS_YAML_PATH} not found")
+    raw_yaml = RASTERS_YAML_PATH.read_text()
+    return yaml.safe_load(os.path.expandvars(raw_yaml)) or {}
+
+
 def _load_registry() -> dict:
     """Load the raster layer registry from a YAML configuration file.
 
@@ -647,11 +656,7 @@ def _load_registry() -> dict:
         Exception: For any unexpected error during file reading or YAML parsing.
 
     """
-    if not RASTERS_YAML_PATH.exists():
-        raise RuntimeError(f"{RASTERS_YAML_PATH} not found")
-    raw_yaml = RASTERS_YAML_PATH.read_text()
-    expanded_yaml = os.path.expandvars(raw_yaml)
-    y = yaml.safe_load(expanded_yaml) or {}
+    y = _load_layers_yaml()
 
     layers_dict = {}
     for section_key in ("layers", "baseLayers"):
@@ -672,6 +677,117 @@ def _load_registry() -> dict:
 
 
 REGISTRY = _load_registry()
+
+
+def _load_sample_vector_config():
+    """Load optional configured sample vector metadata from layers.yml."""
+    y = _load_layers_yaml()
+    config = y.get("sampleVector") or y.get("sample_vector")
+    if not config:
+        return None
+
+    file_path = config.get("file_path")
+    label_field = config.get("label_field")
+    if not file_path or not label_field:
+        raise RuntimeError("sampleVector requires file_path and label_field")
+
+    return {
+        "file_path": file_path,
+        "layer": config.get("layer"),
+        "label_field": label_field,
+        "toggle_label": config.get("toggle_label") or "Select feature",
+    }
+
+
+SAMPLE_VECTOR = _load_sample_vector_config()
+
+
+def _target_wgs84_srs():
+    """Return EPSG:4326 SRS using traditional lon/lat axis order."""
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    return srs
+
+
+def _open_sample_vector_layer():
+    """Open the configured sample vector dataset and layer."""
+    if not SAMPLE_VECTOR:
+        raise HTTPException(status_code=404, detail="sampleVector is not configured")
+
+    path = SAMPLE_VECTOR["file_path"]
+    if not Path(path).exists():
+        raise HTTPException(status_code=500, detail=f"sample vector missing: {path}")
+
+    dataset = ogr.Open(path)
+    if dataset is None:
+        raise HTTPException(status_code=500, detail=f"sample vector unreadable: {path}")
+
+    layer_name = SAMPLE_VECTOR.get("layer")
+    layer = dataset.GetLayerByName(layer_name) if layer_name else dataset.GetLayer(0)
+    if layer is None:
+        detail = (
+            f"sample vector layer not found: {layer_name}"
+            if layer_name
+            else "sample vector has no readable layer"
+        )
+        raise HTTPException(status_code=500, detail=detail)
+
+    return dataset, layer
+
+
+def _sample_vector_features():
+    """Read configured vector features as EPSG:4326 GeoJSON features."""
+    dataset, layer = _open_sample_vector_layer()
+    try:
+        label_field = SAMPLE_VECTOR["label_field"]
+        layer_defn = layer.GetLayerDefn()
+        if layer_defn.GetFieldIndex(label_field) < 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"sample vector label field not found: {label_field}",
+            )
+
+        source_srs = layer.GetSpatialRef()
+        target_srs = _target_wgs84_srs()
+        coord_transform = None
+        if source_srs:
+            source_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+            coord_transform = osr.CoordinateTransformation(source_srs, target_srs)
+
+        features = []
+        layer.ResetReading()
+        for feature in layer:
+            label_value = feature.GetField(label_field)
+            geometry = feature.GetGeometryRef()
+            if label_value is None or geometry is None:
+                continue
+
+            geometry = geometry.Clone()
+            if coord_transform is not None:
+                geometry.Transform(coord_transform)
+
+            envelope = geometry.GetEnvelope()
+            label = str(label_value)
+            features.append(
+                {
+                    "id": label,
+                    "label": label,
+                    "bounds": [
+                        envelope[0],
+                        envelope[2],
+                        envelope[1],
+                        envelope[3],
+                    ],
+                    "type": "Feature",
+                    "properties": {label_field: label},
+                    "geometry": json.loads(geometry.ExportToJson()),
+                }
+            )
+
+        return sorted(features, key=lambda item: item["label"].casefold())
+    finally:
+        dataset = None
 
 
 def _open_raster(raster_id: str):
@@ -715,6 +831,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/sample_vector")
+def sample_vector():
+    """Return configured sample vector features as EPSG:4326 GeoJSON."""
+    if not SAMPLE_VECTOR:
+        return {"enabled": False, "features": []}
+
+    return {
+        "enabled": True,
+        "label_field": SAMPLE_VECTOR["label_field"],
+        "toggle_label": SAMPLE_VECTOR["toggle_label"],
+        "features": _sample_vector_features(),
+    }
 
 
 def _compute_window(

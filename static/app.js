@@ -107,6 +107,10 @@ const state = {
   },
   sampleMode: null,
   uploadedLayer: null,
+  sampleVectorConfig: null,
+  sampleVectorFeatures: [],
+  sampleVectorOutlineLayer: null,
+  selectedSampleVectorFeature: null,
   lastPointMarker: null,
   probeSuppressed: false,
   pctBounds: null,
@@ -3144,6 +3148,8 @@ async function wirePercentiles() {
 function wireControlGroup() {
   const group = document.querySelector(".control-group.tools");
   const buttons = Array.from(group.querySelectorAll(".tool-toggle .mode-btn"));
+  const shpInput = group.querySelector("#shpInput");
+  const sampleVectorSelect = group.querySelector("#sampleVectorSelect");
   const sections = {
     window: group.querySelector("[data-section='window']"),
     shapefile: group.querySelector("[data-section='shapefile']"),
@@ -3153,9 +3159,8 @@ function wireControlGroup() {
       group.querySelector("#windowSlider"),
       group.querySelector("#windowSizeNumber"),
     ],
-    shapefile: [group.querySelector("#shpInput")],
+    shapefile: [shpInput, sampleVectorSelect].filter(Boolean),
   };
-  const shpInput = inputs.shapefile[0];
   let mode = group.getAttribute("data-mode") || "window";
 
   const setMode = (selectedMode) => {
@@ -3176,11 +3181,15 @@ function wireControlGroup() {
     sections[inactiveSection].classList.add("is-inactive");
     sections[inactiveSection].classList.remove("is-active");
 
-    if (selectedMode === "window" && state.uploadedLayer) {
-      state.map.removeLayer(state.uploadedLayer);
-      state.uploadedLayer = null;
-    } else if (selectedMode === "shapefile" && state.lastFeatureCollection) {
-      setAOIAndRenderOverlay(state.lastFeatureCollection);
+    if (selectedMode === "window") {
+      if (state.uploadedLayer) {
+        state.map.removeLayer(state.uploadedLayer);
+        state.uploadedLayer = null;
+      }
+      removeSampleVectorOutline();
+    } else if (selectedMode === "shapefile") {
+      if (state.sampleVectorConfig) showSampleVectorOutline();
+      if (state.lastFeatureCollection) setAOIAndRenderOverlay(state.lastFeatureCollection);
     }
 
     inputs[activeSection].forEach((inputElement) => {
@@ -3204,7 +3213,7 @@ function wireControlGroup() {
   buttons.forEach((b) =>
     b.addEventListener("click", () => setMode(b.getAttribute("data-mode"))),
   );
-  shpInput.addEventListener("change", () => {
+  shpInput?.addEventListener("change", () => {
     const f = shpInput.files && shpInput.files[0];
     if (f) setMode("shapefile");
   });
@@ -3833,8 +3842,131 @@ function addGeoJSONPolyToMap(fc) {
   // Fit map to features if possible
   try {
     const b = state.uploadedLayer.getBounds();
-    if (b && b.isValid()) map.fitBounds(b.pad(0.1));
+    if (b && b.isValid()) state.map.fitBounds(b.pad(0.1));
   } catch {}
+}
+
+function removeSampleVectorOutline() {
+  if (state.sampleVectorOutlineLayer) {
+    state.map.removeLayer(state.sampleVectorOutlineLayer);
+    state.sampleVectorOutlineLayer = null;
+  }
+}
+
+function showSampleVectorOutline() {
+  if (!state.sampleVectorFeatures?.length) return;
+
+  removeSampleVectorOutline();
+  state.sampleVectorOutlineLayer = L.geoJSON(
+    {
+      type: "FeatureCollection",
+      features: state.sampleVectorFeatures,
+    },
+    {
+      style: () => ({
+        color: "#7dd3fc",
+        weight: 1,
+        opacity: 0.42,
+        fill: false,
+        interactive: false,
+      }),
+    },
+  ).addTo(state.map);
+}
+
+async function selectSampleVectorFeature(label) {
+  const feature = state.sampleVectorFeatures.find((item) => item.label === label);
+  if (!feature) return;
+
+  const featureCollection = {
+    type: "FeatureCollection",
+    features: [feature],
+  };
+
+  state.selectedSampleVectorFeature = feature;
+  state.lastFeatureCollection = featureCollection;
+  showSampleVectorOutline();
+  await setAOIAndRenderOverlay(featureCollection);
+  enableDownloadButton();
+}
+
+async function configureSampleVectorControl(sampleVectorConfig) {
+  state.sampleVectorConfig = sampleVectorConfig?.enabled ? sampleVectorConfig : null;
+  if (!state.sampleVectorConfig) return;
+
+  const group = document.querySelector(".control-group.tools");
+  const section = group?.querySelector("[data-section='shapefile']");
+  const modeButton = group?.querySelector(".mode-btn[data-mode='shapefile']");
+  if (!section || !modeButton) return;
+
+  const toggleLabel = state.sampleVectorConfig.toggle_label || "Select feature";
+  modeButton.textContent = toggleLabel;
+
+  const label = document.createElement("label");
+  label.className = "tool-label";
+  label.htmlFor = "sampleVectorSelect";
+  label.textContent = toggleLabel;
+
+  const description = document.createElement("p");
+  description.className = "tool-description";
+  description.textContent =
+    "Select a configured area of interest to sample exact vector geometry.";
+
+  const select = document.createElement("select");
+  select.id = "sampleVectorSelect";
+  select.disabled = true;
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Loading areas...";
+  select.appendChild(placeholder);
+
+  const status = document.createElement("span");
+  status.className = "small-mono muted";
+  status.setAttribute("aria-live", "polite");
+
+  section.replaceChildren(label, description, select, status);
+
+  try {
+    const res = await fetch(`${state.baseStatsUrl}/sample_vector`);
+    if (!res.ok) throw new Error(await res.text());
+    const payload = await res.json();
+    state.sampleVectorFeatures = payload.features || [];
+
+    select.replaceChildren();
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = state.sampleVectorFeatures.length
+      ? "Choose an area..."
+      : "No configured areas found";
+    select.appendChild(empty);
+
+    state.sampleVectorFeatures.forEach((feature) => {
+      const option = document.createElement("option");
+      option.value = feature.label;
+      option.textContent = feature.label;
+      select.appendChild(option);
+    });
+
+    select.disabled = state.sampleVectorFeatures.length === 0;
+    status.textContent = state.sampleVectorFeatures.length
+      ? `${state.sampleVectorFeatures.length} areas available`
+      : "";
+  } catch (err) {
+    console.error(err);
+    select.replaceChildren();
+    const failed = document.createElement("option");
+    failed.value = "";
+    failed.textContent = "Failed to load configured areas";
+    select.appendChild(failed);
+    select.disabled = true;
+    status.textContent = "Configured vector unavailable";
+  }
+
+  select.addEventListener("change", async () => {
+    if (!select.value) return;
+    await selectSampleVectorFeature(select.value);
+  });
 }
 
 function toFeatureCollection(geo) {
@@ -3911,6 +4043,7 @@ function collapseToMultiPolygon(fc) {
  */
 function wireShapefileAOIControl() {
   const inputEl = document.getElementById("shpInput");
+  if (!inputEl) return;
 
   inputEl.addEventListener("change", async (evt) => {
     const file = evt.target.files?.[0];
@@ -4457,6 +4590,11 @@ function createBaseLegendControl() {
 (async function main() {
   const cfg = await loadConfig();
   const global_crs = cfg.global_crs;
+  state.geoserverBaseUrl = cfg.geoserver_base_url;
+  state.availableLayers = cfg.layers;
+  state.availableBaseLayers = cfg.baseLayers || [];
+  state.baseStatsUrl = cfg.rstats_base_url;
+
   initMap(cfg.global_crs);
   wireSquareSamplerControls();
   enableAltWheelSlider();
@@ -4466,16 +4604,13 @@ function createBaseLegendControl() {
   wirePixelProbe();
   wireBivariatePalettePicker("bivariatePaletteSelect");
   wireBivariateLegend();
+  await configureSampleVectorControl(cfg.sampleVector);
   wireShapefileAOIControl();
   wireControlGroup();
   wireOverlayControls();
   wireMapShell();
   setSamplingMode("window");
 
-  state.geoserverBaseUrl = cfg.geoserver_base_url;
-  state.availableLayers = cfg.layers;
-  state.availableBaseLayers = cfg.baseLayers || [];
-  state.baseStatsUrl = cfg.rstats_base_url;
   ["A", "B"].forEach((layerId) => wireDynamicStyleControls(layerId));
   populateLayerSelects();
 })();

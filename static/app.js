@@ -663,13 +663,21 @@ async function loadConfig() {
   return res.json();
 }
 
+function withoutCrsWrapping(crs) {
+  const appCrs = Object.create(crs);
+  appCrs.wrapLng = undefined;
+  appCrs.wrapLat = undefined;
+  return appCrs;
+}
+
 /**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
  */
 function initMap(crsCode) {
-  const leafletCRS =
+  const baseLeafletCRS =
     L.CRS[String(crsCode).trim().toUpperCase().replace(":", "")];
+  const leafletCRS = withoutCrsWrapping(baseLeafletCRS);
   const mapDiv = document.getElementById("map");
   const map = L.map(mapDiv, {
     crs: leafletCRS,
@@ -687,10 +695,13 @@ function initMap(crsCode) {
   map.getPane("blendPane").style.zIndex = 200;
   map.getPane("blendPane").style.isolation = "isolate";
   state.map = map;
-  if (Array.isArray(leafletCRS?.wrapLng) && leafletCRS?.projection?.bounds) {
-    const projectedBounds = leafletCRS.projection.bounds;
-    const southWest = leafletCRS.unproject(projectedBounds.min);
-    const northEast = leafletCRS.unproject(projectedBounds.max);
+  if (
+    Array.isArray(baseLeafletCRS?.wrapLng) &&
+    baseLeafletCRS?.projection?.bounds
+  ) {
+    const projectedBounds = baseLeafletCRS.projection.bounds;
+    const southWest = baseLeafletCRS.unproject(projectedBounds.min);
+    const northEast = baseLeafletCRS.unproject(projectedBounds.max);
     map.setMaxBounds(L.latLngBounds(southWest, northEast));
     map.options.maxBoundsViscosity = 1.0;
   }

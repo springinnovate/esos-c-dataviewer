@@ -2066,7 +2066,7 @@ function appendSampleSummaryCard(container, rasterId, summary) {
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
   title.textContent = rasterId;
-  title.title = rasterId;
+  title.setAttribute('title', rasterId);
   card.appendChild(title);
 
   [
@@ -2109,7 +2109,7 @@ function appendCategoricalSummaryCard(container, rasterId, categories) {
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
   title.textContent = rasterId;
-  title.title = rasterId;
+  title.setAttribute('title', rasterId);
   card.appendChild(title);
 
   const list = document.createElement('div');

@@ -661,10 +661,30 @@ input.num::-webkit-outer-spin-button {
     color: var(--fg);
 }
 
-.sample-control-details .tool-description,
-.sample-control-details input,
-.sample-control-details #plotRangeControls {
+.sample-control-section {
+    display: grid;
+    gap: 4px;
     margin: 0 10px 10px;
+}
+
+.sample-control-section + .sample-control-section {
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    padding-top: 10px;
+}
+
+.sample-control-label {
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sample-control-section .tool-description {
+    margin: 0;
+}
+
+.sample-control-section input,
+.sample-control-section #plotRangeControls {
+    margin: 0;
 }
 
 @media (max-width: 760px) {

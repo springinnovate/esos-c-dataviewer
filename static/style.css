@@ -376,7 +376,9 @@ input.num::-webkit-outer-spin-button {
     top: 12px;
     left: 12px;
     z-index: var(--z-overlay);
-    width: min(960px, calc(100% - 420px));
+    width: max-content;
+    min-width: 0;
+    max-width: calc(100% - 420px);
     max-height: calc(100% - 24px);
     background: rgba(var(--bg-rgb), 0.96);
     border: 1px solid var(--border);
@@ -419,6 +421,8 @@ input.num::-webkit-outer-spin-button {
 .overlay-body {
     padding: var(--space-3);
     overflow: auto;
+    width: auto;
+    max-width: 100%;
 }
 .overlay-body pre {
     margin: 0 0 var(--space-2) 0;
@@ -465,7 +469,17 @@ input.num::-webkit-outer-spin-button {
 .overlay-content {
     display: grid;
     grid-template-columns: 1fr !important;
-    gap: var(--space-3);
+    gap: var(--space-2);
+    width: auto;
+    max-width: 100%;
+}
+
+.sample-report-shell {
+    display: inline-grid;
+    grid-template-columns: max-content;
+    justify-items: stretch;
+    width: max-content;
+    max-width: 100%;
 }
 
 .stats-grid {
@@ -493,22 +507,23 @@ input.num::-webkit-outer-spin-button {
 }
 
 .plot-report-layout {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
+    display: grid;
+    grid-template-columns: minmax(420px, max-content) max-content;
+    gap: 10px;
     align-items: start;
+    justify-content: start;
 }
 
 .plot-report-layout .plot-holder {
-    flex: 1 1 520px;
-    min-width: min(100%, 360px);
+    min-width: 0;
 }
 
 .sample-summary {
     display: grid;
-    flex: 0 1 340px;
-    gap: var(--space-2);
+    gap: 6px;
     min-width: 0;
+    width: max-content;
+    max-width: min(340px, 100%);
 }
 
 .sample-summary-card,
@@ -516,7 +531,7 @@ input.num::-webkit-outer-spin-button {
     border: 1px solid var(--border);
     border-radius: 6px;
     background: rgba(15, 23, 42, 0.48);
-    padding: var(--space-2);
+    padding: 8px 10px;
 }
 
 .sample-summary-title {
@@ -524,17 +539,21 @@ input.num::-webkit-outer-spin-button {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    overflow: hidden;
     overflow-wrap: anywhere;
-    margin-bottom: var(--space-2);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .sample-summary-row {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 8px;
     align-items: baseline;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.3;
 }
 
 .sample-summary-label {
@@ -598,8 +617,8 @@ input.num::-webkit-outer-spin-button {
 
 #scatterPlot {
     display: flex;
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: flex-start;
 }
 #scatterPlot svg {
     max-width: 100%;
@@ -614,13 +633,51 @@ input.num::-webkit-outer-spin-button {
     vector-effect: non-scaling-stroke;
 }
 
+.sample-report-header {
+    border-bottom: 1px solid var(--border);
+    background: rgba(var(--panel-rgb), 0.72);
+    padding: 10px 14px;
+}
+
+.sample-advanced-controls {
+    display: grid;
+    gap: 6px;
+    width: auto;
+    max-width: 100%;
+}
+
+.sample-control-details {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.38);
+    padding: 0;
+}
+
+.sample-control-details summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 8px 10px;
+    color: var(--fg);
+}
+
+.sample-control-details .tool-description,
+.sample-control-details input,
+.sample-control-details #plotRangeControls {
+    margin: 0 10px 10px;
+}
+
 @media (max-width: 760px) {
+    .plot-report-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .plot-report-layout .plot-holder {
         min-width: 0;
     }
 
     .sample-summary {
-        flex-basis: 100%;
+        width: 100%;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     }
 
@@ -630,6 +687,17 @@ input.num::-webkit-outer-spin-button {
 
     .sample-summary-label {
         white-space: normal;
+    }
+}
+
+@media (min-width: 761px) and (max-width: 980px) {
+    .plot-report-layout {
+        grid-template-columns: minmax(0, max-content);
+    }
+
+    .sample-summary {
+        width: 100%;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     }
 }
 
@@ -1118,8 +1186,14 @@ input.num::-webkit-outer-spin-button {
         top: auto;
         left: 12px;
         bottom: 12px;
+        min-width: 0;
         width: calc(100% - 24px);
         max-height: min(58vh, calc(100% - 24px));
+    }
+
+    .overlay-body,
+    .overlay-content {
+        width: auto;
     }
 }
 

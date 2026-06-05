@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir \
 COPY viewer_app /app/viewer_app
 COPY templates /app/templates
 COPY --from=build /build/dist /app/static
-COPY static/favicon.ico /app/static
+COPY static/favicon.svg /app/static
 
 COPY --from=versioner /version /app/version
 

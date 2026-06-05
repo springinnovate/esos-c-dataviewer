@@ -947,6 +947,10 @@ const layerDesc = (lyr) =>
   lyr?.description && String(lyr.description).trim()
     ? String(lyr.description).trim()
     : "";
+const layerUnits = (lyr) => {
+  const units = lyr?.raster_units ?? lyr?.units;
+  return units && String(units).trim() ? String(units).trim() : "";
+};
 
 /**
  * Populate both layer <select> elements, and the base layer, with available
@@ -2039,6 +2043,17 @@ function formatSampleSummaryNumber(value) {
 }
 
 /**
+ * Format a sampled raster value with its configured raster units.
+ * @param {number} value
+ * @param {string} units
+ * @returns {string}
+ */
+function formatSampleValueWithUnits(value, units) {
+  const valueText = formatSampleSummaryNumber(value);
+  return units && valueText !== '-' ? `${valueText} ${units}` : valueText;
+}
+
+/**
  * Format a sampled area and its share of the sampled geometry.
  * @param {number} areaHectares
  * @param {number} areaPercent
@@ -2058,9 +2073,16 @@ function formatSampleAreaWithPercent(areaHectares, areaPercent) {
  * @param {string} layerTitle
  * @param {{area_hectares:number,area_percent:number,sum:number,mean:number}} summary
  * @param {string} [layerId]
+ * @param {string} [rasterUnits]
  * @returns {void}
  */
-function appendSampleSummaryCard(container, layerTitle, summary, layerId = layerTitle) {
+function appendSampleSummaryCard(
+  container,
+  layerTitle,
+  summary,
+  layerId = layerTitle,
+  rasterUnits = '',
+) {
   const card = document.createElement('div');
   card.className = 'sample-summary-card';
 
@@ -2075,8 +2097,8 @@ function appendSampleSummaryCard(container, layerTitle, summary, layerId = layer
       'Valid area (% of sample)',
       formatSampleAreaWithPercent(summary.area_hectares, summary.area_percent),
     ],
-    ['Sum', formatSampleSummaryNumber(summary.sum)],
-    ['Average', formatSampleSummaryNumber(summary.mean)],
+    ['Sum', formatSampleValueWithUnits(summary.sum, rasterUnits)],
+    ['Average', formatSampleValueWithUnits(summary.mean, rasterUnits)],
   ].forEach(([labelText, valueText]) => {
     const row = document.createElement('div');
     row.className = 'sample-summary-row';
@@ -2153,7 +2175,7 @@ function appendCategoricalSummaryCard(container, layerTitle, categories, layerId
 /**
  * Render sampled raster summaries next to the active histogram or scatter plot.
  * @param {Object|null} scatterObj
- * @param {{rasterX:string,rasterY:string,rasterXId?:string,rasterYId?:string,visA:boolean,visB:boolean}} opts
+ * @param {{rasterX:string,rasterY:string,rasterXId?:string,rasterYId?:string,rasterXUnits?:string,rasterYUnits?:string,visA:boolean,visB:boolean}} opts
  * @returns {void}
  */
 function renderSampleSummary(scatterObj, opts) {
@@ -2173,6 +2195,7 @@ function renderSampleSummary(scatterObj, opts) {
       opts.rasterX,
       scatterObj.x_summary,
       opts.rasterXId,
+      opts.rasterXUnits,
     );
   } else if (opts.visA && scatterObj.x_categories?.length) {
     appendCategoricalSummaryCard(
@@ -2188,6 +2211,7 @@ function renderSampleSummary(scatterObj, opts) {
       opts.rasterY,
       scatterObj.y_summary,
       opts.rasterYId,
+      opts.rasterYUnits,
     );
   } else if (opts.visB && scatterObj.y_categories?.length) {
     appendCategoricalSummaryCard(
@@ -2214,7 +2238,7 @@ function compactAxisLabel(label, maxLength = 34) {
 
 /**
  * Render a scatterplot of two rasters' values within a polygon.
- * @param {{rasterX:string,rasterY:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
+ * @param {{rasterX:string,rasterY:string,rasterXUnits?:string,rasterYUnits?:string,centerLng:number,centerLat:number,boxKm:number,scatterObj:object}} args
  */
 async function renderScatterOverlay(opts) {
   state.lastScatterOpts = opts;
@@ -2222,7 +2246,17 @@ async function renderScatterOverlay(opts) {
   const visA = document.getElementById('layerVisibleA').checked;
   const visB = document.getElementById('layerVisibleB').checked;
 
-  const { rasterX, rasterY, rasterXId, rasterYId, centerLng, centerLat, boxKm } = opts;
+  const {
+    rasterX,
+    rasterY,
+    rasterXId,
+    rasterYId,
+    rasterXUnits,
+    rasterYUnits,
+    centerLng,
+    centerLat,
+    boxKm,
+  } = opts;
   let { scatterObj } = opts;
   const histogramDisabled = !!opts.histogramDisabled;
   const histogramDisabledMessage =
@@ -2345,6 +2379,8 @@ async function renderScatterOverlay(opts) {
     rasterY,
     rasterXId,
     rasterYId,
+    rasterXUnits,
+    rasterYUnits,
     centerLng,
     centerLat,
     boxKm,
@@ -2366,7 +2402,16 @@ async function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 
   plotEl.innerHTML = '';
-  renderSampleSummary(scatterObj, { rasterX, rasterY, rasterXId, rasterYId, visA, visB });
+  renderSampleSummary(scatterObj, {
+    rasterX,
+    rasterY,
+    rasterXId,
+    rasterYId,
+    rasterXUnits,
+    rasterYUnits,
+    visA,
+    visB,
+  });
 
   let svg = null;
 
@@ -3504,6 +3549,10 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : "-");
+  const formatPixelValue = (value, units) => {
+    const valueText = value == null ? '-' : String(value);
+    return units && valueText !== '-' ? `${valueText} ${units}` : valueText;
+  };
 
   let lastFetchTs = 0;
   let inFlight = null;
@@ -3596,6 +3645,9 @@ async function queryAndRender(latlng, clientX, clientY) {
   const uiA = layerUiName(aIdx);
   const uiB = layerUiName(bIdx);
   const uiBase = baseLayerUiName(baseIdx);
+  const unitsA = layerUnits(state.availableLayers?.[aIdx]);
+  const unitsB = layerUnits(state.availableLayers?.[bIdx]);
+  const unitsBase = layerUnits(state.availableBaseLayers?.[baseIdx]);
 
   let valA = null;
   let valB = null;
@@ -3633,10 +3685,10 @@ async function queryAndRender(latlng, clientX, clientY) {
 
   const lines = [
     `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-    Number.isInteger(aIdx) ? `${uiA}: ${valA == null ? '-' : String(valA)}` : null,
-    Number.isInteger(bIdx) ? `${uiB}: ${valB == null ? '-' : String(valB)}` : null,
+    Number.isInteger(aIdx) ? `${uiA}: ${formatPixelValue(valA, unitsA)}` : null,
+    Number.isInteger(bIdx) ? `${uiB}: ${formatPixelValue(valB, unitsB)}` : null,
     Number.isInteger(baseIdx)
-      ? `${uiBase}: ${valBase == null ? '-' : String(valBase)}`
+      ? `${uiBase}: ${formatPixelValue(valBase, unitsBase)}`
       : null,
   ].filter(Boolean);
 
@@ -3648,7 +3700,7 @@ async function queryAndRender(latlng, clientX, clientY) {
     state.lastPixelPoint = {
       x: valA,
       y: valB,
-      label: `${uiA}: ${valA} * ${uiB}: ${valB}`,
+      label: `${uiA}: ${formatPixelValue(valA, unitsA)} * ${uiB}: ${formatPixelValue(valB, unitsB)}`,
     };
     if (state.lastScatterOpts && state.scatterObj) {
       renderScatterPoint(state.lastPixelPoint, 'A', 'B');
@@ -4014,6 +4066,8 @@ async function setAOIAndRenderOverlay(featureCollection) {
     rasterY: layerLabel(layerY),
     rasterXId: layerX?.name,
     rasterYId: layerY?.name,
+    rasterXUnits: layerUnits(layerX),
+    rasterYUnits: layerUnits(layerY),
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
@@ -4155,6 +4209,8 @@ async function sampleAndRenderSampleBox(latlng) {
     rasterY: layerLabel(lyrB),
     rasterXId: lyrA?.name,
     rasterYId: lyrB?.name,
+    rasterXUnits: layerUnits(lyrA),
+    rasterYUnits: layerUnits(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -4172,6 +4228,8 @@ async function sampleAndRenderSampleBox(latlng) {
     rasterY: layerLabel(lyrB),
     rasterXId: lyrA?.name,
     rasterYId: lyrB?.name,
+    rasterXUnits: layerUnits(lyrA),
+    rasterYUnits: layerUnits(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -4185,6 +4243,8 @@ async function sampleAndRenderSampleBox(latlng) {
     rasterY: layerLabel(lyrB),
     rasterXId: lyrA?.name,
     rasterYId: lyrB?.name,
+    rasterXUnits: layerUnits(lyrA),
+    rasterYUnits: layerUnits(lyrB),
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,

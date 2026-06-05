@@ -2291,7 +2291,14 @@ async function renderScatterOverlay(opts) {
         </div>
         <div class='plot-report-layout'>
           <div id='scatterPlot' class='plot-holder'>
-            ${hasData ? '' : '<div class="spinner" aria-label="loading"></div>'}
+            ${
+              hasData
+                ? ''
+                : `<div class="processing-state">
+                    <div class="spinner" aria-label="loading"></div>
+                    <span>Calculating stats. Large areas can take a minute.</span>
+                  </div>`
+            }
           </div>
           <div id='sampleSummary' class='sample-summary'></div>
         </div>

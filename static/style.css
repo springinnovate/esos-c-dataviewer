@@ -730,6 +730,18 @@ input.num::-webkit-outer-spin-button {
     animation: spin 0.8s linear infinite;
     margin: 40px auto;
 }
+.processing-state {
+    display: grid;
+    place-items: center;
+    gap: 10px;
+    min-height: 220px;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+}
+.processing-state .spinner {
+    margin: 0;
+}
 @keyframes spin {
     to {
         transform: rotate(360deg);

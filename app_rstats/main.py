@@ -76,6 +76,47 @@ logging.getLogger("rasterio").setLevel(logging.WARN)
 _GEOD = Geod(ellps="WGS84")
 _SQUARE_METERS_PER_HECTARE = 10_000.0
 _LEGEND_KEY_SEPARATOR = "\x00"
+_GEOMETRY_SCATTER_CHUNK_SIZE = 1000
+
+
+def _geometry_log_summary(geometry: dict) -> str:
+    """Return a compact geometry summary that omits coordinate values."""
+    if not isinstance(geometry, dict):
+        return "type=unknown"
+
+    geom_type = geometry.get("type") or "unknown"
+    coords = geometry.get("coordinates")
+
+    if geom_type == "Point":
+        return "type=Point vertices=1"
+    if geom_type in {"LineString", "MultiPoint"} and isinstance(coords, list):
+        return f"type={geom_type} vertices={len(coords)}"
+    if geom_type == "Polygon" and isinstance(coords, list):
+        return (
+            f"type=Polygon rings={len(coords)} "
+            f"vertices={sum(len(ring) for ring in coords if isinstance(ring, list))}"
+        )
+    if geom_type == "MultiLineString" and isinstance(coords, list):
+        return (
+            f"type=MultiLineString lines={len(coords)} "
+            f"vertices={sum(len(line) for line in coords if isinstance(line, list))}"
+        )
+    if geom_type == "MultiPolygon" and isinstance(coords, list):
+        rings = sum(len(poly) for poly in coords if isinstance(poly, list))
+        vertices = sum(
+            len(ring)
+            for poly in coords
+            if isinstance(poly, list)
+            for ring in poly
+            if isinstance(ring, list)
+        )
+        return f"type=MultiPolygon polygons={len(coords)} rings={rings} vertices={vertices}"
+    if geom_type == "GeometryCollection":
+        geometries = geometry.get("geometries")
+        count = len(geometries) if isinstance(geometries, list) else 0
+        return f"type=GeometryCollection geometries={count}"
+
+    return f"type={geom_type}"
 
 
 class RasterMinMaxIn(BaseModel):
@@ -307,6 +348,30 @@ def categorical_area_summaries(
         collapsed into the same displayed legend item.
     """
 
+    group_areas, group_meta = categorical_area_totals(
+        arr,
+        valid_mask,
+        affine,
+        raster_crs,
+        rendering,
+    )
+
+    return category_summaries_from_totals(
+        group_areas,
+        group_meta,
+        sample_area_hectares,
+    )
+
+
+def categorical_area_totals(
+    arr: np.ndarray,
+    valid_mask: np.ndarray,
+    affine: Affine,
+    raster_crs: rasterio.crs.CRS,
+    rendering: dict,
+) -> tuple[dict[str, float], dict[str, dict]]:
+    """Aggregate sampled categorical raster area totals by legend item."""
+
     code_to_group, group_meta = legend_groups_for_rendering(rendering)
     group_areas = {group_key: 0.0 for group_key in group_meta}
 
@@ -360,6 +425,19 @@ def categorical_area_summaries(
                 code_to_group[code] = group_key
 
             group_areas[group_key] += int(count) * cell_area_hectares
+
+    return group_areas, group_meta
+
+
+def category_summaries_from_totals(
+    group_areas: dict[str, float],
+    group_meta: dict[str, dict],
+    sample_area_hectares: float,
+) -> list[CategoryAreaSummary]:
+    """Build categorical summary response rows from accumulated area totals."""
+
+    if sample_area_hectares <= 0:
+        return []
 
     return [
         CategoryAreaSummary(
@@ -1102,10 +1180,89 @@ def _shape_for_pixel_budget(win, max_pixels):
     return out_h, out_w
 
 
+def _iter_window_chunks(win: Window, chunk_size: int = _GEOMETRY_SCATTER_CHUNK_SIZE):
+    """Yield bounded integer windows covering a larger raster window."""
+    col_start = int(win.col_off)
+    row_start = int(win.row_off)
+    col_stop = int(np.ceil(win.col_off + win.width))
+    row_stop = int(np.ceil(win.row_off + win.height))
+
+    for row_off in range(row_start, row_stop, chunk_size):
+        height = min(chunk_size, row_stop - row_off)
+        if height <= 0:
+            continue
+        for col_off in range(col_start, col_stop, chunk_size):
+            width = min(chunk_size, col_stop - col_off)
+            if width <= 0:
+                continue
+            yield Window(col_off, row_off, width, height)
+
+
+def _histogram_edges(min_value: float, max_value: float, bins: int) -> np.ndarray:
+    """Build stable histogram edges, padding flat-value ranges slightly."""
+    if min_value == max_value:
+        pad = max(abs(min_value) * 0.001, 0.5)
+        min_value -= pad
+        max_value += pad
+    return np.linspace(min_value, max_value, bins + 1)
+
+
+def _bounded_sample_append(
+    sample: Optional[np.ndarray],
+    values: np.ndarray,
+    max_points: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Append values to a bounded approximate sample without retaining all pixels."""
+    if values.size == 0:
+        return sample if sample is not None else np.array([], dtype="float64")
+
+    values_sample = values
+    if values_sample.shape[0] > max_points:
+        idx = rng.choice(values_sample.shape[0], size=max_points, replace=False)
+        values_sample = values_sample[idx]
+
+    if sample is None or sample.size == 0:
+        combined = values_sample
+    else:
+        combined = np.concatenate([sample, values_sample])
+
+    if combined.shape[0] > max_points:
+        idx = rng.choice(combined.shape[0], size=max_points, replace=False)
+        combined = combined[idx]
+    return combined
+
+
+def _summary_from_accumulator(acc: dict) -> Optional[RasterSummary]:
+    """Create a RasterSummary from chunk-accumulated counts and sums."""
+    count = int(acc["count"])
+    sample_area_hectares = float(acc["sample_area_hectares"])
+    area_hectares = float(acc["area_hectares"])
+    if count <= 0 or sample_area_hectares <= 0:
+        return None
+    return RasterSummary(
+        count=count,
+        area_hectares=area_hectares,
+        area_percent=float(area_hectares / sample_area_hectares * 100.0),
+        sum=float(acc["sum"]),
+        mean=float(acc["sum"] / count),
+    )
+
+
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
-        logger.debug(f"Starting scatter computation: {scatter_request}")
+        logger.debug(
+            "Starting scatter computation: raster_id_x=%r raster_id_y=%r "
+            "geometry=%s from_crs=%r histogram_bins=%s max_points=%s all_touched=%s",
+            scatter_request.raster_id_x,
+            scatter_request.raster_id_y,
+            _geometry_log_summary(scatter_request.geometry),
+            scatter_request.from_crs,
+            scatter_request.histogram_bins,
+            scatter_request.max_points,
+            scatter_request.all_touched,
+        )
 
         # init validity flags
         x_valid, y_valid = False, False
@@ -1125,34 +1282,60 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 )
             return geom_in_shape
 
+        def _empty_result():
+            return {
+                "ds": None,
+                "nodata": None,
+                "hist": None,
+                "edges": None,
+                "summary": None,
+                "categories": None,
+                "is_categorical": False,
+                "valid": False,
+                "sample": None,
+                "window": None,
+                "geometry": None,
+            }
+
+        def _masked_chunk_values(ds, nodata_val, geom_ref_shape, win, all_touched):
+            for chunk_win in _iter_window_chunks(win):
+                data = ds.read(1, window=chunk_win, masked=False).astype(
+                    "float64", copy=False
+                )
+                affine = ds.window_transform(chunk_win)
+                mask = geometry_mask(
+                    [mapping(geom_ref_shape)],
+                    transform=affine,
+                    invert=True,
+                    out_shape=data.shape,
+                    all_touched=bool(all_touched),
+                )
+                if not np.any(mask):
+                    continue
+
+                if nodata_val is not None:
+                    data = np.where(np.isclose(data, nodata_val), np.nan, data)
+
+                valid_mask = mask & np.isfinite(data)
+                yield data, mask, valid_mask, affine, chunk_win
+
+        def _merge_category_totals(group_areas, group_meta, chunk_areas, chunk_meta):
+            for group_key, meta in chunk_meta.items():
+                group_meta.setdefault(group_key, meta)
+                group_areas[group_key] = group_areas.get(group_key, 0.0) + float(
+                    chunk_areas.get(group_key, 0.0)
+                )
+
         # helper: read, clip-to-geometry, and compute 1D histogram
         def _read_clip_hist(raster_id, bins, all_touched):
             if not raster_id:
-                return {
-                    "ds": None,
-                    "nodata": None,
-                    "arr": None,
-                    "vals": None,
-                    "mask": None,
-                    "affine": None,
-                    "hist": None,
-                    "edges": None,
-                    "area_hectares": None,
-                    "sample_area_hectares": None,
-                    "categories": None,
-                    "is_categorical": False,
-                    "valid": False,
-                }
+                return _empty_result()
+
+            result = _empty_result()
             ds = None
             nodata_val = None
-            arr = None
-            vals = None
-            mask = None
-            affine = None
             hist = None
             edges = None
-            area_hectares = None
-            sample_area_hectares = None
             category_summaries = None
             is_categorical = False
             valid = False
@@ -1166,77 +1349,134 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if nodata_val is None:
                     nodata_val = rendering.get("nodata")
                 geom_ref_shape = _geom_in_ds_crs(ds)
+                result.update(
+                    {
+                        "ds": ds,
+                        "nodata": nodata_val,
+                        "is_categorical": is_categorical,
+                        "geometry": geom_ref_shape,
+                    }
+                )
 
                 win = _safe_window_for_geom(ds, geom_ref_shape)
-                out_h, out_w = _shape_for_pixel_budget(win, max_pixels=1_000_000)
-                data = ds.read(
-                    1,
-                    window=win,
-                    out_shape=(out_h, out_w),
-                    boundless=True,
-                    masked=False,
-                ).astype("float64", copy=False)
-                affine = ds.window_transform(win) * Affine.scale(
-                    win.width / out_w,
-                    win.height / out_h,
-                )
+                result["window"] = win
+                if int(win.width) <= 0 or int(win.height) <= 0:
+                    return result
 
-                mask = geometry_mask(
-                    [mapping(geom_ref_shape)],
-                    transform=affine,
-                    invert=True,
-                    out_shape=data.shape,
-                    all_touched=bool(scatter_request.all_touched),
-                )
+                acc = {
+                    "count": 0,
+                    "sum": 0.0,
+                    "area_hectares": 0.0,
+                    "sample_area_hectares": 0.0,
+                }
+                min_value = None
+                max_value = None
+                sample_values = None
+                sample_rng = np.random.default_rng(0)
+                group_areas = {}
+                group_meta = {}
 
-                if nodata_val is not None:
-                    data = np.where(np.isclose(data, nodata_val), np.nan, data)
-
-                arr = np.where(mask, data, np.nan)
-                valid_mask = np.isfinite(arr)
-                vals = arr[valid_mask]
-
-                if vals.size > 0:
-                    sample_area_hectares = valid_area_hectares(
+                for data, mask, valid_mask, affine, _chunk_win in _masked_chunk_values(
+                    ds,
+                    nodata_val,
+                    geom_ref_shape,
+                    win,
+                    all_touched,
+                ):
+                    acc["sample_area_hectares"] += valid_area_hectares(
                         mask,
                         affine,
                         ds.crs,
                     )
-                    area_hectares = valid_area_hectares(
+                    if not np.any(valid_mask):
+                        continue
+
+                    vals = data[valid_mask]
+                    acc["count"] += int(vals.size)
+                    acc["sum"] += float(np.sum(vals))
+                    acc["area_hectares"] += valid_area_hectares(
                         valid_mask,
                         affine,
                         ds.crs,
                     )
                     if is_categorical:
-                        category_summaries = categorical_area_summaries(
-                            arr,
+                        chunk_areas, chunk_meta = categorical_area_totals(
+                            data,
                             valid_mask,
                             affine,
                             ds.crs,
                             rendering,
-                            sample_area_hectares,
+                        )
+                        _merge_category_totals(
+                            group_areas,
+                            group_meta,
+                            chunk_areas,
+                            chunk_meta,
                         )
                     else:
-                        hist, edges = np.histogram(vals, bins=bins)
-                    valid = True
+                        chunk_min = float(np.min(vals))
+                        chunk_max = float(np.max(vals))
+                        min_value = (
+                            chunk_min
+                            if min_value is None
+                            else min(min_value, chunk_min)
+                        )
+                        max_value = (
+                            chunk_max
+                            if max_value is None
+                            else max(max_value, chunk_max)
+                        )
+                        sample_values = _bounded_sample_append(
+                            sample_values,
+                            vals,
+                            scatter_request.max_points,
+                            sample_rng,
+                        )
+
+                valid = acc["count"] > 0
+                summary = _summary_from_accumulator(acc)
+
+                if valid and is_categorical:
+                    category_summaries = category_summaries_from_totals(
+                        group_areas,
+                        group_meta,
+                        acc["sample_area_hectares"],
+                    )
+                elif valid:
+                    edges = _histogram_edges(min_value, max_value, bins)
+                    hist = np.zeros(bins, dtype="int64")
+                    for (
+                        data,
+                        _mask,
+                        valid_mask,
+                        _affine,
+                        _chunk_win,
+                    ) in _masked_chunk_values(
+                        ds,
+                        nodata_val,
+                        geom_ref_shape,
+                        win,
+                        all_touched,
+                    ):
+                        if not np.any(valid_mask):
+                            continue
+                        vals = data[valid_mask]
+                        hist += np.histogram(vals, bins=edges)[0].astype("int64")
+
+                result.update(
+                    {
+                        "hist": hist,
+                        "edges": edges,
+                        "summary": summary,
+                        "categories": category_summaries,
+                        "valid": valid,
+                        "sample": sample_values,
+                    }
+                )
             except ValueError as e:
                 logger.warning(f"{e} error on _read_clip_hist {raster_id}")
 
-            return {
-                "ds": ds,
-                "nodata": nodata_val,
-                "arr": arr,
-                "vals": vals if valid else None,
-                "mask": mask,
-                "affine": affine,
-                "hist": hist,
-                "edges": edges,
-                "area_hectares": area_hectares if valid else None,
-                "sample_area_hectares": sample_area_hectares if valid else None,
-                "categories": category_summaries if valid else None,
-                "is_categorical": is_categorical,
-                "valid": valid,
-            }
+            return result
 
         # loop over both rasters (read, clip, 1D hist)
         bins = scatter_request.histogram_bins
@@ -1263,119 +1503,115 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             results["y"]["edges"] if results["y"]["edges"] is not None else None
         )
         x_plot, y_plot = None, None
+        valid_pixels = None
 
         # compute 2D histogram on overlapping pixels if both are valid
         if x_hist_valid and y_hist_valid:
-            x_arr = results["x"]["arr"]
-            x_affine = results["x"]["affine"]
-            x_mask = results["x"]["mask"]
             x_ds = results["x"]["ds"]
-
             y_ds = results["y"]["ds"]
             y_nodata = results["y"]["nodata"]
-
-            # reproject Y onto X grid
-            try:
-                ul = x_affine * (0, 0)
-                lr = x_affine * (x_arr.shape[1], x_arr.shape[0])
-                minx, maxx = sorted([ul[0], lr[0]])
-                miny, maxy = sorted([ul[1], lr[1]])
-
-                minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
-                    x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
-                )
-
-                y_win = from_bounds(
-                    minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
-                )
-                y_win = (
-                    y_win.round_offsets()
-                    .round_lengths()
-                    .intersection(Window(0, 0, y_ds.width, y_ds.height))
-                )
-
-                y_src = y_ds.read(1, window=y_win, masked=False).astype(
-                    "float64", copy=False
-                )
-                y_affine = y_ds.window_transform(y_win)
-
-                y_on_xgrid = np.full(x_arr.shape, np.nan, dtype="float64")
-                reproject(
-                    source=y_src,
-                    destination=y_on_xgrid,
-                    src_transform=y_affine,
-                    src_crs=y_ds.crs,
-                    src_nodata=y_nodata,
-                    dst_transform=x_affine,
-                    dst_crs=x_ds.crs,
-                    dst_nodata=np.nan,
-                    resampling=Resampling.nearest,
-                    num_threads=0,
-                )
-
-                y_on_xgrid_masked = np.where(x_mask, y_on_xgrid, np.nan)
-            except WindowError:
-                y_on_xgrid_masked = np.full_like(x_arr, np.nan, dtype="float64")
-
-            finite_mask = np.isfinite(x_arr) & np.isfinite(y_on_xgrid_masked)
-            x_pairs = x_arr[finite_mask]
-            y_pairs = y_on_xgrid_masked[finite_mask]
-            n_pairs = int(x_pairs.size)
-
-            # 2D hist edges: reuse 1D edges if available, else derive from pairs
+            x_geom = results["x"]["geometry"]
+            x_win = results["x"]["window"]
             x_edges_2d = results["x"]["edges"]
             y_edges_2d = results["y"]["edges"]
+            hist2d = np.zeros(
+                (len(x_edges_2d) - 1, len(y_edges_2d) - 1),
+                dtype="int64",
+            )
+            pair_sample = None
+            pair_sample_rng = np.random.default_rng(0)
+            n_pairs = 0
 
-            if n_pairs > 0:
-                hist2d, x_edges_out, y_edges_out = np.histogram2d(
-                    x_pairs, y_pairs, bins=[x_edges_2d, y_edges_2d]
-                )
-            else:
-                hist2d = np.zeros((len(x_edges_2d) - 1, len(y_edges_2d) - 1), dtype=int)
-                x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
+            def _read_y_on_x_grid(x_affine, x_shape):
+                try:
+                    ul = x_affine * (0, 0)
+                    lr = x_affine * (x_shape[1], x_shape[0])
+                    minx, maxx = sorted([ul[0], lr[0]])
+                    miny, maxy = sorted([ul[1], lr[1]])
 
-            # scatter arrays (downsample if needed)
-            if n_pairs > 0:
-                if n_pairs > scatter_request.max_points:
-                    idx = np.random.default_rng(0).choice(
-                        n_pairs, size=scatter_request.max_points, replace=False
+                    minx_y, miny_y, maxx_y, maxy_y = transform_bounds(
+                        x_ds.crs, y_ds.crs, minx, miny, maxx, maxy, densify_pts=0
                     )
-                    x_plot = x_pairs[idx]
-                    y_plot = y_pairs[idx]
-                else:
-                    x_plot = x_pairs
-                    y_plot = y_pairs
 
-            # correlation stats
-            if n_pairs > 1:
-                x_std = float(np.std(x_pairs))
-                y_std = float(np.std(y_pairs))
-                if x_std != 0.0 and y_std != 0.0:
-                    design = np.vstack([x_pairs, np.ones_like(x_pairs)]).T
-                    slope_val, intercept_val = np.linalg.lstsq(
-                        design, y_pairs, rcond=None
-                    )[0]
+                    y_win = from_bounds(
+                        minx_y, miny_y, maxx_y, maxy_y, transform=y_ds.transform
+                    )
+                    y_win = (
+                        y_win.round_offsets()
+                        .round_lengths()
+                        .intersection(Window(0, 0, y_ds.width, y_ds.height))
+                    )
+                    if int(y_win.width) <= 0 or int(y_win.height) <= 0:
+                        return np.full(x_shape, np.nan, dtype="float64")
+
+                    y_src = y_ds.read(1, window=y_win, masked=False).astype(
+                        "float64", copy=False
+                    )
+                    if y_nodata is not None:
+                        y_src = np.where(np.isclose(y_src, y_nodata), np.nan, y_src)
+                    y_affine = y_ds.window_transform(y_win)
+
+                    y_on_xgrid = np.full(x_shape, np.nan, dtype="float64")
+                    reproject(
+                        source=y_src,
+                        destination=y_on_xgrid,
+                        src_transform=y_affine,
+                        src_crs=y_ds.crs,
+                        src_nodata=np.nan if y_nodata is not None else None,
+                        dst_transform=x_affine,
+                        dst_crs=x_ds.crs,
+                        dst_nodata=np.nan,
+                        resampling=Resampling.nearest,
+                        num_threads=0,
+                    )
+                    return y_on_xgrid
+                except WindowError:
+                    return np.full(x_shape, np.nan, dtype="float64")
+
+            for data, _mask, valid_mask, affine, _chunk_win in _masked_chunk_values(
+                x_ds,
+                results["x"]["nodata"],
+                x_geom,
+                x_win,
+                scatter_request.all_touched,
+            ):
+                if not np.any(valid_mask):
+                    continue
+                y_on_xgrid = _read_y_on_x_grid(affine, data.shape)
+                finite_mask = valid_mask & np.isfinite(y_on_xgrid)
+                if not np.any(finite_mask):
+                    continue
+
+                x_pairs = data[finite_mask]
+                y_pairs = y_on_xgrid[finite_mask]
+                n_pairs += int(x_pairs.size)
+                chunk_hist2d, _x_edges_unused, _y_edges_unused = np.histogram2d(
+                    x_pairs,
+                    y_pairs,
+                    bins=[x_edges_2d, y_edges_2d],
+                )
+                hist2d += chunk_hist2d.astype("int64")
+
+                chunk_pairs = np.column_stack([x_pairs, y_pairs])
+                pair_sample = _bounded_sample_append(
+                    pair_sample,
+                    chunk_pairs,
+                    scatter_request.max_points,
+                    pair_sample_rng,
+                )
+
+            x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
+            valid_pixels = n_pairs
+            if n_pairs > 0:
+                x_plot = pair_sample[:, 0]
+                y_plot = pair_sample[:, 1]
 
         # if only one is valid, prepare 1D scatter arrays directly from that raster
         if x_hist_valid ^ y_hist_valid:  # XOR
-
-            def _sample(vals, max_points):
-                n = int(vals.size)
-                if n > max_points:
-                    idx = np.random.default_rng(0).choice(
-                        n, size=max_points, replace=False
-                    )
-                    return vals[idx], n
-                return vals, n
-
             side = "x" if x_hist_valid else "y"
-            sampled, n_pairs = _sample(
-                results[side]["vals"], scatter_request.max_points
-            )
+            sampled = results[side]["sample"]
             x_plot = sampled if side == "x" else None
             y_plot = sampled if side == "y" else None
-        else:
-            x_plot, y_plot = None, None
 
         return ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
@@ -1403,18 +1639,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if results["y"]["hist"] is not None
                 else None
             ),
-            x_summary=summary_from_valid_values(
-                results["x"]["vals"] if x_hist_valid else None,
-                results["x"]["area_hectares"] if x_hist_valid else None,
-                results["x"]["sample_area_hectares"] if x_hist_valid else None,
-            ),
-            y_summary=summary_from_valid_values(
-                results["y"]["vals"] if y_hist_valid else None,
-                results["y"]["area_hectares"] if y_hist_valid else None,
-                results["y"]["sample_area_hectares"] if y_hist_valid else None,
-            ),
+            x_summary=results["x"]["summary"] if x_hist_valid else None,
+            y_summary=results["y"]["summary"] if y_hist_valid else None,
             x_categories=results["x"]["categories"],
             y_categories=results["y"]["categories"],
+            valid_pixels=valid_pixels,
             geometry=scatter_request.geometry,
         )
 

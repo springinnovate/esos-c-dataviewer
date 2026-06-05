@@ -3551,10 +3551,6 @@ function wirePixelProbe() {
   }
 
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : "-");
-  const formatPixelValue = (value, units) => {
-    const valueText = value == null ? '-' : String(value);
-    return units && valueText !== '-' ? `${valueText} ${units}` : valueText;
-  };
 
   let lastFetchTs = 0;
   let inFlight = null;
@@ -3687,10 +3683,14 @@ async function queryAndRender(latlng, clientX, clientY) {
 
   const lines = [
     `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-    Number.isInteger(aIdx) ? `${uiA}: ${formatPixelValue(valA, unitsA)}` : null,
-    Number.isInteger(bIdx) ? `${uiB}: ${formatPixelValue(valB, unitsB)}` : null,
+    Number.isInteger(aIdx)
+      ? `${uiA}: ${formatSampleValueWithUnits(valA, unitsA)}`
+      : null,
+    Number.isInteger(bIdx)
+      ? `${uiB}: ${formatSampleValueWithUnits(valB, unitsB)}`
+      : null,
     Number.isInteger(baseIdx)
-      ? `${uiBase}: ${formatPixelValue(valBase, unitsBase)}`
+      ? `${uiBase}: ${formatSampleValueWithUnits(valBase, unitsBase)}`
       : null,
   ].filter(Boolean);
 
@@ -3702,7 +3702,7 @@ async function queryAndRender(latlng, clientX, clientY) {
     state.lastPixelPoint = {
       x: valA,
       y: valB,
-      label: `${uiA}: ${formatPixelValue(valA, unitsA)} * ${uiB}: ${formatPixelValue(valB, unitsB)}`,
+      label: `${uiA}: ${formatSampleValueWithUnits(valA, unitsA)} * ${uiB}: ${formatSampleValueWithUnits(valB, unitsB)}`,
     };
     if (state.lastScatterOpts && state.scatterObj) {
       renderScatterPoint(state.lastPixelPoint, 'A', 'B');

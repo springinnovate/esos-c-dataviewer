@@ -95,6 +95,9 @@ def _collect_layers(layer_key: str, config: dict) -> list:
     layers = []
     workspace_id = config["workspace_id"]
     for layer in config.get(layer_key, {}).values():
+        raster_units = layer.get("raster_units", layer.get("units"))
+        if raster_units is not None:
+            raster_units = str(raster_units).strip() or None
         layers.append(
             {
                 "workspace": workspace_id,
@@ -102,6 +105,7 @@ def _collect_layers(layer_key: str, config: dict) -> list:
                 "name": Path(layer["file_path"]).stem.lower(),
                 "title": layer.get("title"),
                 "description": layer.get("description"),
+                "raster_units": raster_units,
                 "rendering": layer.get("rendering"),
             }
         )

@@ -2055,18 +2055,19 @@ function formatSampleAreaWithPercent(areaHectares, areaPercent) {
 /**
  * Append a per-layer sampled raster summary card.
  * @param {HTMLElement} container
- * @param {string} rasterId
+ * @param {string} layerTitle
  * @param {{area_hectares:number,area_percent:number,sum:number,mean:number}} summary
+ * @param {string} [layerId]
  * @returns {void}
  */
-function appendSampleSummaryCard(container, rasterId, summary) {
+function appendSampleSummaryCard(container, layerTitle, summary, layerId = layerTitle) {
   const card = document.createElement('div');
   card.className = 'sample-summary-card';
 
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
-  title.textContent = rasterId;
-  title.setAttribute('title', rasterId);
+  title.textContent = layerTitle;
+  title.setAttribute('title', layerId || layerTitle);
   card.appendChild(title);
 
   [
@@ -2098,18 +2099,19 @@ function appendSampleSummaryCard(container, rasterId, summary) {
 /**
  * Append a sampled categorical area summary card.
  * @param {HTMLElement} container
- * @param {string} rasterId
+ * @param {string} layerTitle
  * @param {{label:string,color?:string,opacity?:number,area_hectares:number,area_percent:number}[]} categories
+ * @param {string} [layerId]
  * @returns {void}
  */
-function appendCategoricalSummaryCard(container, rasterId, categories) {
+function appendCategoricalSummaryCard(container, layerTitle, categories, layerId = layerTitle) {
   const card = document.createElement('div');
   card.className = 'sample-summary-card sample-summary-card-categorical';
 
   const title = document.createElement('div');
   title.className = 'sample-summary-title';
-  title.textContent = rasterId;
-  title.setAttribute('title', rasterId);
+  title.textContent = layerTitle;
+  title.setAttribute('title', layerId || layerTitle);
   card.appendChild(title);
 
   const list = document.createElement('div');
@@ -2151,7 +2153,7 @@ function appendCategoricalSummaryCard(container, rasterId, categories) {
 /**
  * Render sampled raster summaries next to the active histogram or scatter plot.
  * @param {Object|null} scatterObj
- * @param {{rasterX:string,rasterY:string,visA:boolean,visB:boolean}} opts
+ * @param {{rasterX:string,rasterY:string,rasterXId?:string,rasterYId?:string,visA:boolean,visB:boolean}} opts
  * @returns {void}
  */
 function renderSampleSummary(scatterObj, opts) {
@@ -2166,21 +2168,33 @@ function renderSampleSummary(scatterObj, opts) {
   }
 
   if (opts.visA && scatterObj.x_summary) {
-    appendSampleSummaryCard(summaryEl, opts.rasterX, scatterObj.x_summary);
+    appendSampleSummaryCard(
+      summaryEl,
+      opts.rasterX,
+      scatterObj.x_summary,
+      opts.rasterXId,
+    );
   } else if (opts.visA && scatterObj.x_categories?.length) {
     appendCategoricalSummaryCard(
       summaryEl,
       opts.rasterX,
       scatterObj.x_categories,
+      opts.rasterXId,
     );
   }
   if (opts.visB && scatterObj.y_summary) {
-    appendSampleSummaryCard(summaryEl, opts.rasterY, scatterObj.y_summary);
+    appendSampleSummaryCard(
+      summaryEl,
+      opts.rasterY,
+      scatterObj.y_summary,
+      opts.rasterYId,
+    );
   } else if (opts.visB && scatterObj.y_categories?.length) {
     appendCategoricalSummaryCard(
       summaryEl,
       opts.rasterY,
       scatterObj.y_categories,
+      opts.rasterYId,
     );
   }
 
@@ -2208,7 +2222,7 @@ async function renderScatterOverlay(opts) {
   const visA = document.getElementById('layerVisibleA').checked;
   const visB = document.getElementById('layerVisibleB').checked;
 
-  const { rasterX, rasterY, centerLng, centerLat, boxKm } = opts;
+  const { rasterX, rasterY, rasterXId, rasterYId, centerLng, centerLat, boxKm } = opts;
   let { scatterObj } = opts;
   const histogramDisabled = !!opts.histogramDisabled;
   const histogramDisabledMessage =
@@ -2329,6 +2343,8 @@ async function renderScatterOverlay(opts) {
   const newRenderKey = JSON.stringify({
     rasterX,
     rasterY,
+    rasterXId,
+    rasterYId,
     centerLng,
     centerLat,
     boxKm,
@@ -2350,7 +2366,7 @@ async function renderScatterOverlay(opts) {
   state.scatterObj = scatterObj;
 
   plotEl.innerHTML = '';
-  renderSampleSummary(scatterObj, { rasterX, rasterY, visA, visB });
+  renderSampleSummary(scatterObj, { rasterX, rasterY, rasterXId, rasterYId, visA, visB });
 
   let svg = null;
 
@@ -3996,6 +4012,8 @@ async function setAOIAndRenderOverlay(featureCollection) {
   await renderScatterOverlay({
     rasterX: layerLabel(layerX),
     rasterY: layerLabel(layerY),
+    rasterXId: layerX?.name,
+    rasterYId: layerY?.name,
     centerLng: centerLngLat.lng,
     centerLat: centerLngLat.lat,
     boxKm: areaKm2,
@@ -4135,6 +4153,8 @@ async function sampleAndRenderSampleBox(latlng) {
   await renderScatterOverlay({
     rasterX: layerLabel(lyrA),
     rasterY: layerLabel(lyrB),
+    rasterXId: lyrA?.name,
+    rasterYId: lyrB?.name,
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -4150,6 +4170,8 @@ async function sampleAndRenderSampleBox(latlng) {
   await renderScatterOverlay({
     rasterX: layerLabel(lyrA),
     rasterY: layerLabel(lyrB),
+    rasterXId: lyrA?.name,
+    rasterYId: lyrB?.name,
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
@@ -4159,8 +4181,10 @@ async function sampleAndRenderSampleBox(latlng) {
   });
 
   state.lastScatterOpts = {
-    rasterX: lyrA?.name,
-    rasterY: lyrB?.name,
+    rasterX: layerLabel(lyrA),
+    rasterY: layerLabel(lyrB),
+    rasterXId: lyrA?.name,
+    rasterYId: lyrB?.name,
     centerLng: latlng.lng,
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,

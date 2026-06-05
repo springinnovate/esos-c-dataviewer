@@ -77,6 +77,46 @@ _SQUARE_METERS_PER_HECTARE = 10_000.0
 _LEGEND_KEY_SEPARATOR = "\x00"
 
 
+def _geometry_log_summary(geometry: dict) -> str:
+    """Return a compact geometry summary that omits coordinate values."""
+    if not isinstance(geometry, dict):
+        return "type=unknown"
+
+    geom_type = geometry.get("type") or "unknown"
+    coords = geometry.get("coordinates")
+
+    if geom_type == "Point":
+        return "type=Point vertices=1"
+    if geom_type in {"LineString", "MultiPoint"} and isinstance(coords, list):
+        return f"type={geom_type} vertices={len(coords)}"
+    if geom_type == "Polygon" and isinstance(coords, list):
+        return (
+            f"type=Polygon rings={len(coords)} "
+            f"vertices={sum(len(ring) for ring in coords if isinstance(ring, list))}"
+        )
+    if geom_type == "MultiLineString" and isinstance(coords, list):
+        return (
+            f"type=MultiLineString lines={len(coords)} "
+            f"vertices={sum(len(line) for line in coords if isinstance(line, list))}"
+        )
+    if geom_type == "MultiPolygon" and isinstance(coords, list):
+        rings = sum(len(poly) for poly in coords if isinstance(poly, list))
+        vertices = sum(
+            len(ring)
+            for poly in coords
+            if isinstance(poly, list)
+            for ring in poly
+            if isinstance(ring, list)
+        )
+        return f"type=MultiPolygon polygons={len(coords)} rings={rings} vertices={vertices}"
+    if geom_type == "GeometryCollection":
+        geometries = geometry.get("geometries")
+        count = len(geometries) if isinstance(geometries, list) else 0
+        return f"type=GeometryCollection geometries={count}"
+
+    return f"type={geom_type}"
+
+
 class RasterMinMaxIn(BaseModel):
     """Input model for min max value query.
 
@@ -975,7 +1015,17 @@ def _shape_for_pixel_budget(win, max_pixels):
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
     try:
-        logger.debug(f"Starting scatter computation: {scatter_request}")
+        logger.debug(
+            "Starting scatter computation: raster_id_x=%r raster_id_y=%r "
+            "geometry=%s from_crs=%r histogram_bins=%s max_points=%s all_touched=%s",
+            scatter_request.raster_id_x,
+            scatter_request.raster_id_y,
+            _geometry_log_summary(scatter_request.geometry),
+            scatter_request.from_crs,
+            scatter_request.histogram_bins,
+            scatter_request.max_points,
+            scatter_request.all_touched,
+        )
 
         # init validity flags
         x_valid, y_valid = False, False

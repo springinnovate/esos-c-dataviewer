@@ -4070,6 +4070,21 @@ async function setAOIAndRenderOverlay(featureCollection) {
     : null;
   if (!layerX && !layerY) return;
 
+  const areaM2 = turf.area(featureCollection);
+  const areaKm2 = areaM2 / 1e6;
+  await renderScatterOverlay({
+    rasterX: layerLabel(layerX),
+    rasterY: layerLabel(layerY),
+    rasterXId: layerX?.name,
+    rasterYId: layerY?.name,
+    rasterXUnits: layerUnits(layerX),
+    rasterYUnits: layerUnits(layerY),
+    centerLng: centerLngLat.lng,
+    centerLat: centerLngLat.lat,
+    boxKm: areaKm2,
+    scatterObj: null,
+  });
+
   let statsResult;
   try {
     const aoiGeometry =
@@ -4087,8 +4102,6 @@ async function setAOIAndRenderOverlay(featureCollection) {
     throw err;
   }
 
-  const areaM2 = turf.area(featureCollection);
-  const areaKm2 = areaM2 / 1e6;
   await renderScatterOverlay({
     rasterX: layerLabel(layerX),
     rasterY: layerLabel(layerY),

@@ -2379,6 +2379,7 @@ async function renderScatterOverlay(opts) {
         width: 420,
         height: 320,
         pad: 32,
+        leftPad: 56,
         marginalSize: 42,
         percentiles: state.percentiles,
         layerIdX: 'A',
@@ -2631,13 +2632,14 @@ function densityWeight(binCount, maxCount2d) {
  * @param {number[]} xEdges
  * @param {number[]} yEdges
  * @param {number[][]} hist2d
- * @param {{width?:number,height?:number,pad?:number}} opts
+ * @param {{width?:number,height?:number,pad?:number,leftPad?:number}} opts
  * @returns {SVGSVGElement}
  */
 function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
   const w = opts.width ?? 400;
   const h = opts.height ?? 300;
   const pad = opts.pad ?? 40;
+  const leftPad = opts.leftPad ?? pad;
   const mSize = opts.marginalSize ?? 48;
   const percentileColor = opts.percentileColor ?? '#eeeeee';
   const percentileDecimals = Number.isFinite(opts.percentileDecimals)
@@ -2658,7 +2660,7 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     ),
   ].sort((a, b) => a - b);
 
-  const innerW = Math.max(1, w - pad * 2 - mSize);
+  const innerW = Math.max(1, w - leftPad - pad - mSize);
   const innerH = Math.max(1, h - pad * 2 - mSize);
 
   const fullXMin = xEdges[0];
@@ -2736,9 +2738,9 @@ function buildScatterSVG(xEdges, yEdges, hist2d, opts = {}) {
     return label;
   };
 
-  const plotX0 = pad;
+  const plotX0 = leftPad;
   const plotY0 = pad + mSize;
-  const plotX1 = pad + innerW;
+  const plotX1 = leftPad + innerW;
   const plotY1 = pad + mSize + innerH;
 
   const scaleX = (v) =>

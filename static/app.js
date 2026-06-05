@@ -3521,8 +3521,7 @@ function wirePixelProbe() {
   // then in your global mousemove logic (or Leaflet map.on('mousemove'))
   document.addEventListener("mousemove", (e) => {
     if (state.probeSuppressed) return;
-    probe.style.left = `${e.clientX + 12}px`;
-    probe.style.top = `${e.clientY + 12}px`;
+    positionProbe(e.clientX, e.clientY);
   });
 
   if (!probe) {
@@ -3543,18 +3542,33 @@ function wirePixelProbe() {
       pointerEvents: "none",
       zIndex: 9999,
       display: "none",
-      whiteSpace: "pre",
+      whiteSpace: "pre-wrap",
       boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
-      maxWidth: "320px",
+      width: "max-content",
+      maxWidth: "calc(100vw - 24px)",
+      overflowWrap: "anywhere",
     });
     document.body.appendChild(probe);
   }
 
-  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : "-");
-  const formatPixelValue = (value, units) => {
-    const valueText = value == null ? '-' : String(value);
-    return units && valueText !== '-' ? `${valueText} ${units}` : valueText;
+  const positionProbe = (clientX, clientY) => {
+    const offset = 12;
+    const margin = 8;
+    const width = probe.offsetWidth || 0;
+    const height = probe.offsetHeight || 0;
+    const left =
+      clientX + offset + width + margin > window.innerWidth
+        ? Math.max(margin, clientX - width - offset)
+        : clientX + offset;
+    const top =
+      clientY + offset + height + margin > window.innerHeight
+        ? Math.max(margin, clientY - height - offset)
+        : clientY + offset;
+    probe.style.left = `${left}px`;
+    probe.style.top = `${top}px`;
   };
+
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(5) : "-");
 
   let lastFetchTs = 0;
   let inFlight = null;
@@ -3687,22 +3701,27 @@ async function queryAndRender(latlng, clientX, clientY) {
 
   const lines = [
     `coords: ${fmt(latlng.lat)}, ${fmt(latlng.lng)}`,
-    Number.isInteger(aIdx) ? `${uiA}: ${formatPixelValue(valA, unitsA)}` : null,
-    Number.isInteger(bIdx) ? `${uiB}: ${formatPixelValue(valB, unitsB)}` : null,
+    Number.isInteger(aIdx)
+      ? `${uiA}: ${formatSampleValueWithUnits(valA, unitsA)}`
+      : null,
+    Number.isInteger(bIdx)
+      ? `${uiB}: ${formatSampleValueWithUnits(valB, unitsB)}`
+      : null,
     Number.isInteger(baseIdx)
-      ? `${uiBase}: ${formatPixelValue(valBase, unitsBase)}`
+      ? `${uiBase}: ${formatSampleValueWithUnits(valBase, unitsBase)}`
       : null,
   ].filter(Boolean);
 
   probe.textContent = lines.join('\n');
   probe.style.display = 'block';
+  positionProbe(clientX, clientY);
 
   const bothFinite = Number.isFinite(valA) && Number.isFinite(valB);
   if (bothFinite) {
     state.lastPixelPoint = {
       x: valA,
       y: valB,
-      label: `${uiA}: ${formatPixelValue(valA, unitsA)} * ${uiB}: ${formatPixelValue(valB, unitsB)}`,
+      label: `${uiA}: ${formatSampleValueWithUnits(valA, unitsA)} * ${uiB}: ${formatSampleValueWithUnits(valB, unitsB)}`,
     };
     if (state.lastScatterOpts && state.scatterObj) {
       renderScatterPoint(state.lastPixelPoint, 'A', 'B');

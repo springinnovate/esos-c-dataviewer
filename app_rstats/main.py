@@ -86,10 +86,8 @@ _LEGEND_KEY_SEPARATOR = "\x00"
 _GEOMETRY_SCATTER_CHUNK_SIZE = 1000
 _STATS_JOB_TTL_SECONDS = 15 * 60
 _SCATTER_CACHE_SCHEMA_VERSION = "scatter-cache-v1"
-_SCATTER_CACHE_PATH = Path(
-    os.getenv("RSTATS_CACHE_PATH", "/app/cache/rstats_cache.sqlite")
-)
-_SCATTER_CACHE_MAX_ENTRIES = int(os.getenv("RSTATS_CACHE_MAX_ENTRIES", "128"))
+_SCATTER_CACHE_PATH = Path(os.environ["RSTATS_CACHE_PATH"])
+_SCATTER_CACHE_MAX_ENTRIES = int(os.environ["RSTATS_CACHE_MAX_ENTRIES"])
 _SCATTER_CACHE_LOCK = threading.Lock()
 _SCATTER_CACHE_INITIALIZED = False
 
@@ -244,6 +242,7 @@ def _scatter_cache_connect():
         ON scatter_cache(last_accessed_at)
         """
     )
+    # cache_key is indexed by the primary key; last_accessed_at supports LRU trim.
     return conn
 
 

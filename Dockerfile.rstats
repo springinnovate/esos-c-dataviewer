@@ -50,6 +50,7 @@ COPY rstats_requirements.txt /app/
 RUN micromamba run -n geopy311 pip install --no-cache-dir -r rstats_requirements.txt
 
 COPY app_rstats /app/app_rstats
+RUN mkdir -p /app/cache && chown -R mambauser:mambauser /app/cache
 
 # healthcheck endpoint on :8000
 ENV PORT=8000

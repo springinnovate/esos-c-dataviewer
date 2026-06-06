@@ -6,6 +6,7 @@ x-dynamic-style-path: &dynamic_style_path ${STYLE_PATH:-/app/styles/dynamic_styl
 
 volumes:
   geoserver_data_dir:
+  rstats_cache:
   traefik_letsencrypt:
 
 networks:
@@ -166,10 +167,13 @@ services:
     restart: unless-stopped
     environment:
       - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
+      - RSTATS_CACHE_PATH=/app/cache/rstats_cache.sqlite
+      - RSTATS_CACHE_MAX_ENTRIES=128
     volumes:
       - ${LAYERS_YML}:/app/layers.yml:ro
       - ${LOCAL_DATA_DIR}:${GEOSERVER_LOCAL_DATA_DIR}:ro
       - ./.env:/app/.env:ro
+      - rstats_cache:/app/cache
     networks: [backend]
     labels:
       - traefik.enable=true

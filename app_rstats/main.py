@@ -1495,7 +1495,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             geom_ref_shape,
             win,
             all_touched,
-            *,
             progress_start=None,
             progress_end=None,
             progress_message=None,

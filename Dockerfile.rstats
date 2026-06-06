@@ -7,7 +7,6 @@
 #
 # Environment variables:
 #   PORT        - port for Uvicorn to listen on (default: 8000)
-#   WORKERS     - number of Uvicorn worker processes (default: 1)
 FROM mambaorg/micromamba:1.4.2-bullseye
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -55,4 +54,5 @@ COPY app_rstats /app/app_rstats
 # healthcheck endpoint on :8000
 ENV PORT=8000
 USER mambauser
-CMD uvicorn app_rstats.main:app --host 0.0.0.0 --port ${PORT} --workers ${WORKERS:-1}
+# Keep one Uvicorn process: stats progress/cancellation state is process-local.
+CMD uvicorn app_rstats.main:app --host 0.0.0.0 --port ${PORT}

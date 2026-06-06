@@ -341,7 +341,9 @@ class ScatterOut(BaseModel):
         pearson_r (Optional[float]): Pearson correlation coefficient, or None if not computed.
         slope (Optional[float]): Linear regression slope (Y on X), or None if not computed.
         intercept (Optional[float]): Linear regression intercept, or None if not computed.
-        valid_pixels (Optional[int]): Number of valid (non-null) paired pixels, or None if not available.
+        valid_pixels (Optional[int]): Number of sampled valid paired pixels in the
+            plot payload, or None if not available.
+        plot_sampled (bool): Whether plot histograms/scatter are sample-based.
         geometry (dict): GeoJSON-like geometry defining the analysis window.
     """
 
@@ -362,6 +364,7 @@ class ScatterOut(BaseModel):
     slope: Optional[float] = None
     intercept: Optional[float] = None
     valid_pixels: Optional[int] = None
+    plot_sampled: bool = False
     geometry: dict
 
 
@@ -1495,12 +1498,22 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             geom_ref_shape,
             win,
             all_touched,
+            chunk_windows=None,
             progress_start=None,
             progress_end=None,
             progress_message=None,
         ):
-            total_chunks = _window_chunk_count(win)
-            for chunk_index, chunk_win in enumerate(_iter_window_chunks(win), start=1):
+            total_chunks = (
+                len(chunk_windows)
+                if chunk_windows is not None
+                else _window_chunk_count(win)
+            )
+            chunk_iter = (
+                chunk_windows
+                if chunk_windows is not None
+                else _iter_window_chunks(win)
+            )
+            for chunk_index, chunk_win in enumerate(chunk_iter, start=1):
                 _raise_if_stats_job_cancelled(job)
                 if (
                     total_chunks > 0
@@ -1598,12 +1611,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if int(win.width) <= 0 or int(win.height) <= 0:
                     return result
 
-                progress_span = progress_end - progress_start
-                first_pass_end = (
-                    progress_start + progress_span * 0.7
-                    if not is_categorical
-                    else progress_end
-                )
                 acc = {
                     "count": 0,
                     "sum": 0.0,
@@ -1624,7 +1631,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     win,
                     all_touched,
                     progress_start=progress_start,
-                    progress_end=first_pass_end,
+                    progress_end=progress_end,
                     progress_message=f"Reading {raster_id}",
                 ):
                     acc["sample_area_hectares"] += valid_area_hectares(
@@ -1688,27 +1695,12 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     )
                 elif valid:
                     edges = _histogram_edges(min_value, max_value, bins)
-                    hist = np.zeros(bins, dtype="int64")
-                    for (
-                        data,
-                        _mask,
-                        valid_mask,
-                        _affine,
-                        _chunk_win,
-                    ) in _masked_chunk_values(
-                        ds,
-                        nodata_val,
-                        geom_ref_shape,
-                        win,
-                        all_touched,
-                        progress_start=first_pass_end,
-                        progress_end=progress_end,
-                        progress_message=f"Building histogram for {raster_id}",
-                    ):
-                        if not np.any(valid_mask):
-                            continue
-                        vals = data[valid_mask]
-                        hist += np.histogram(vals, bins=edges)[0].astype("int64")
+                    hist = np.histogram(sample_values, bins=edges)[0].astype("int64")
+                    _update_stats_job(
+                        job,
+                        progress=progress_end,
+                        message=f"Built sampled histogram for {raster_id}",
+                    )
 
                 result.update(
                     {
@@ -1773,10 +1765,14 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 (len(x_edges_2d) - 1, len(y_edges_2d) - 1),
                 dtype="int64",
             )
-            paired_chunk_total = _window_chunk_count(x_win)
+            paired_chunk_windows = list(_iter_window_chunks(x_win))
+            pair_chunk_rng = np.random.default_rng(0)
+            paired_chunk_windows = [
+                paired_chunk_windows[int(index)]
+                for index in pair_chunk_rng.permutation(len(paired_chunk_windows))
+            ]
             pair_sample = None
-            pair_sample_rng = np.random.default_rng(0)
-            n_pairs = 0
+            pair_sample_rng = np.random.default_rng(1)
 
             def _read_y_on_x_grid(x_affine, x_shape):
                 try:
@@ -1833,9 +1829,10 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 x_geom,
                 x_win,
                 scatter_request.all_touched,
+                chunk_windows=paired_chunk_windows,
                 progress_start=0.75,
                 progress_end=0.98,
-                progress_message="Building paired scatter",
+                progress_message="Sampling paired scatter",
             ), start=1):
                 _raise_if_stats_job_cancelled(job)
                 if not np.any(valid_mask):
@@ -1847,14 +1844,6 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
                 x_pairs = data[finite_mask]
                 y_pairs = y_on_xgrid[finite_mask]
-                n_pairs += int(x_pairs.size)
-                chunk_hist2d, _x_edges_unused, _y_edges_unused = np.histogram2d(
-                    x_pairs,
-                    y_pairs,
-                    bins=[x_edges_2d, y_edges_2d],
-                )
-                hist2d += chunk_hist2d.astype("int64")
-
                 chunk_pairs = np.column_stack([x_pairs, y_pairs])
                 pair_sample = _bounded_sample_append(
                     pair_sample,
@@ -1862,19 +1851,28 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     scatter_request.max_points,
                     pair_sample_rng,
                 )
-                if paired_chunk_total > 0:
-                    _update_stats_job(
-                        job,
-                        progress=0.75
-                        + (0.98 - 0.75) * (pair_chunk_index / paired_chunk_total),
-                        message="Building paired scatter",
-                    )
+                if (
+                    pair_sample is not None
+                    and pair_sample.shape[0] >= scatter_request.max_points
+                ):
+                    break
 
             x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
-            valid_pixels = n_pairs
-            if n_pairs > 0:
+            if pair_sample is not None and pair_sample.size > 0:
                 x_plot = pair_sample[:, 0]
                 y_plot = pair_sample[:, 1]
+                hist2d_counts, _x_edges_unused, _y_edges_unused = np.histogram2d(
+                    x_plot,
+                    y_plot,
+                    bins=[x_edges_2d, y_edges_2d],
+                )
+                hist2d = hist2d_counts.astype("int64")
+                valid_pixels = int(pair_sample.shape[0])
+            _update_stats_job(
+                job,
+                progress=0.98,
+                message="Built sampled paired scatter",
+            )
 
         # if only one is valid, prepare 1D scatter arrays directly from that raster
         if x_hist_valid ^ y_hist_valid:  # XOR
@@ -1914,6 +1912,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_categories=results["x"]["categories"],
             y_categories=results["y"]["categories"],
             valid_pixels=valid_pixels,
+            plot_sampled=bool(x_hist_valid or y_hist_valid),
             geometry=scatter_request.geometry,
         )
         _update_stats_job(

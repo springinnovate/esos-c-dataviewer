@@ -2632,6 +2632,12 @@ async function renderScatterOverlay(opts) {
 
   if (svg) {
     plotEl.appendChild(svg);
+    if (scatterObj.plot_sampled) {
+      const note = document.createElement('div');
+      note.className = 'sample-plot-note';
+      note.textContent = 'Plot is sampled; summary stats are exact.';
+      plotEl.appendChild(note);
+    }
     state.scatterSvg = svg;
 
     renderPlotRangeControls({

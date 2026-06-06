@@ -518,6 +518,12 @@ input.num::-webkit-outer-spin-button {
     min-width: 0;
 }
 
+.sample-plot-note {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
 .sample-summary {
     display: grid;
     gap: 6px;

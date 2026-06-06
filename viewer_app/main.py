@@ -79,7 +79,7 @@ def _load_layers_config(config_path: str) -> dict:
     if not Path(config_path).exists():
         raise FileNotFoundError(config_path)
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(os.path.expandvars(f.read()))
 
 
 def _collect_layers(layer_key: str, config: dict) -> list:
@@ -110,6 +110,19 @@ def _collect_layers(layer_key: str, config: dict) -> list:
             }
         )
     return layers
+
+
+def _sample_vector_config(config: dict) -> Optional[dict]:
+    """Return public sample vector UI config, if configured."""
+    sample_vector = config.get("sampleVector") or config.get("sample_vector")
+    if not sample_vector:
+        return None
+
+    return {
+        "enabled": True,
+        "label_field": sample_vector.get("label_field"),
+        "toggle_label": sample_vector.get("toggle_label") or "Select feature",
+    }
 
 
 def _read_version():
@@ -201,6 +214,7 @@ def api_config():
         "geoserver_base_url": os.getenv("GEOSERVER_BASE_URL").rstrip("/"),
         "layers": _collect_layers("layers", config),
         "baseLayers": _collect_layers("baseLayers", config),
+        "sampleVector": _sample_vector_config(config),
         "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
         "global_crs": os.getenv("GLOBAL_CRS").strip(),
     }

@@ -1269,15 +1269,18 @@ def minmax_stats(r: RasterMinMaxIn):
         )
 
 
-def _transform_x(transform_x):
-    def _apply(x, y, z=None):
-        x_arr = np.asarray(x)
-        x_out = transform_x(x_arr)
-        if z is None:
-            return x_out, y
-        return x_out, y, z
+def _shift_negative_longitudes(x, y, z=None):
+    shifted_x = np.where(np.asarray(x) < 0, np.asarray(x) + 360, x)
+    if z is None:
+        return shifted_x, y
+    return shifted_x, y, z
 
-    return _apply
+
+def _normalize_shifted_longitudes(x, y, z=None):
+    normalized_x = np.where(np.asarray(x) > 180, np.asarray(x) - 360, x)
+    if z is None:
+        return normalized_x, y
+    return normalized_x, y, z
 
 
 def _split_antimeridian_polygon(poly: Polygon) -> list[Polygon]:
@@ -1289,10 +1292,7 @@ def _split_antimeridian_polygon(poly: Polygon) -> list[Polygon]:
     if maxx - minx <= 180:
         return [poly]
 
-    shifted = shp_transform(
-        _transform_x(lambda x: np.where(x < 0, x + 360, x)),
-        poly,
-    )
+    shifted = shp_transform(_shift_negative_longitudes, poly)
     splitter = LineString([(180, -90), (180, 90)])
     pieces = list(shp_split(shifted, splitter).geoms)
     if not pieces:
@@ -1302,10 +1302,7 @@ def _split_antimeridian_polygon(poly: Polygon) -> list[Polygon]:
     for piece in pieces:
         if piece.is_empty:
             continue
-        normalized_piece = shp_transform(
-            _transform_x(lambda x: np.where(x > 180, x - 360, x)),
-            piece,
-        )
+        normalized_piece = shp_transform(_normalize_shifted_longitudes, piece)
         if isinstance(normalized_piece, Polygon):
             normalized.append(normalized_piece)
         elif isinstance(normalized_piece, MultiPolygon):
@@ -1472,13 +1469,6 @@ def _window_plans_for_geom(dataset, geometry):
     return plans
 
 
-def _chunk_pairs_for_plans(plans):
-    """Yield geometry/window pairs for all chunks in all planned windows."""
-    for plan in plans:
-        for chunk_win in _iter_window_chunks(plan["window"]):
-            yield plan["geometry"], chunk_win
-
-
 def _histogram_edges(min_value: float, max_value: float, bins: int) -> np.ndarray:
     """Build stable histogram edges, padding flat-value ranges slightly."""
     if min_value == max_value:
@@ -1587,28 +1577,14 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         def _masked_chunk_values(
             ds,
             nodata_val,
-            geom_ref_shape,
-            win,
             all_touched,
-            chunk_pairs=None,
+            chunk_pairs,
             progress_start=None,
             progress_end=None,
             progress_message=None,
         ):
-            total_chunks = (
-                len(chunk_pairs)
-                if chunk_pairs is not None
-                else _window_chunk_count(win)
-            )
-            chunk_iter = (
-                chunk_pairs
-                if chunk_pairs is not None
-                else (
-                    (geom_ref_shape, chunk_win)
-                    for chunk_win in _iter_window_chunks(win)
-                )
-            )
-            for chunk_index, (chunk_geom, chunk_win) in enumerate(chunk_iter, start=1):
+            total_chunks = len(chunk_pairs)
+            for chunk_index, (chunk_geom, chunk_win) in enumerate(chunk_pairs, start=1):
                 _raise_if_stats_job_cancelled(job)
                 if (
                     total_chunks > 0
@@ -1706,7 +1682,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if not plans:
                     return result
                 result["window"] = plans[0]["window"]
-                chunk_pairs = list(_chunk_pairs_for_plans(plans))
+                chunk_pairs = [
+                    (plan["geometry"], chunk_win)
+                    for plan in plans
+                    for chunk_win in _iter_window_chunks(plan["window"])
+                ]
                 logger.debug(
                     "Raster %s sampling plan: polygon_windows=%s chunks=%s",
                     raster_id,
@@ -1730,10 +1710,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 for data, mask, valid_mask, affine, _chunk_win in _masked_chunk_values(
                     ds,
                     nodata_val,
-                    None,
-                    None,
                     all_touched,
-                    chunk_pairs=chunk_pairs,
+                    chunk_pairs,
                     progress_start=progress_start,
                     progress_end=progress_end,
                     progress_message=f"Reading {raster_id}",
@@ -1868,7 +1846,11 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 (len(x_edges_2d) - 1, len(y_edges_2d) - 1),
                 dtype="int64",
             )
-            paired_chunk_pairs = list(_chunk_pairs_for_plans(x_plans))
+            paired_chunk_pairs = [
+                (plan["geometry"], chunk_win)
+                for plan in x_plans
+                for chunk_win in _iter_window_chunks(plan["window"])
+            ]
             pair_chunk_rng = np.random.default_rng(0)
             paired_chunk_pairs = [
                 paired_chunk_pairs[int(index)]
@@ -1929,10 +1911,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             ) in enumerate(_masked_chunk_values(
                 x_ds,
                 results["x"]["nodata"],
-                None,
-                None,
                 scatter_request.all_touched,
-                chunk_pairs=paired_chunk_pairs,
+                paired_chunk_pairs,
                 progress_start=0.75,
                 progress_end=0.98,
                 progress_message="Sampling paired scatter",

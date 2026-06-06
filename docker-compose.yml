@@ -165,7 +165,9 @@ services:
       dockerfile: Dockerfile.rstats
     restart: unless-stopped
     environment:
-      - WORKERS=2
+      # Stats job progress/cancellation state is process-local. Keep one
+      # rstats worker unless job state moves to shared storage.
+      - WORKERS=1
       - GEOSERVER_LOCAL_DATA_DIR=${GEOSERVER_LOCAL_DATA_DIR}
     volumes:
       - ${LAYERS_YML}:/app/layers.yml:ro

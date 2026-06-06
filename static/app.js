@@ -2470,6 +2470,7 @@ async function renderScatterOverlay(opts) {
           </div>
           <div id='sampleSummary' class='sample-summary'></div>
         </div>
+        <div id='samplePlotNote' class='sample-plot-note hidden'></div>
         <div class='sample-advanced-controls'>
           <details id='plotControlsGroup' class='layer-group sample-control-details'>
             <summary>Plot Controls</summary>
@@ -2502,6 +2503,7 @@ async function renderScatterOverlay(opts) {
 
   const plotEl = document.getElementById('scatterPlot');
   const summaryEl = document.getElementById('sampleSummary');
+  const samplePlotNote = document.getElementById('samplePlotNote');
   const plotRangeControls = document.getElementById('plotRangeControls');
   const plotControlsGroup = document.getElementById('plotControlsGroup');
 
@@ -2510,6 +2512,7 @@ async function renderScatterOverlay(opts) {
   if (!visA && !visB) {
     plotEl.innerHTML = `<div class='no-layers-msg'><span>No layers selected</span></div>`;
     summaryEl?.replaceChildren();
+    samplePlotNote?.classList.add('hidden');
     plotControlsGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
@@ -2521,6 +2524,7 @@ async function renderScatterOverlay(opts) {
         `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;
     }
     summaryEl?.replaceChildren();
+    samplePlotNote?.classList.add('hidden');
     plotControlsGroup?.classList.add('hidden');
     plotRangeControls?.replaceChildren();
     return;
@@ -2632,6 +2636,10 @@ async function renderScatterOverlay(opts) {
 
   if (svg) {
     plotEl.appendChild(svg);
+    if (samplePlotNote) {
+      samplePlotNote.textContent = 'Plot is sampled; summary stats are exact.';
+      samplePlotNote.classList.toggle('hidden', !scatterObj.plot_sampled);
+    }
     state.scatterSvg = svg;
 
     renderPlotRangeControls({
@@ -2648,6 +2656,7 @@ async function renderScatterOverlay(opts) {
     }
   } else {
     state.scatterSvg = null;
+    samplePlotNote?.classList.add('hidden');
     if (histogramDisabled) {
       plotEl.innerHTML =
         `<div class='no-layers-msg'><span>${histogramDisabledMessage}</span></div>`;

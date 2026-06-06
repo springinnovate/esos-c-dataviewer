@@ -126,6 +126,9 @@ const state = {
   plotView: null,
   plotViewScatterObj: null,
   plotViewKind: null,
+  statsSessionId: null,
+  activeStatsJob: null,
+  statsRequestSeq: 0,
 };
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -1288,6 +1291,109 @@ async function onLayerChange(e, layerId) {
 }
 
 /**
+ * Return a per-tab stats session id used to cancel only this browser session's
+ * active polygon stats request.
+ */
+function getStatsSessionId() {
+  if (!state.statsSessionId) {
+    const randomPart =
+      window.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    state.statsSessionId = `stats-session-${randomPart}`;
+  }
+  return state.statsSessionId;
+}
+
+function makeStatsJobId() {
+  const randomPart =
+    window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `stats-job-${randomPart}`;
+}
+
+function isCurrentStatsJob(job) {
+  return !!job && state.activeStatsJob?.jobId === job.jobId;
+}
+
+function updateScatterLoadingMessage(message, progress) {
+  const loadingText = document.querySelector("#scatterPlot .no-layers-msg span");
+  if (!loadingText) return;
+  const pct =
+    Number.isFinite(progress) && progress >= 0
+      ? ` ${Math.round(progress * 100)}%`
+      : "";
+  loadingText.textContent = `${message}${pct}`;
+}
+
+function cancelActiveStatsJob(reason = "superseded") {
+  const job = state.activeStatsJob;
+  if (!job) return;
+
+  job.cancelled = true;
+  job.controller?.abort();
+  if (job.pollTimer) window.clearInterval(job.pollTimer);
+  if (isCurrentStatsJob(job)) state.activeStatsJob = null;
+
+  const body = JSON.stringify({ session_id: job.sessionId, reason });
+  fetch(
+    `${state.baseStatsUrl}/stats/jobs/${encodeURIComponent(job.jobId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    },
+  ).catch(() => {});
+}
+
+function startStatsJobPolling(job, onProgress) {
+  let polling = false;
+
+  const poll = async () => {
+    if (polling || !isCurrentStatsJob(job)) return;
+    polling = true;
+    try {
+      const res = await fetch(
+        `${state.baseStatsUrl}/stats/jobs/${encodeURIComponent(job.jobId)}`,
+      );
+      if (!res.ok || !isCurrentStatsJob(job)) return;
+      const status = await res.json();
+      onProgress?.(status);
+      if (["completed", "cancelled", "failed"].includes(status.status)) {
+        window.clearInterval(job.pollTimer);
+      }
+    } catch {
+      // Polling is advisory; the main stats request reports hard failures.
+    } finally {
+      polling = false;
+    }
+  };
+
+  job.pollTimer = window.setInterval(poll, 750);
+  window.setTimeout(poll, 250);
+}
+
+function makeStatsCancelledError(message = "Stats request cancelled") {
+  const err = new Error(message);
+  err.name = "StatsCancelledError";
+  return err;
+}
+
+function makeStatsStaleError(message = "Stale stats response ignored") {
+  const err = new Error(message);
+  err.name = "StatsStaleError";
+  return err;
+}
+
+function isIgnorableStatsError(err) {
+  return (
+    err?.name === "AbortError" ||
+    err?.name === "StatsCancelledError" ||
+    err?.name === "StatsStaleError"
+  );
+}
+
+/**
  * POST a geometry to the rstats service and return scatter data for two rasters.
  * @param {string} rasterIdX
  * @param {string} rasterIdY
@@ -1295,23 +1401,50 @@ async function onLayerChange(e, layerId) {
  * @returns {Promise<{x:number[],y:number[],hist2d:number[][],x_edges:number[],y_edges:number[],corr:number,slope:number,intercept:number}>}
  * @throws {Error} if the request fails
  */
-async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
-  const res = await fetch(`${state.baseStatsUrl}/stats/scatter`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      raster_id_x: rasterIdX ?? null,
-      raster_id_y: rasterIdY ?? null,
-      geometry: geojson.geometry ? geojson.geometry : geojson,
-      from_crs: "EPSG:4326", //the poly should be in lat/lng so this is hard-coded
-      histogram_bins: MAX_HISTOGRAM_BINS,
-      max_points: MAX_HISTOGRAM_POINTS,
-      all_touched: true,
-    }),
-  });
+async function fetchScatterStats(rasterIdX, rasterIdY, geojson, opts = {}) {
+  cancelActiveStatsJob();
+  const sessionId = getStatsSessionId();
+  const jobId = makeStatsJobId();
+  const controller = new AbortController();
+  const seq = state.statsRequestSeq + 1;
+  state.statsRequestSeq = seq;
+  const job = { jobId, sessionId, controller, pollTimer: null, seq };
+  state.activeStatsJob = job;
+  startStatsJobPolling(job, opts.onProgress);
 
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  try {
+    const res = await fetch(`${state.baseStatsUrl}/stats/scatter`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        raster_id_x: rasterIdX ?? null,
+        raster_id_y: rasterIdY ?? null,
+        geometry: geojson.geometry ? geojson.geometry : geojson,
+        from_crs: "EPSG:4326", //the poly should be in lat/lng so this is hard-coded
+        histogram_bins: MAX_HISTOGRAM_BINS,
+        max_points: MAX_HISTOGRAM_POINTS,
+        all_touched: true,
+        job_id: jobId,
+        session_id: sessionId,
+      }),
+    });
+    if (!isCurrentStatsJob(job)) {
+      throw makeStatsStaleError();
+    }
+    if (res.status === 499) {
+      throw makeStatsCancelledError();
+    }
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    if (!isCurrentStatsJob(job)) {
+      throw makeStatsStaleError();
+    }
+    return result;
+  } finally {
+    if (job.pollTimer) window.clearInterval(job.pollTimer);
+    if (isCurrentStatsJob(job)) state.activeStatsJob = null;
+  }
 }
 
 /**
@@ -1325,7 +1458,7 @@ async function fetchScatterStats(rasterIdX, rasterIdY, geojson) {
  *   histogramDisabledMessage: string
  * }>}
  */
-async function fetchContinuousScatterStats(layerA, layerB, geojson) {
+async function fetchContinuousScatterStats(layerA, layerB, geojson, opts = {}) {
   const categoricalA = isCategoricalLayer(layerA);
   const categoricalB = isCategoricalLayer(layerB);
   const rasterIdX = layerA ? layerA.name : null;
@@ -1344,7 +1477,7 @@ async function fetchContinuousScatterStats(layerA, layerB, geojson) {
   if (!hasContinuousLayer) {
     const bothCategorical = categoricalA && categoricalB;
     return {
-      scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson),
+      scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson, opts),
       histogramDisabled: true,
       histogramDisabledMessage: bothCategorical
         ? "Both rasters are categorical; histogram disabled."
@@ -1353,7 +1486,7 @@ async function fetchContinuousScatterStats(layerA, layerB, geojson) {
   }
 
   return {
-    scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson),
+    scatterObj: await fetchScatterStats(rasterIdX, rasterIdY, geojson, opts),
     histogramDisabled: false,
     histogramDisabledMessage: "",
   };
@@ -4238,7 +4371,12 @@ async function setAOIAndRenderOverlay(featureCollection, opts = {}) {
   const areaKm2 = areaM2 / 1e6;
   const loadingMessage = opts.loadingLabel
     ? `Calculating stats for ${opts.loadingLabel}`
-    : undefined;
+    : "Calculating stats";
+  const renderProgress = (status) => {
+    const phase = status.message || "Calculating stats";
+    const msg = loadingMessage ? `${loadingMessage}: ${phase}` : phase;
+    updateScatterLoadingMessage(msg, status.progress);
+  };
   await renderScatterOverlay({
     rasterX: layerLabel(layerX),
     rasterY: layerLabel(layerY),
@@ -4264,8 +4402,10 @@ async function setAOIAndRenderOverlay(featureCollection, opts = {}) {
       layerX,
       layerY,
       aoiGeometry,
+      { onProgress: renderProgress },
     );
   } catch (err) {
+    if (isIgnorableStatsError(err)) return;
     showOverlayError(`area sampler error: ${err.message || String(err)}`);
     throw err;
   }
@@ -4299,6 +4439,7 @@ function wireOverlayControls() {
   btn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    cancelActiveStatsJob("overlay closed");
     const wrap = document.getElementById("statsOverlay");
     const body = document.getElementById("overlayBody");
     if (wrap) wrap.classList.add("hidden");
@@ -4424,13 +4565,27 @@ async function sampleAndRenderSampleBox(latlng) {
     centerLat: latlng.lat,
     boxKm: state.boxSizeKm,
     scatterObj: null,
+    loadingMessage: "Calculating stats",
   });
 
-  const statsResult = await fetchContinuousScatterStats(
-    lyrA,
-    lyrB,
-    state.sampleBox.toGeoJSON(),
-  );
+  let statsResult;
+  try {
+    statsResult = await fetchContinuousScatterStats(
+      lyrA,
+      lyrB,
+      state.sampleBox.toGeoJSON(),
+      {
+        onProgress: (status) => {
+          const phase = status.message || "Calculating stats";
+          updateScatterLoadingMessage(phase, status.progress);
+        },
+      },
+    );
+  } catch (err) {
+    if (isIgnorableStatsError(err)) return;
+    showOverlayError(`area sampler error: ${err.message || String(err)}`);
+    throw err;
+  }
 
   await renderScatterOverlay({
     rasterX: layerLabel(lyrA),
@@ -4769,6 +4924,9 @@ function createBaseLegendControl() {
   wireControlGroup();
   wireOverlayControls();
   wireMapShell();
+  window.addEventListener("beforeunload", () => {
+    cancelActiveStatsJob("page unloaded");
+  });
   setSamplingMode("window");
 
   ["A", "B"].forEach((layerId) => wireDynamicStyleControls(layerId));

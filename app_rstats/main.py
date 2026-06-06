@@ -26,6 +26,7 @@ Intended usage:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Union
@@ -34,6 +35,8 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
+import time
 import traceback
 import zipfile
 
@@ -77,6 +80,130 @@ _GEOD = Geod(ellps="WGS84")
 _SQUARE_METERS_PER_HECTARE = 10_000.0
 _LEGEND_KEY_SEPARATOR = "\x00"
 _GEOMETRY_SCATTER_CHUNK_SIZE = 1000
+_STATS_JOB_TTL_SECONDS = 15 * 60
+
+
+class StatsJobCancelled(Exception):
+    """Raised when a running stats job is cooperatively cancelled."""
+
+
+@dataclass
+class _StatsJob:
+    job_id: str
+    session_id: Optional[str]
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    status: str = "running"
+    progress: float = 0.0
+    message: str = "Preparing stats"
+    started_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+    done_at: Optional[float] = None
+    error: Optional[str] = None
+
+
+_STATS_JOBS: dict[str, _StatsJob] = {}
+_STATS_SESSION_ACTIVE: dict[str, str] = {}
+_STATS_JOBS_LOCK = threading.Lock()
+
+
+def _stats_job_snapshot(job: _StatsJob) -> dict:
+    return {
+        "job_id": job.job_id,
+        "session_id": job.session_id,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "error": job.error,
+        "started_at": job.started_at,
+        "updated_at": job.updated_at,
+        "done_at": job.done_at,
+    }
+
+
+def _cleanup_stats_jobs(now: Optional[float] = None):
+    now = now or time.time()
+    stale_ids = [
+        job_id
+        for job_id, job in _STATS_JOBS.items()
+        if job.done_at is not None and now - job.done_at > _STATS_JOB_TTL_SECONDS
+    ]
+    for job_id in stale_ids:
+        job = _STATS_JOBS.pop(job_id, None)
+        if (
+            job
+            and job.session_id
+            and _STATS_SESSION_ACTIVE.get(job.session_id) == job_id
+        ):
+            _STATS_SESSION_ACTIVE.pop(job.session_id, None)
+
+
+def _register_stats_job(
+    job_id: Optional[str],
+    session_id: Optional[str],
+) -> Optional[_StatsJob]:
+    if not job_id:
+        return None
+
+    with _STATS_JOBS_LOCK:
+        _cleanup_stats_jobs()
+        if session_id:
+            previous_id = _STATS_SESSION_ACTIVE.get(session_id)
+            if previous_id and previous_id != job_id:
+                previous = _STATS_JOBS.get(previous_id)
+                if previous and previous.status == "running":
+                    previous.cancel_event.set()
+                    previous.status = "cancelled"
+                    previous.message = "Cancelled by a newer stats request"
+                    previous.progress = min(previous.progress, 0.99)
+                    previous.updated_at = time.time()
+                    previous.done_at = previous.updated_at
+
+        job = _StatsJob(job_id=job_id, session_id=session_id)
+        _STATS_JOBS[job_id] = job
+        if session_id:
+            _STATS_SESSION_ACTIVE[session_id] = job_id
+        return job
+
+
+def _update_stats_job(
+    job: Optional[_StatsJob],
+    *,
+    progress: Optional[float] = None,
+    message: Optional[str] = None,
+    status: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    if job is None:
+        return
+    with _STATS_JOBS_LOCK:
+        current = _STATS_JOBS.get(job.job_id)
+        if current is None:
+            return
+        if progress is not None:
+            current.progress = max(0.0, min(1.0, float(progress)))
+        if message is not None:
+            current.message = message
+        if status is not None:
+            current.status = status
+        if error is not None:
+            current.error = error
+        current.updated_at = time.time()
+        if (
+            current.status in {"completed", "cancelled", "failed"}
+            and current.done_at is None
+        ):
+            current.done_at = current.updated_at
+
+
+def _raise_if_stats_job_cancelled(job: Optional[_StatsJob]):
+    if job is not None and job.cancel_event.is_set():
+        _update_stats_job(
+            job,
+            status="cancelled",
+            message="Stats request cancelled",
+            progress=min(job.progress, 0.99),
+        )
+        raise StatsJobCancelled()
 
 
 def _geometry_log_summary(geometry: dict) -> str:
@@ -151,6 +278,24 @@ class GeometryScatterIn(BaseModel):
     histogram_bins: int
     max_points: int
     all_touched: bool
+    job_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class StatsJobCancelIn(BaseModel):
+    session_id: Optional[str] = None
+
+
+class StatsJobStatusOut(BaseModel):
+    job_id: str
+    session_id: Optional[str] = None
+    status: str
+    progress: float
+    message: str
+    error: Optional[str] = None
+    started_at: float
+    updated_at: float
+    done_at: Optional[float] = None
 
 
 class RasterSummary(BaseModel):
@@ -911,6 +1056,39 @@ app.add_middleware(
 )
 
 
+@app.get("/stats/jobs/{job_id}", response_model=StatsJobStatusOut)
+def stats_job_status(job_id: str):
+    """Return progress metadata for a polygon stats job."""
+    with _STATS_JOBS_LOCK:
+        _cleanup_stats_jobs()
+        job = _STATS_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="stats job not found")
+        return _stats_job_snapshot(job)
+
+
+@app.post("/stats/jobs/{job_id}/cancel", response_model=StatsJobStatusOut)
+def cancel_stats_job(job_id: str, req: StatsJobCancelIn):
+    """Request cooperative cancellation for a running polygon stats job."""
+    with _STATS_JOBS_LOCK:
+        _cleanup_stats_jobs()
+        job = _STATS_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="stats job not found")
+        if req.session_id and job.session_id != req.session_id:
+            raise HTTPException(status_code=403, detail="stats job session mismatch")
+
+        if job.status == "running":
+            job.cancel_event.set()
+            job.status = "cancelled"
+            job.message = "Cancellation requested"
+            job.progress = min(job.progress, 0.99)
+            job.updated_at = time.time()
+            job.done_at = job.updated_at
+
+        return _stats_job_snapshot(job)
+
+
 @app.get("/sample_vector")
 def sample_vector():
     """Return configured sample vector features as EPSG:4326 GeoJSON."""
@@ -1198,6 +1376,15 @@ def _iter_window_chunks(win: Window, chunk_size: int = _GEOMETRY_SCATTER_CHUNK_S
             yield Window(col_off, row_off, width, height)
 
 
+def _window_chunk_count(win: Window, chunk_size: int = _GEOMETRY_SCATTER_CHUNK_SIZE):
+    """Return the number of bounded chunks needed to cover a raster window."""
+    width = max(0, int(np.ceil(win.col_off + win.width)) - int(win.col_off))
+    height = max(0, int(np.ceil(win.row_off + win.height)) - int(win.row_off))
+    if width <= 0 or height <= 0:
+        return 0
+    return int(np.ceil(width / chunk_size) * np.ceil(height / chunk_size))
+
+
 def _histogram_edges(min_value: float, max_value: float, bins: int) -> np.ndarray:
     """Build stable histogram edges, padding flat-value ranges slightly."""
     if min_value == max_value:
@@ -1251,10 +1438,13 @@ def _summary_from_accumulator(acc: dict) -> Optional[RasterSummary]:
 
 @app.post("/stats/scatter", response_model=ScatterOut)
 def geometry_scatter(scatter_request: GeometryScatterIn):
+    job = _register_stats_job(scatter_request.job_id, scatter_request.session_id)
     try:
+        _update_stats_job(job, progress=0.01, message="Preparing stats")
         logger.debug(
             "Starting scatter computation: raster_id_x=%r raster_id_y=%r "
-            "geometry=%s from_crs=%r histogram_bins=%s max_points=%s all_touched=%s",
+            "geometry=%s from_crs=%r histogram_bins=%s max_points=%s "
+            "all_touched=%s job_id=%r session_id=%r",
             scatter_request.raster_id_x,
             scatter_request.raster_id_y,
             _geometry_log_summary(scatter_request.geometry),
@@ -1262,6 +1452,8 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             scatter_request.histogram_bins,
             scatter_request.max_points,
             scatter_request.all_touched,
+            scatter_request.job_id,
+            scatter_request.session_id,
         )
 
         # init validity flags
@@ -1297,8 +1489,32 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 "geometry": None,
             }
 
-        def _masked_chunk_values(ds, nodata_val, geom_ref_shape, win, all_touched):
-            for chunk_win in _iter_window_chunks(win):
+        def _masked_chunk_values(
+            ds,
+            nodata_val,
+            geom_ref_shape,
+            win,
+            all_touched,
+            *,
+            progress_start=None,
+            progress_end=None,
+            progress_message=None,
+        ):
+            total_chunks = _window_chunk_count(win)
+            for chunk_index, chunk_win in enumerate(_iter_window_chunks(win), start=1):
+                _raise_if_stats_job_cancelled(job)
+                if (
+                    total_chunks > 0
+                    and progress_start is not None
+                    and progress_end is not None
+                ):
+                    fraction = (chunk_index - 1) / total_chunks
+                    _update_stats_job(
+                        job,
+                        progress=progress_start
+                        + (progress_end - progress_start) * fraction,
+                        message=progress_message,
+                    )
                 data = ds.read(1, window=chunk_win, masked=False).astype(
                     "float64", copy=False
                 )
@@ -1318,6 +1534,19 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
 
                 valid_mask = mask & np.isfinite(data)
                 yield data, mask, valid_mask, affine, chunk_win
+                if (
+                    total_chunks > 0
+                    and progress_start is not None
+                    and progress_end is not None
+                ):
+                    fraction = chunk_index / total_chunks
+                    _update_stats_job(
+                        job,
+                        progress=progress_start
+                        + (progress_end - progress_start) * fraction,
+                        message=progress_message,
+                    )
+                _raise_if_stats_job_cancelled(job)
 
         def _merge_category_totals(group_areas, group_meta, chunk_areas, chunk_meta):
             for group_key, meta in chunk_meta.items():
@@ -1327,10 +1556,17 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 )
 
         # helper: read, clip-to-geometry, and compute 1D histogram
-        def _read_clip_hist(raster_id, bins, all_touched):
+        def _read_clip_hist(
+            raster_id,
+            bins,
+            all_touched,
+            progress_start,
+            progress_end,
+        ):
             if not raster_id:
                 return _empty_result()
 
+            _raise_if_stats_job_cancelled(job)
             result = _empty_result()
             ds = None
             nodata_val = None
@@ -1363,6 +1599,12 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 if int(win.width) <= 0 or int(win.height) <= 0:
                     return result
 
+                progress_span = progress_end - progress_start
+                first_pass_end = (
+                    progress_start + progress_span * 0.7
+                    if not is_categorical
+                    else progress_end
+                )
                 acc = {
                     "count": 0,
                     "sum": 0.0,
@@ -1382,6 +1624,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     geom_ref_shape,
                     win,
                     all_touched,
+                    progress_start=progress_start,
+                    progress_end=first_pass_end,
+                    progress_message=f"Reading {raster_id}",
                 ):
                     acc["sample_area_hectares"] += valid_area_hectares(
                         mask,
@@ -1457,6 +1702,9 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                         geom_ref_shape,
                         win,
                         all_touched,
+                        progress_start=first_pass_end,
+                        progress_end=progress_end,
+                        progress_message=f"Building histogram for {raster_id}",
                     ):
                         if not np.any(valid_mask):
                             continue
@@ -1482,10 +1730,18 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
         bins = scatter_request.histogram_bins
         results = {
             "x": _read_clip_hist(
-                scatter_request.raster_id_x, bins, scatter_request.all_touched
+                scatter_request.raster_id_x,
+                bins,
+                scatter_request.all_touched,
+                0.05,
+                0.4,
             ),
             "y": _read_clip_hist(
-                scatter_request.raster_id_y, bins, scatter_request.all_touched
+                scatter_request.raster_id_y,
+                bins,
+                scatter_request.all_touched,
+                0.4,
+                0.75,
             ),
         }
 
@@ -1518,6 +1774,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 (len(x_edges_2d) - 1, len(y_edges_2d) - 1),
                 dtype="int64",
             )
+            paired_chunk_total = _window_chunk_count(x_win)
             pair_sample = None
             pair_sample_rng = np.random.default_rng(0)
             n_pairs = 0
@@ -1568,13 +1825,20 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                 except WindowError:
                     return np.full(x_shape, np.nan, dtype="float64")
 
-            for data, _mask, valid_mask, affine, _chunk_win in _masked_chunk_values(
+            for (
+                pair_chunk_index,
+                (data, _mask, valid_mask, affine, _chunk_win),
+            ) in enumerate(_masked_chunk_values(
                 x_ds,
                 results["x"]["nodata"],
                 x_geom,
                 x_win,
                 scatter_request.all_touched,
-            ):
+                progress_start=0.75,
+                progress_end=0.98,
+                progress_message="Building paired scatter",
+            ), start=1):
+                _raise_if_stats_job_cancelled(job)
                 if not np.any(valid_mask):
                     continue
                 y_on_xgrid = _read_y_on_x_grid(affine, data.shape)
@@ -1599,6 +1863,13 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
                     scatter_request.max_points,
                     pair_sample_rng,
                 )
+                if paired_chunk_total > 0:
+                    _update_stats_job(
+                        job,
+                        progress=0.75
+                        + (0.98 - 0.75) * (pair_chunk_index / paired_chunk_total),
+                        message="Building paired scatter",
+                    )
 
             x_edges_out, y_edges_out = x_edges_2d, y_edges_2d
             valid_pixels = n_pairs
@@ -1613,7 +1884,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             x_plot = sampled if side == "x" else None
             y_plot = sampled if side == "y" else None
 
-        return ScatterOut(
+        response = ScatterOut(
             raster_id_x=scatter_request.raster_id_x,
             raster_id_y=scatter_request.raster_id_y,
             x=x_plot.tolist() if x_plot is not None else None,
@@ -1646,11 +1917,28 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             valid_pixels=valid_pixels,
             geometry=scatter_request.geometry,
         )
+        _update_stats_job(
+            job,
+            status="completed",
+            progress=1.0,
+            message="Stats complete",
+        )
+        return response
 
     except HTTPException:
+        _update_stats_job(job, status="failed", message="Stats failed")
         logger.exception("scatter stats failed")
         raise
+    except StatsJobCancelled:
+        logger.info("scatter stats cancelled: job_id=%r", scatter_request.job_id)
+        raise HTTPException(status_code=499, detail="Stats job cancelled")
     except Exception as e:
+        _update_stats_job(
+            job,
+            status="failed",
+            message="Stats failed",
+            error=f"{type(e).__name__}: {e}",
+        )
         logger.exception("scatter stats failed")
         raise HTTPException(
             status_code=500,

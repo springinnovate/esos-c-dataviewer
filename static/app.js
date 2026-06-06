@@ -4238,18 +4238,20 @@ async function setAOIAndRenderOverlay(featureCollection, opts = {}) {
   const areaKm2 = areaM2 / 1e6;
   const loadingMessage = opts.loadingLabel
     ? `Calculating stats for ${opts.loadingLabel}`
-    : "";
-  if (loadingMessage) {
-    await renderScatterOverlay({
-      rasterX: layerLabel(layerX),
-      rasterY: layerLabel(layerY),
-      centerLng: centerLngLat.lng,
-      centerLat: centerLngLat.lat,
-      boxKm: areaKm2,
-      scatterObj: null,
-      loadingMessage,
-    });
-  }
+    : undefined;
+  await renderScatterOverlay({
+    rasterX: layerLabel(layerX),
+    rasterY: layerLabel(layerY),
+    rasterXId: layerX?.name,
+    rasterYId: layerY?.name,
+    rasterXUnits: layerUnits(layerX),
+    rasterYUnits: layerUnits(layerY),
+    centerLng: centerLngLat.lng,
+    centerLat: centerLngLat.lat,
+    boxKm: areaKm2,
+    scatterObj: null,
+    loadingMessage,
+  });
 
   let statsResult;
   try {

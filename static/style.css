@@ -519,9 +519,10 @@ input.num::-webkit-outer-spin-button {
 }
 
 .sample-plot-note {
-    margin-top: 4px;
+    margin-top: 6px;
     color: var(--muted);
-    font-size: 0.78rem;
+    font-size: 0.72rem;
+    line-height: 1.25;
 }
 
 .sample-summary {

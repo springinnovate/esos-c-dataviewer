@@ -109,6 +109,9 @@ const state = {
   uploadedLayer: null,
   sampleVectorConfig: null,
   sampleVectorFeatures: [],
+  sampleVectorLoading: false,
+  sampleVectorError: null,
+  sampleVectorLoadPromise: null,
   sampleVectorOutlineLayer: null,
   selectedSampleVectorFeature: null,
   lastPointMarker: null,
@@ -3437,8 +3440,12 @@ function wireControlGroup() {
 
     inputs[activeSection].forEach((inputElement) => {
       if (inputElement) {
-        inputElement.disabled = false;
-        inputElement.tabIndex = 0;
+        if (inputElement.id === "sampleVectorSelect") {
+          setSampleVectorSelectInteractive(inputElement);
+        } else {
+          inputElement.disabled = false;
+          inputElement.tabIndex = 0;
+        }
       }
     });
 
@@ -4143,6 +4150,17 @@ function showSampleVectorOutline() {
   ).addTo(state.map);
 }
 
+function setSampleVectorSelectInteractive(select) {
+  if (!select) return;
+  const canSelect =
+    !state.sampleVectorLoading &&
+    !state.sampleVectorError &&
+    state.sampleVectorFeatures.length > 0 &&
+    state.sampleMode === "shapefile";
+  select.disabled = !canSelect;
+  select.tabIndex = canSelect ? 0 : -1;
+}
+
 async function selectSampleVectorFeature(label) {
   const feature = state.sampleVectorFeatures.find((item) => item.label === label);
   if (!feature) return;
@@ -4159,42 +4177,11 @@ async function selectSampleVectorFeature(label) {
   enableDownloadButton();
 }
 
-async function configureSampleVectorControl(sampleVectorConfig) {
-  state.sampleVectorConfig = sampleVectorConfig?.enabled ? sampleVectorConfig : null;
-  if (!state.sampleVectorConfig) return;
-
-  const group = document.querySelector(".control-group.tools");
-  const section = group?.querySelector("[data-section='shapefile']");
-  const modeButton = group?.querySelector(".mode-btn[data-mode='shapefile']");
-  if (!section || !modeButton) return;
-
-  const toggleLabel = state.sampleVectorConfig.toggle_label || "Select feature";
-  modeButton.textContent = toggleLabel;
-
-  const label = document.createElement("label");
-  label.className = "tool-label";
-  label.htmlFor = "sampleVectorSelect";
-  label.textContent = toggleLabel;
-
-  const description = document.createElement("p");
-  description.className = "tool-description";
-  description.textContent =
-    "Select a configured area of interest to sample exact vector geometry.";
-
-  const select = document.createElement("select");
-  select.id = "sampleVectorSelect";
-  select.disabled = true;
-
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Loading areas...";
-  select.appendChild(placeholder);
-
-  const status = document.createElement("span");
-  status.className = "small-mono muted";
-  status.setAttribute("aria-live", "polite");
-
-  section.replaceChildren(label, description, select, status);
+async function loadSampleVectorFeatures(select, status) {
+  state.sampleVectorLoading = true;
+  state.sampleVectorError = null;
+  setSampleVectorSelectInteractive(select);
+  status.textContent = "Loading configured areas...";
 
   try {
     const res = await fetch(`${state.baseStatsUrl}/sample_vector`);
@@ -4217,25 +4204,76 @@ async function configureSampleVectorControl(sampleVectorConfig) {
       select.appendChild(option);
     });
 
-    select.disabled = state.sampleVectorFeatures.length === 0;
     status.textContent = state.sampleVectorFeatures.length
       ? `${state.sampleVectorFeatures.length} areas available`
       : "";
+
+    if (state.sampleMode === "shapefile") showSampleVectorOutline();
   } catch (err) {
     console.error(err);
+    state.sampleVectorError = err;
+    state.sampleVectorFeatures = [];
     select.replaceChildren();
     const failed = document.createElement("option");
     failed.value = "";
     failed.textContent = "Failed to load configured areas";
     select.appendChild(failed);
-    select.disabled = true;
     status.textContent = "Configured vector unavailable";
+  } finally {
+    state.sampleVectorLoading = false;
+    setSampleVectorSelectInteractive(select);
   }
+}
+
+function configureSampleVectorControl(sampleVectorConfig) {
+  state.sampleVectorConfig = sampleVectorConfig?.enabled ? sampleVectorConfig : null;
+  state.sampleVectorFeatures = [];
+  state.sampleVectorLoading = false;
+  state.sampleVectorError = null;
+  state.sampleVectorLoadPromise = null;
+  if (!state.sampleVectorConfig) return null;
+
+  const group = document.querySelector(".control-group.tools");
+  const section = group?.querySelector("[data-section='shapefile']");
+  const modeButton = group?.querySelector(".mode-btn[data-mode='shapefile']");
+  if (!section || !modeButton) return null;
+
+  const toggleLabel = state.sampleVectorConfig.toggle_label || "Select feature";
+  modeButton.textContent = toggleLabel;
+
+  const label = document.createElement("label");
+  label.className = "tool-label";
+  label.htmlFor = "sampleVectorSelect";
+  label.textContent = toggleLabel;
+
+  const description = document.createElement("p");
+  description.className = "tool-description";
+  description.textContent =
+    "Select a configured area of interest to sample exact vector geometry.";
+
+  const select = document.createElement("select");
+  select.id = "sampleVectorSelect";
+  select.disabled = true;
+  select.tabIndex = -1;
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Loading areas...";
+  select.appendChild(placeholder);
+
+  const status = document.createElement("span");
+  status.className = "small-mono muted";
+  status.setAttribute("aria-live", "polite");
+
+  section.replaceChildren(label, description, select, status);
 
   select.addEventListener("change", async () => {
     if (!select.value) return;
     await selectSampleVectorFeature(select.value);
   });
+
+  state.sampleVectorLoadPromise = loadSampleVectorFeatures(select, status);
+  return state.sampleVectorLoadPromise;
 }
 
 function toFeatureCollection(geo) {
@@ -4928,7 +4966,7 @@ function createBaseLegendControl() {
   wirePixelProbe();
   wireBivariatePalettePicker("bivariatePaletteSelect");
   wireBivariateLegend();
-  await configureSampleVectorControl(cfg.sampleVector);
+  configureSampleVectorControl(cfg.sampleVector);
   wireShapefileAOIControl();
   wireControlGroup();
   wireOverlayControls();

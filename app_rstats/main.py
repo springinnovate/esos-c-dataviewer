@@ -30,10 +30,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Union
+import hashlib
 import json
 import logging
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -83,6 +85,11 @@ _SQUARE_METERS_PER_HECTARE = 10_000.0
 _LEGEND_KEY_SEPARATOR = "\x00"
 _GEOMETRY_SCATTER_CHUNK_SIZE = 1000
 _STATS_JOB_TTL_SECONDS = 15 * 60
+_SCATTER_CACHE_SCHEMA_VERSION = "scatter-cache-v1"
+_SCATTER_CACHE_PATH = Path(os.environ["RSTATS_CACHE_PATH"])
+_SCATTER_CACHE_MAX_ENTRIES = int(os.environ["RSTATS_CACHE_MAX_ENTRIES"])
+_SCATTER_CACHE_LOCK = threading.Lock()
+_SCATTER_CACHE_INITIALIZED = False
 
 
 class StatsJobCancelled(Exception):
@@ -206,6 +213,192 @@ def _raise_if_stats_job_cancelled(job: Optional[_StatsJob]):
             progress=min(job.progress, 0.99),
         )
         raise StatsJobCancelled()
+
+
+def _scatter_cache_enabled() -> bool:
+    return _SCATTER_CACHE_MAX_ENTRIES > 0 and bool(_SCATTER_CACHE_PATH)
+
+
+def _scatter_cache_connect():
+    _SCATTER_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(_SCATTER_CACHE_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scatter_cache (
+            cache_key TEXT PRIMARY KEY,
+            response_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            last_accessed_at REAL NOT NULL,
+            access_count INTEGER NOT NULL DEFAULT 0,
+            response_bytes INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_scatter_cache_last_accessed
+        ON scatter_cache(last_accessed_at)
+        """
+    )
+    # cache_key is indexed by the primary key; last_accessed_at supports LRU trim.
+    return conn
+
+
+def _ensure_scatter_cache():
+    global _SCATTER_CACHE_INITIALIZED
+    if _SCATTER_CACHE_INITIALIZED or not _scatter_cache_enabled():
+        return
+    with _SCATTER_CACHE_LOCK:
+        if _SCATTER_CACHE_INITIALIZED:
+            return
+        with _scatter_cache_connect() as conn:
+            conn.commit()
+        _SCATTER_CACHE_INITIALIZED = True
+
+
+def _model_to_json_dict(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(mode="json")
+    return json.loads(model.json())
+
+
+def _canonical_json(data) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _registry_entry_for_raster(raster_id: Optional[str]) -> Optional[dict]:
+    if not raster_id:
+        return None
+    return REGISTRY.get(raster_id) or REGISTRY.get(str(raster_id).lower())
+
+
+def _raster_cache_fingerprint(raster_id: Optional[str]) -> Optional[dict]:
+    if not raster_id:
+        return None
+    meta = _registry_entry_for_raster(raster_id)
+    if not meta:
+        return {"raster_id": raster_id, "registry": "missing"}
+
+    path = Path(meta["file_path"])
+    fingerprint = {"raster_id": raster_id, "path": str(path)}
+    try:
+        stat = path.stat()
+        fingerprint.update(
+            {
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    except OSError:
+        fingerprint.update({"size": None, "mtime_ns": None})
+    return fingerprint
+
+
+def _scatter_cache_key(scatter_request: GeometryScatterIn) -> str:
+    key_payload = {
+        "schema": _SCATTER_CACHE_SCHEMA_VERSION,
+        "raster_id_x": scatter_request.raster_id_x,
+        "raster_id_y": scatter_request.raster_id_y,
+        "raster_x_fingerprint": _raster_cache_fingerprint(
+            scatter_request.raster_id_x
+        ),
+        "raster_y_fingerprint": _raster_cache_fingerprint(
+            scatter_request.raster_id_y
+        ),
+        "geometry": scatter_request.geometry,
+        "from_crs": scatter_request.from_crs,
+        "histogram_bins": scatter_request.histogram_bins,
+        "max_points": scatter_request.max_points,
+        "all_touched": scatter_request.all_touched,
+    }
+    return hashlib.sha256(_canonical_json(key_payload).encode("utf-8")).hexdigest()
+
+
+def _scatter_cache_get(cache_key: str) -> Optional[dict]:
+    if not _scatter_cache_enabled():
+        return None
+    try:
+        _ensure_scatter_cache()
+        now = time.time()
+        with _SCATTER_CACHE_LOCK:
+            with _scatter_cache_connect() as conn:
+                row = conn.execute(
+                    "SELECT response_json FROM scatter_cache WHERE cache_key = ?",
+                    (cache_key,),
+                ).fetchone()
+                if not row:
+                    return None
+                conn.execute(
+                    """
+                    UPDATE scatter_cache
+                    SET last_accessed_at = ?, access_count = access_count + 1
+                    WHERE cache_key = ?
+                    """,
+                    (now, cache_key),
+                )
+                conn.commit()
+                return json.loads(row[0])
+    except Exception:
+        logger.warning("scatter cache read failed", exc_info=True)
+        return None
+
+
+def _trim_scatter_cache(conn):
+    if _SCATTER_CACHE_MAX_ENTRIES <= 0:
+        return
+    conn.execute(
+        """
+        DELETE FROM scatter_cache
+        WHERE cache_key IN (
+            SELECT cache_key
+            FROM scatter_cache
+            ORDER BY last_accessed_at DESC
+            LIMIT -1 OFFSET ?
+        )
+        """,
+        (_SCATTER_CACHE_MAX_ENTRIES,),
+    )
+
+
+def _scatter_cache_put(cache_key: str, response: ScatterOut):
+    if not _scatter_cache_enabled():
+        return
+    try:
+        _ensure_scatter_cache()
+        now = time.time()
+        response_json = _canonical_json(_model_to_json_dict(response))
+        with _SCATTER_CACHE_LOCK:
+            with _scatter_cache_connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO scatter_cache (
+                        cache_key,
+                        response_json,
+                        created_at,
+                        last_accessed_at,
+                        access_count,
+                        response_bytes
+                    )
+                    VALUES (?, ?, ?, ?, 0, ?)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        response_json = excluded.response_json,
+                        last_accessed_at = excluded.last_accessed_at,
+                        response_bytes = excluded.response_bytes
+                    """,
+                    (
+                        cache_key,
+                        response_json,
+                        now,
+                        now,
+                        len(response_json.encode("utf-8")),
+                    ),
+                )
+                _trim_scatter_cache(conn)
+                conn.commit()
+    except Exception:
+        logger.warning("scatter cache write failed", exc_info=True)
 
 
 def _geometry_log_summary(geometry: dict) -> str:
@@ -1539,6 +1732,20 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             scatter_request.job_id,
             scatter_request.session_id,
         )
+        _update_stats_job(job, progress=0.02, message="Checking stats cache")
+        cache_key = _scatter_cache_key(scatter_request)
+        cached_response = _scatter_cache_get(cache_key)
+        if cached_response is not None:
+            logger.info("scatter cache hit: key=%s", cache_key[:12])
+            response = ScatterOut(**cached_response)
+            _update_stats_job(
+                job,
+                status="completed",
+                progress=1.0,
+                message="Loaded cached stats",
+            )
+            return response
+        logger.info("scatter cache miss: key=%s", cache_key[:12])
 
         # init validity flags
         x_valid, y_valid = False, False
@@ -2004,6 +2211,7 @@ def geometry_scatter(scatter_request: GeometryScatterIn):
             progress=1.0,
             message="Stats complete",
         )
+        _scatter_cache_put(cache_key, response)
         return response
 
     except HTTPException:

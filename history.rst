@@ -16,6 +16,8 @@ Unreleased
   overriding COG nodata independently of pixel values.
 * Hid the base-layer selector by default and only reveals it when configured
   base layers are returned by the viewer configuration API.
+* Added frontend EPSG:8857 map CRS support and a visible unsupported-CRS
+  startup message.
 
 1.4.0 (2026-05-29)
 ------------------

@@ -1871,6 +1871,26 @@ function getScatterMarginalCounts(hist2d) {
   return { xCounts, yCounts };
 }
 
+function percentileRangeFromHistogram(edges, counts, lowQuantile = 0.01, highQuantile = 0.99) {
+  if (!Array.isArray(edges) || !Array.isArray(counts) || edges.length < 2) {
+    return null;
+  }
+
+  const fullMin = edges[0];
+  const fullMax = edges[edges.length - 1];
+  const rangeMin = getHistogramQuantile(edges, counts, lowQuantile);
+  const rangeMax = getHistogramQuantile(edges, counts, highQuantile);
+
+  if (!Number.isFinite(rangeMin) || !Number.isFinite(rangeMax) || !(rangeMin < rangeMax)) {
+    return { min: fullMin, max: fullMax };
+  }
+
+  return {
+    min: Math.max(fullMin, rangeMin),
+    max: Math.min(fullMax, rangeMax),
+  };
+}
+
 /**
  * Initialize or update the plot view range for the current scatter object and plot type.
  * If the view already corresponds to the same scatter object and plot kind, no change is made.
@@ -1887,15 +1907,19 @@ function ensurePlotView(scatterObj, plotKind) {
     return;
   }
 
+  const marginalCounts = Array.isArray(scatterObj?.hist2d)
+    ? getScatterMarginalCounts(scatterObj.hist2d)
+    : null;
+  const xCounts = marginalCounts?.xCounts ?? scatterObj?.hist1d_x;
+  const yCounts = marginalCounts?.yCounts ?? scatterObj?.hist1d_y;
+  const xRange = percentileRangeFromHistogram(scatterObj?.x_edges, xCounts);
+  const yRange = percentileRangeFromHistogram(scatterObj?.y_edges, yCounts);
+
   state.plotView = {
-    xMin: Array.isArray(scatterObj?.x_edges) ? scatterObj.x_edges[0] : null,
-    xMax: Array.isArray(scatterObj?.x_edges)
-      ? scatterObj.x_edges[scatterObj.x_edges.length - 1]
-      : null,
-    yMin: Array.isArray(scatterObj?.y_edges) ? scatterObj.y_edges[0] : null,
-    yMax: Array.isArray(scatterObj?.y_edges)
-      ? scatterObj.y_edges[scatterObj.y_edges.length - 1]
-      : null,
+    xMin: xRange?.min ?? null,
+    xMax: xRange?.max ?? null,
+    yMin: yRange?.min ?? null,
+    yMax: yRange?.max ?? null,
   };
   state.plotViewScatterObj = scatterObj;
   state.plotViewKind = plotKind;

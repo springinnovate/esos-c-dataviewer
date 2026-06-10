@@ -4,8 +4,9 @@ History
 Unreleased
 ----------
 * Rebuilt histogram and scatter bins from sampled values when plot ranges
-  change, so focused long-tail views render with useful bars and boxes instead
-  of stretched full-range bins.
+  change, defaulting sampled plots to a 1st-99th percentile view so focused
+  long-tail views render with useful bars and boxes instead of stretched
+  full-range bins.
 * Fixed dynamic WMS styling for deployments that use a workspace other than
   ``esosc``.
 

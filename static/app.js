@@ -75,7 +75,7 @@ const state = {
   map: null,
   geoserverBaseUrl: null,
   baseStatsUrl: null,
-  dynamicStyle: "esosc:dynamic_style",
+  dynamicStyle: null,
   wmsLayerA: null,
   wmsLayerB: null,
   availableLayers: null,
@@ -5106,7 +5106,10 @@ function createBaseLegendControl() {
   state.availableLayers = cfg.layers;
   state.availableBaseLayers = cfg.baseLayers || [];
   state.baseStatsUrl = cfg.rstats_base_url;
-  state.dynamicStyle = cfg.dynamic_style || state.dynamicStyle;
+  state.dynamicStyle = cfg.dynamic_style;
+  if (!state.dynamicStyle) {
+    throw new Error("Viewer config is missing dynamic_style.");
+  }
 
   initMap(cfg.global_crs);
   wireSquareSamplerControls();

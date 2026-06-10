@@ -125,18 +125,6 @@ def _sample_vector_config(config: dict) -> Optional[dict]:
     }
 
 
-def _dynamic_style_name(config: dict) -> str:
-    """Return the fully qualified dynamic style name for WMS requests.
-
-    Args:
-        config (dict): Loaded layers YAML configuration.
-
-    Returns:
-        str: Workspace-qualified style name such as ``"esosc:dynamic_style"``.
-    """
-    return f"{config['workspace_id']}:{Path(config['style_path']).stem}"
-
-
 def _read_version():
     """Return the application version from environment or a baked file.
 
@@ -229,5 +217,5 @@ def api_config():
         "sampleVector": _sample_vector_config(config),
         "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
         "global_crs": os.getenv("GLOBAL_CRS").strip(),
-        "dynamic_style": _dynamic_style_name(config),
+        "dynamic_style": f"{config['workspace_id']}:{Path(config['style_path']).stem}",
     }

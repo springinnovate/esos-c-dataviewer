@@ -1392,8 +1392,6 @@ async function onLayerChange(e, layerId) {
   const layerName = lyr.name;
   const wmsLayerName = layerWmsName(lyr);
   const isCategorical = isCategoricalLayer(lyr);
-  const doInitialFit = !state.didInitialRasterFit;
-  if (doInitialFit) state.didInitialRasterFit = true;
   const layerBoundsPromise = _getWmsLayerLatLngBounds(wmsLayerName);
   renderLayerMeta(layerId, lyr);
   setStyleControlsEnabled(layerId, !isCategorical);
@@ -1445,9 +1443,12 @@ async function onLayerChange(e, layerId) {
   const url = new URL(window.location.href);
   url.searchParams.set(`layer${layerId}`, layerName);
   history.replaceState(null, "", url.toString());
-  if (doInitialFit && bounds) {
+  if (!state.didInitialRasterFit && bounds) {
     try {
-      if (bounds.isValid()) state.map.fitBounds(bounds, { padding: [24, 24] });
+      if (bounds.isValid()) {
+        state.map.fitBounds(bounds, { padding: [24, 24] });
+        state.didInitialRasterFit = true;
+      }
     } catch {}
   }
 }

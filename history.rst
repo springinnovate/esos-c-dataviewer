@@ -3,7 +3,8 @@ History
 
 Unreleased
 ----------
-* No unreleased changes yet.
+* Added frontend EPSG:8857 map CRS support and a visible unsupported-CRS
+  startup message.
 
 1.5.0 (2026-06-09)
 ------------------

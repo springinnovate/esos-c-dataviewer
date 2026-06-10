@@ -18,7 +18,27 @@ const MAX_HISTOGRAM_BINS = 50;
 const MAX_HISTOGRAM_POINTS = 20000;
 const CANADA_CENTER = [55, -96.9];
 const INITIAL_ZOOM = 0;
-const GLOBAL_CRS = "EPSG:3347";
+const EPSG8857_WORLD_EXTENT = {
+  minX: -17243959.062,
+  minY: -8392927.599,
+  maxX: 17243959.062,
+  maxY: 8392927.599,
+};
+
+/**
+ * Build Web Mercator-like zoom resolutions for projected world maps.
+ * @param {number} fullWidthMeters - Projected width covered at zoom 0.
+ * @param {number} levels - Number of integer zoom levels to define.
+ * @returns {number[]} Leaflet/proj4leaflet resolutions from low to high zoom.
+ */
+function buildProjectedResolutions(fullWidthMeters, levels = 20) {
+  const zoomZeroResolution = fullWidthMeters / 256;
+  return Array.from(
+    { length: levels },
+    (_, zoom) => zoomZeroResolution / Math.pow(2, zoom),
+  );
+}
+
 const CRS3347 = new L.Proj.CRS(
   "EPSG:3347",
   "+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs",
@@ -29,6 +49,22 @@ const CRS3347 = new L.Proj.CRS(
 );
 // once the new CRS is defined we register it with leaflet's CRS
 L.CRS.EPSG3347 = CRS3347;
+
+const CRS8857 = new L.Proj.CRS(
+  "EPSG:8857",
+  "+proj=eqearth +lon_0=0 +datum=WGS84 +units=m +no_defs +type=crs",
+  {
+    origin: [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.maxY],
+    bounds: L.bounds(
+      [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.minY],
+      [EPSG8857_WORLD_EXTENT.maxX, EPSG8857_WORLD_EXTENT.maxY],
+    ),
+    resolutions: buildProjectedResolutions(
+      EPSG8857_WORLD_EXTENT.maxX - EPSG8857_WORLD_EXTENT.minX,
+    ),
+  },
+);
+L.CRS.EPSG8857 = CRS8857;
 
 const state = {
   map: null,
@@ -674,12 +710,52 @@ async function loadConfig() {
 }
 
 /**
+ * Normalize a configured CRS code into a Leaflet CRS registry key.
+ * @param {string} crsCode - CRS identifier from app config.
+ * @returns {string} CRS key such as EPSG3857 or EPSG8857.
+ */
+function normalizeLeafletCrsKey(crsCode) {
+  return String(crsCode).trim().toUpperCase().replace(":", "");
+}
+
+/**
+ * Show an obvious user-facing message when map CRS setup fails.
+ * @param {string} crsCode - Unsupported CRS code from app config.
+ */
+function showUnsupportedCrsPopup(crsCode) {
+  const supportedCodes = Object.keys(L.CRS)
+    .filter((key) => key.startsWith("EPSG"))
+    .sort()
+    .join(", ");
+  const message =
+    `Unable to initialize the map because CRS "${crsCode}" is not ` +
+    `registered in the viewer. Supported CRS codes include: ${supportedCodes}.`;
+  console.error(message);
+  window.alert(message);
+}
+
+/**
+ * Resolve a configured CRS code to a Leaflet CRS object.
+ * @param {string} crsCode - CRS identifier from app config.
+ * @returns {L.CRS} Registered Leaflet CRS.
+ * @throws {Error} if the CRS is not registered.
+ */
+function resolveLeafletCrs(crsCode) {
+  const crsKey = normalizeLeafletCrsKey(crsCode);
+  const leafletCRS = L.CRS[crsKey];
+  if (!leafletCRS) {
+    showUnsupportedCrsPopup(crsCode);
+    throw new Error(`Unsupported viewer CRS: ${crsCode}`);
+  }
+  return leafletCRS;
+}
+
+/**
  * Initialize the Leaflet map and overlay event swallowing.
  * Side effects: sets state.map and wires overlay interactions.
  */
 function initMap(crsCode) {
-  const baseLeafletCRS =
-    L.CRS[String(crsCode).trim().toUpperCase().replace(":", "")];
+  const baseLeafletCRS = resolveLeafletCrs(crsCode);
   const leafletCRS = Object.assign(Object.create(baseLeafletCRS), {
     wrapLng: undefined,
     wrapLat: undefined,
@@ -701,10 +777,7 @@ function initMap(crsCode) {
   map.getPane("blendPane").style.zIndex = 200;
   map.getPane("blendPane").style.isolation = "isolate";
   state.map = map;
-  if (
-    Array.isArray(baseLeafletCRS?.wrapLng) &&
-    baseLeafletCRS?.projection?.bounds
-  ) {
+  if (baseLeafletCRS?.projection?.bounds) {
     const projectedBounds = baseLeafletCRS.projection.bounds;
     const southWest = baseLeafletCRS.unproject(projectedBounds.min);
     const northEast = baseLeafletCRS.unproject(projectedBounds.max);

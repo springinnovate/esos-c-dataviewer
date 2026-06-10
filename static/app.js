@@ -29,10 +29,15 @@ const EPSG8857_WORLD_EXTENT = {
  * Build Web Mercator-like zoom resolutions for projected world maps.
  * @param {number} fullWidthMeters - Projected width covered at zoom 0.
  * @param {number} levels - Number of integer zoom levels to define.
+ * @param {number} zoomZeroPixelWidth - Pixel width represented at zoom 0.
  * @returns {number[]} Leaflet/proj4leaflet resolutions from low to high zoom.
  */
-function buildProjectedResolutions(fullWidthMeters, levels = 20) {
-  const zoomZeroResolution = fullWidthMeters / 256;
+function buildProjectedResolutions(
+  fullWidthMeters,
+  levels = 20,
+  zoomZeroPixelWidth = 8192,
+) {
+  const zoomZeroResolution = fullWidthMeters / zoomZeroPixelWidth;
   return Array.from(
     { length: levels },
     (_, zoom) => zoomZeroResolution / Math.pow(2, zoom),

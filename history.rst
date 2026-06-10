@@ -10,6 +10,8 @@ Unreleased
   authority code during registration.
 * Prevented low-zoom EPSG:8857 WMS tile candidates outside the projection
   domain from crashing layer creation.
+* Increased the EPSG:8857 zoom-zero pixel width so normal desktop viewports do
+  not start outside the valid Equal Earth projection domain.
 
 1.5.0 (2026-06-09)
 ------------------

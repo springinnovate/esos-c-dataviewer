@@ -307,7 +307,7 @@ def crs_info_from_rasterio_crs(crs):
     if auth == "EPSG" and code:
         return {
             "declared_srs": f"EPSG:{code}",
-            "native_wkt": crs.to_wkt(),
+            "native_wkt": None,
             "policy": "FORCE_DECLARED",
         }
     else:
@@ -380,7 +380,6 @@ def create_layer(
             "enabled": True,
             "projectionPolicy": info["policy"],
             "srs": info["declared_srs"],
-            "nativeCRS": info["native_wkt"],
             # These are hard-coded to allow common requests and responses in
             # common web and geographic CRSs EPSG:4326 (lat/lon) and
             # EPSG:3857 (Web Mercator) without allowing just any projection
@@ -390,6 +389,8 @@ def create_layer(
             "responseSRS": {"string": ["EPSG:3857"]},
         }
     }
+    if info["native_wkt"]:
+        coverage_payload["coverage"]["nativeCRS"] = info["native_wkt"]
 
     coverage_response = geoserver_client.post(
         f"/rest/workspaces/{workspace_name}/coveragestores"

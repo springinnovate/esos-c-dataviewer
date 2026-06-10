@@ -1368,6 +1368,26 @@ function _extractLayerLatLngBounds(layerEl) {
   );
 }
 
+function _nextAnimationFrame() {
+  return new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
+async function fitInitialRasterBounds(bounds) {
+  if (!bounds?.isValid?.()) return false;
+
+  await _nextAnimationFrame();
+  await _nextAnimationFrame();
+  state.map.invalidateSize({ pan: false });
+  state.map.fitBounds(bounds, { padding: [24, 24], animate: false });
+
+  state.lastMouseLatLng = state.map.getCenter();
+  if (state.hoverRect) {
+    const poly = squarePolygonAt(state.lastMouseLatLng, state.boxSizeKm);
+    state.hoverRect.setLatLngs(poly.getLatLngs());
+  }
+  return true;
+}
+
 async function _getWmsLayerLatLngBounds(qualifiedName) {
   if (!qualifiedName) return null;
   if (state._wmsLayerBoundsCache.has(qualifiedName))
@@ -1445,8 +1465,7 @@ async function onLayerChange(e, layerId) {
   history.replaceState(null, "", url.toString());
   if (!state.didInitialRasterFit && bounds) {
     try {
-      if (bounds.isValid()) {
-        state.map.fitBounds(bounds, { padding: [24, 24] });
+      if (await fitInitialRasterBounds(bounds)) {
         state.didInitialRasterFit = true;
       }
     } catch {}

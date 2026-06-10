@@ -1227,10 +1227,17 @@ async function _getWmsCapsXml() {
 }
 
 function _findWmsLayerElByName(xml, qualifiedName) {
+  const requestedName = String(qualifiedName || "").trim();
   const layers = Array.from(xml.getElementsByTagNameNS("*", "Layer"));
   for (const layerEl of layers) {
     const nameEl = _xmlChild(layerEl, "Name");
-    if (nameEl && String(nameEl.textContent || "").trim() === qualifiedName)
+    if (!nameEl) continue;
+
+    const layerName = String(nameEl.textContent || "").trim();
+    const localLayerName = layerName.includes(":")
+      ? layerName.split(":").pop()
+      : layerName;
+    if (layerName === requestedName || localLayerName === requestedName)
       return layerEl;
   }
   return null;

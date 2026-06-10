@@ -18,32 +18,6 @@ const MAX_HISTOGRAM_BINS = 50;
 const MAX_HISTOGRAM_POINTS = 20000;
 const CANADA_CENTER = [55, -96.9];
 const INITIAL_ZOOM = 0;
-const EPSG8857_WORLD_EXTENT = {
-  minX: -17243959.062,
-  minY: -8392927.599,
-  maxX: 17243959.062,
-  maxY: 8392927.599,
-};
-
-/**
- * Build Web Mercator-like zoom resolutions for projected world maps.
- * @param {number} fullWidthMeters - Projected width covered at zoom 0.
- * @param {number} levels - Number of integer zoom levels to define.
- * @param {number} zoomZeroPixelWidth - Pixel width represented at zoom 0.
- * @returns {number[]} Leaflet/proj4leaflet resolutions from low to high zoom.
- */
-function buildProjectedResolutions(
-  fullWidthMeters,
-  levels = 20,
-  zoomZeroPixelWidth = 8192,
-) {
-  const zoomZeroResolution = fullWidthMeters / zoomZeroPixelWidth;
-  return Array.from(
-    { length: levels },
-    (_, zoom) => zoomZeroResolution / Math.pow(2, zoom),
-  );
-}
-
 const CRS3347 = new L.Proj.CRS(
   "EPSG:3347",
   "+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs",
@@ -55,26 +29,11 @@ const CRS3347 = new L.Proj.CRS(
 // once the new CRS is defined we register it with leaflet's CRS
 L.CRS.EPSG3347 = CRS3347;
 
-const CRS8857 = new L.Proj.CRS(
-  "EPSG:8857",
-  "+proj=eqearth +lon_0=0 +datum=WGS84 +units=m +no_defs +type=crs",
-  {
-    origin: [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.maxY],
-    bounds: L.bounds(
-      [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.minY],
-      [EPSG8857_WORLD_EXTENT.maxX, EPSG8857_WORLD_EXTENT.maxY],
-    ),
-    resolutions: buildProjectedResolutions(
-      EPSG8857_WORLD_EXTENT.maxX - EPSG8857_WORLD_EXTENT.minX,
-    ),
-  },
-);
-L.CRS.EPSG8857 = CRS8857;
-
 const state = {
   map: null,
   geoserverBaseUrl: null,
   baseStatsUrl: null,
+  dynamicStyle: null,
   wmsLayerA: null,
   wmsLayerB: null,
   availableLayers: null,
@@ -717,7 +676,7 @@ async function loadConfig() {
 /**
  * Normalize a configured CRS code into a Leaflet CRS registry key.
  * @param {string} crsCode - CRS identifier from app config.
- * @returns {string} CRS key such as EPSG3857 or EPSG8857.
+ * @returns {string} CRS key such as EPSG3857 or EPSG3347.
  */
 function normalizeLeafletCrsKey(crsCode) {
   return String(crsCode).trim().toUpperCase().replace(":", "");
@@ -1039,6 +998,7 @@ const layerUnits = (lyr) => {
   const units = lyr?.raster_units ?? lyr?.units;
   return units && String(units).trim() ? String(units).trim() : "";
 };
+const layerWmsName = (lyr) => lyr?.wms_name || lyr?.name;
 
 /**
  * Populate both layer <select> elements, and the base layer, with available
@@ -1139,7 +1099,6 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     pane: paneBySlot[slot],
     bounds: opts.bounds ?? null,
   });
-  suppressInvalidProjectedTileBounds(layer);
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
   if (state[stateKey]) state.map.removeLayer(state[stateKey]);
@@ -1174,9 +1133,9 @@ async function onBaseLayerChange(e) {
   let bounds = null;
   try {
     // Fetches WMS capabilities once; later calls read state._wmsLayerBoundsCache.
-    bounds = await _getWmsLayerLatLngBounds(baseLayer.name);
+    bounds = await _getWmsLayerLatLngBounds(layerWmsName(baseLayer));
   } catch {}
-  addWmsLayer(baseLayer.name, "base", {
+  addWmsLayer(layerWmsName(baseLayer), "base", {
     className: "base-layer",
     zIndex: 100,
     bounds,
@@ -1226,10 +1185,17 @@ async function _getWmsCapsXml() {
 }
 
 function _findWmsLayerElByName(xml, qualifiedName) {
+  const requestedName = String(qualifiedName || "").trim();
   const layers = Array.from(xml.getElementsByTagNameNS("*", "Layer"));
   for (const layerEl of layers) {
     const nameEl = _xmlChild(layerEl, "Name");
-    if (nameEl && String(nameEl.textContent || "").trim() === qualifiedName)
+    if (!nameEl) continue;
+
+    const layerName = String(nameEl.textContent || "").trim();
+    const localLayerName = layerName.includes(":")
+      ? layerName.split(":").pop()
+      : layerName;
+    if (layerName === requestedName || localLayerName === requestedName)
       return layerEl;
   }
   return null;
@@ -1257,31 +1223,6 @@ function _latLngBoundsOrNull(southWest, northEast) {
     }
   } catch {}
   return null;
-}
-
-/**
- * Prevent custom projected CRS tile bounds from crashing WMS layer creation.
- *
- * Leaflet checks tile bounds by unprojecting tile corners. At low zoom levels,
- * custom projections such as EPSG:8857 can produce candidate tiles outside the
- * projection's valid domain before Leaflet has a chance to reject them against
- * the layer bounds. Treat those tiles as invalid and let valid tiles continue
- * through Leaflet's normal checks.
- *
- * @param {L.TileLayer.WMS} layer - WMS layer to protect.
- */
-function suppressInvalidProjectedTileBounds(layer) {
-  const originalIsValidTile = layer._isValidTile;
-  layer._isValidTile = function (coords) {
-    try {
-      return originalIsValidTile.call(this, coords);
-    } catch (error) {
-      if (String(error?.message || "").includes("Invalid LatLng object")) {
-        return false;
-      }
-      throw error;
-    }
-  };
 }
 
 function _extractLatLonBoundingBox(layerEl) {
@@ -1322,40 +1263,12 @@ function _extractGeographicBoundingBox(layerEl) {
   return null;
 }
 
-function _extractProjectedBoundingBox(layerEl) {
-  if (!state.map) return null;
-  const crs = state.map.options.crs;
-  const mapCrsCode = String(crs?.code || "").toUpperCase();
-
-  const bboxEls = _xmlChildren(layerEl, "BoundingBox");
-  for (const bb of bboxEls) {
-    const srs = String(
-      bb.getAttribute("SRS") || bb.getAttribute("CRS") || "",
-    ).toUpperCase();
-    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue;
-    const minx = parseFloat(bb.getAttribute("minx"));
-    const miny = parseFloat(bb.getAttribute("miny"));
-    const maxx = parseFloat(bb.getAttribute("maxx"));
-    const maxy = parseFloat(bb.getAttribute("maxy"));
-    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue;
-
-    try {
-      const southWest = crs.unproject(L.point(minx, miny));
-      const northEast = crs.unproject(L.point(maxx, maxy));
-      const bounds = _latLngBoundsOrNull(southWest, northEast);
-      if (bounds) return bounds;
-    } catch {}
-  }
-  return null;
-}
-
 function _extractLayerLatLngBounds(layerEl) {
   if (!layerEl) return null;
 
   return (
     _extractLatLonBoundingBox(layerEl) ||
-    _extractGeographicBoundingBox(layerEl) ||
-    _extractProjectedBoundingBox(layerEl)
+    _extractGeographicBoundingBox(layerEl)
   );
 }
 
@@ -1381,10 +1294,9 @@ async function onLayerChange(e, layerId) {
   const lyr = state.availableLayers[idx];
   if (!lyr) return;
   const layerName = lyr.name;
+  const wmsLayerName = layerWmsName(lyr);
   const isCategorical = isCategoricalLayer(lyr);
-  const doInitialFit = !state.didInitialRasterFit;
-  if (doInitialFit) state.didInitialRasterFit = true;
-  const layerBoundsPromise = _getWmsLayerLatLngBounds(layerName);
+  const layerBoundsPromise = _getWmsLayerLatLngBounds(wmsLayerName);
   renderLayerMeta(layerId, lyr);
   setStyleControlsEnabled(layerId, !isCategorical);
 
@@ -1418,7 +1330,7 @@ async function onLayerChange(e, layerId) {
     } catch {}
   }
   document.getElementById(`layerVisible${layerId}`).checked = true;
-  addWmsLayer(layerName, layerId, { className, bounds });
+  addWmsLayer(wmsLayerName, layerId, { className, bounds });
   if (!isCategorical) applyDynamicStyle(layerId);
   updateContextLegend();
   if (!state.sampleMode) {
@@ -1435,9 +1347,12 @@ async function onLayerChange(e, layerId) {
   const url = new URL(window.location.href);
   url.searchParams.set(`layer${layerId}`, layerName);
   history.replaceState(null, "", url.toString());
-  if (doInitialFit && bounds) {
+  if (!state.didInitialRasterFit && bounds) {
     try {
-      if (bounds.isValid()) state.map.fitBounds(bounds, { padding: [24, 24] });
+      if (bounds.isValid()) {
+        state.map.fitBounds(bounds, { padding: [24, 24] });
+        state.didInitialRasterFit = true;
+      }
     } catch {}
   }
 }
@@ -2249,7 +2164,7 @@ function applyDynamicStyle(layerId) {
     const styleVars = readStyleInputsFromUI(layerId);
     const env = buildEnvString(styleVars);
 
-    layer.setParams({ styles: "esosc:dynamic_style", env, _t: Date.now() });
+    layer.setParams({ styles: state.dynamicStyle, env, _t: Date.now() });
   }
   renderBivariateLegend();
 }
@@ -5038,7 +4953,7 @@ function createBaseLegendControl() {
       return;
     }
 
-    const layerName = typeof layer === "string" ? layer : layer.name;
+    const layerName = typeof layer === "string" ? layer : layerWmsName(layer);
     const layerTitle = typeof layer === "string" ? layer : layer.title || layer.name;
     const legendTitle =
       typeof layer === "string"
@@ -5105,6 +5020,10 @@ function createBaseLegendControl() {
   state.availableLayers = cfg.layers;
   state.availableBaseLayers = cfg.baseLayers || [];
   state.baseStatsUrl = cfg.rstats_base_url;
+  state.dynamicStyle = cfg.dynamic_style;
+  if (!state.dynamicStyle) {
+    throw new Error("Viewer config is missing dynamic_style.");
+  }
 
   initMap(cfg.global_crs);
   wireSquareSamplerControls();

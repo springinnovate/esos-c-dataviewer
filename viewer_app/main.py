@@ -103,6 +103,7 @@ def _collect_layers(layer_key: str, config: dict) -> list:
                 "workspace": workspace_id,
                 # we push this lower because geoserver lowercases all ids
                 "name": Path(layer["file_path"]).stem.lower(),
+                "wms_name": f"{workspace_id}:{Path(layer['file_path']).stem.lower()}",
                 "title": layer.get("title"),
                 "description": layer.get("description"),
                 "raster_units": raster_units,
@@ -217,4 +218,5 @@ def api_config():
         "sampleVector": _sample_vector_config(config),
         "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
         "global_crs": os.getenv("GLOBAL_CRS").strip(),
+        "dynamic_style": Path(config["style_path"]).stem,
     }

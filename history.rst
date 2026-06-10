@@ -3,6 +3,14 @@ History
 
 Unreleased
 ----------
+* Added frontend EPSG:8857 map CRS support and a visible unsupported-CRS
+  startup message.
+
+1.5.0 (2026-06-09)
+------------------
+* Minor release because the viewer gained new user-facing sampling workflows,
+  a reorganized map workspace UI, and substantial polygon statistics execution
+  improvements while preserving existing layer configuration compatibility.
 * Added a one-step raster preparation utility that stitches country manifests,
   converts outputs to COGs with dtype-aware overview resampling, and publishes
   them directly to a GeoServer-ready directory.
@@ -16,8 +24,30 @@ Unreleased
   overriding COG nodata independently of pixel values.
 * Hid the base-layer selector by default and only reveals it when configured
   base layers are returned by the viewer configuration API.
-* Added frontend EPSG:8857 map CRS support and a visible unsupported-CRS
-  startup message.
+* Refactored the viewer controls into docked map-shell panels, removed the wide
+  top toolbar, and compacted the area sampler report and plot controls.
+* Added configured sample vectors in ``layers.yaml`` so deployments can replace
+  shapefile upload with a selectable list of pre-baked vector features, including
+  feature outlines, zooming, and exact-geometry sampling.
+* Loaded configured sample vectors asynchronously so large configured vectors no
+  longer block initial viewer startup.
+* Added raster unit metadata display for sampler summaries and pixel picking,
+  and switched sampler summary headings to configured layer titles.
+* Improved sampler readability by keeping scatter y-axis labels visible,
+  tightening pixel-picker numeric formatting, and dynamically sizing the pixel
+  picker popup.
+* Prevented repeated WMS wraparound copies at world-scale zoom levels by
+  applying raster bounds and disabling Leaflet longitude wrapping.
+* Reduced noisy raster stats logs by summarizing sampled geometries instead of
+  dumping full polygon coordinates.
+* Added cancelable polygon statistics jobs with progress polling so a browser
+  session can abandon stale long-running calculations.
+* Reworked polygon statistics to process chunked geometry windows, keep summary
+  sum and average calculations exact, sample plot data separately, and avoid
+  whole-world windows for multi-part geometries.
+* Added a persistent SQLite-backed polygon statistics cache keyed by geometry
+  and requested layers so repeated configured-area samples can be reused across
+  service restarts.
 
 1.4.0 (2026-05-29)
 ------------------

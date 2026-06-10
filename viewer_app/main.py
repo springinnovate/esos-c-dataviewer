@@ -217,5 +217,5 @@ def api_config():
         "sampleVector": _sample_vector_config(config),
         "rstats_base_url": os.getenv("RSTATS_BASE_URL").strip(),
         "global_crs": os.getenv("GLOBAL_CRS").strip(),
-        "dynamic_style": f"{config['workspace_id']}:{Path(config['style_path']).stem}",
+        "dynamic_style": Path(config["style_path"]).stem,
     }

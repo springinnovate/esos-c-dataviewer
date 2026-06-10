@@ -1871,6 +1871,26 @@ function getScatterMarginalCounts(hist2d) {
   return { xCounts, yCounts };
 }
 
+function percentileRangeFromHistogram(edges, counts, lowQuantile = 0.01, highQuantile = 0.99) {
+  if (!Array.isArray(edges) || !Array.isArray(counts) || edges.length < 2) {
+    return null;
+  }
+
+  const fullMin = edges[0];
+  const fullMax = edges[edges.length - 1];
+  const rangeMin = getHistogramQuantile(edges, counts, lowQuantile);
+  const rangeMax = getHistogramQuantile(edges, counts, highQuantile);
+
+  if (!Number.isFinite(rangeMin) || !Number.isFinite(rangeMax) || !(rangeMin < rangeMax)) {
+    return { min: fullMin, max: fullMax };
+  }
+
+  return {
+    min: Math.max(fullMin, rangeMin),
+    max: Math.min(fullMax, rangeMax),
+  };
+}
+
 /**
  * Initialize or update the plot view range for the current scatter object and plot type.
  * If the view already corresponds to the same scatter object and plot kind, no change is made.
@@ -1887,18 +1907,88 @@ function ensurePlotView(scatterObj, plotKind) {
     return;
   }
 
+  const marginalCounts = Array.isArray(scatterObj?.hist2d)
+    ? getScatterMarginalCounts(scatterObj.hist2d)
+    : null;
+  const xCounts = marginalCounts?.xCounts ?? scatterObj?.hist1d_x;
+  const yCounts = marginalCounts?.yCounts ?? scatterObj?.hist1d_y;
+  const xRange = percentileRangeFromHistogram(scatterObj?.x_edges, xCounts);
+  const yRange = percentileRangeFromHistogram(scatterObj?.y_edges, yCounts);
+
   state.plotView = {
-    xMin: Array.isArray(scatterObj?.x_edges) ? scatterObj.x_edges[0] : null,
-    xMax: Array.isArray(scatterObj?.x_edges)
-      ? scatterObj.x_edges[scatterObj.x_edges.length - 1]
-      : null,
-    yMin: Array.isArray(scatterObj?.y_edges) ? scatterObj.y_edges[0] : null,
-    yMax: Array.isArray(scatterObj?.y_edges)
-      ? scatterObj.y_edges[scatterObj.y_edges.length - 1]
-      : null,
+    xMin: xRange?.min ?? null,
+    xMax: xRange?.max ?? null,
+    yMin: yRange?.min ?? null,
+    yMax: yRange?.max ?? null,
   };
   state.plotViewScatterObj = scatterObj;
   state.plotViewKind = plotKind;
+}
+
+function makeLinearEdges(minValue, maxValue, binCount) {
+  const edges = [];
+  const span = maxValue - minValue;
+  for (let i = 0; i <= binCount; i++) {
+    edges.push(minValue + (span * i) / binCount);
+  }
+  return edges;
+}
+
+function binIndex(value, minValue, maxValue, binCount) {
+  if (!Number.isFinite(value) || value < minValue || value > maxValue) {
+    return -1;
+  }
+  if (value === maxValue) return binCount - 1;
+  return Math.floor(((value - minValue) / (maxValue - minValue)) * binCount);
+}
+
+function rebinHistogram1D(values, viewMin, viewMax, binCount = MAX_HISTOGRAM_BINS) {
+  if (!Array.isArray(values) || !(viewMin < viewMax)) return null;
+
+  const edges = makeLinearEdges(viewMin, viewMax, binCount);
+  const counts = new Array(binCount).fill(0);
+
+  values.forEach((value) => {
+    const numericValue = Number(value);
+    const index = binIndex(numericValue, viewMin, viewMax, binCount);
+    if (index >= 0) counts[index] += 1;
+  });
+
+  return { edges, counts };
+}
+
+function rebinHistogram2D(
+  xValues,
+  yValues,
+  xMin,
+  xMax,
+  yMin,
+  yMax,
+  binCount = MAX_HISTOGRAM_BINS,
+) {
+  if (
+    !Array.isArray(xValues) ||
+    !Array.isArray(yValues) ||
+    !(xMin < xMax) ||
+    !(yMin < yMax)
+  ) {
+    return null;
+  }
+
+  const xEdges = makeLinearEdges(xMin, xMax, binCount);
+  const yEdges = makeLinearEdges(yMin, yMax, binCount);
+  const hist2d = Array.from({ length: binCount }, () =>
+    new Array(binCount).fill(0),
+  );
+  const count = Math.min(xValues.length, yValues.length);
+
+  for (let i = 0; i < count; i++) {
+    const xIndex = binIndex(Number(xValues[i]), xMin, xMax, binCount);
+    const yIndex = binIndex(Number(yValues[i]), yMin, yMax, binCount);
+    if (xIndex >= 0 && yIndex >= 0) hist2d[xIndex][yIndex] += 1;
+  }
+
+  return { xEdges, yEdges, hist2d };
 }
 
 /**
@@ -2024,7 +2114,7 @@ function renderPlotRangeControls({
   }
 
   const hint = document.createElement('div');
-  hint.textContent = 'Range presets only change the current view.';
+  hint.textContent = 'Range presets rebin the sampled plot without re-running stats.';
   hint.style.fontSize = '11px';
   hint.style.color = '#94a3b8';
   hint.style.marginBottom = '6px';
@@ -2548,7 +2638,7 @@ async function renderScatterOverlay(opts) {
             </div>
             <div class='sample-control-section'>
               <div class='sample-control-label'>Plot Range</div>
-              <p class='tool-description'>Zoom the current histogram or scatter view without re-sampling.</p>
+              <p class='tool-description'>Rebin the sampled plot within a focused value range.</p>
               <div id='plotRangeControls'></div>
             </div>
           </details>
@@ -2662,10 +2752,22 @@ async function renderScatterOverlay(opts) {
   let svg = null;
 
   if (has2D) {
+    const rebinned = rebinHistogram2D(
+      scatterObj.x,
+      scatterObj.y,
+      state.plotView.xMin,
+      state.plotView.xMax,
+      state.plotView.yMin,
+      state.plotView.yMax,
+    );
+    const xEdges = rebinned?.xEdges ?? scatterObj.x_edges;
+    const yEdges = rebinned?.yEdges ?? scatterObj.y_edges;
+    const hist2d = rebinned?.hist2d ?? scatterObj.hist2d;
+
     svg = buildScatterSVG(
-      scatterObj.x_edges,
-      scatterObj.y_edges,
-      scatterObj.hist2d,
+      xEdges,
+      yEdges,
+      hist2d,
       {
         width: 420,
         height: 320,
@@ -2679,26 +2781,58 @@ async function renderScatterOverlay(opts) {
         point: state.lastPixelPoint,
         axisLabelX: compactAxisLabel(rasterX),
         axisLabelY: compactAxisLabel(rasterY),
-        viewXMin: state.plotView.xMin,
-        viewXMax: state.plotView.xMax,
-        viewYMin: state.plotView.yMin,
-        viewYMax: state.plotView.yMax,
+        ...(rebinned
+          ? {}
+          : {
+              viewXMin: state.plotView.xMin,
+              viewXMax: state.plotView.xMax,
+              viewYMin: state.plotView.yMin,
+              viewYMax: state.plotView.yMax,
+            }),
       },
     );
   } else if (has1DX) {
-    svg = buildHistogramSVG(scatterObj.x_edges, scatterObj.hist1d_x, 'A', {
-      viewMin: state.plotView.xMin,
-      viewMax: state.plotView.xMax,
-      axisLabel: compactAxisLabel(rasterX, 42),
-      pad: 28,
-    });
+    const rebinned = rebinHistogram1D(
+      scatterObj.x,
+      state.plotView.xMin,
+      state.plotView.xMax,
+    );
+    svg = buildHistogramSVG(
+      rebinned?.edges ?? scatterObj.x_edges,
+      rebinned?.counts ?? scatterObj.hist1d_x,
+      'A',
+      {
+        axisLabel: compactAxisLabel(rasterX, 42),
+        pad: 28,
+        ...(rebinned
+          ? {}
+          : {
+              viewMin: state.plotView.xMin,
+              viewMax: state.plotView.xMax,
+            }),
+      },
+    );
   } else if (has1DY) {
-    svg = buildHistogramSVG(scatterObj.y_edges, scatterObj.hist1d_y, 'B', {
-      viewMin: state.plotView.yMin,
-      viewMax: state.plotView.yMax,
-      axisLabel: compactAxisLabel(rasterY, 42),
-      pad: 28,
-    });
+    const rebinned = rebinHistogram1D(
+      scatterObj.y,
+      state.plotView.yMin,
+      state.plotView.yMax,
+    );
+    svg = buildHistogramSVG(
+      rebinned?.edges ?? scatterObj.y_edges,
+      rebinned?.counts ?? scatterObj.hist1d_y,
+      'B',
+      {
+        axisLabel: compactAxisLabel(rasterY, 42),
+        pad: 28,
+        ...(rebinned
+          ? {}
+          : {
+              viewMin: state.plotView.yMin,
+              viewMax: state.plotView.yMax,
+            }),
+      },
+    );
   }
 
   if (svg) {

@@ -18,32 +18,6 @@ const MAX_HISTOGRAM_BINS = 50;
 const MAX_HISTOGRAM_POINTS = 20000;
 const CANADA_CENTER = [55, -96.9];
 const INITIAL_ZOOM = 0;
-const EPSG8857_WORLD_EXTENT = {
-  minX: -17243959.062,
-  minY: -8392927.599,
-  maxX: 17243959.062,
-  maxY: 8392927.599,
-};
-
-/**
- * Build Web Mercator-like zoom resolutions for projected world maps.
- * @param {number} fullWidthMeters - Projected width covered at zoom 0.
- * @param {number} levels - Number of integer zoom levels to define.
- * @param {number} zoomZeroPixelWidth - Pixel width represented at zoom 0.
- * @returns {number[]} Leaflet/proj4leaflet resolutions from low to high zoom.
- */
-function buildProjectedResolutions(
-  fullWidthMeters,
-  levels = 20,
-  zoomZeroPixelWidth = 8192,
-) {
-  const zoomZeroResolution = fullWidthMeters / zoomZeroPixelWidth;
-  return Array.from(
-    { length: levels },
-    (_, zoom) => zoomZeroResolution / Math.pow(2, zoom),
-  );
-}
-
 const CRS3347 = new L.Proj.CRS(
   "EPSG:3347",
   "+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +datum=NAD83 +units=m +no_defs",
@@ -54,22 +28,6 @@ const CRS3347 = new L.Proj.CRS(
 );
 // once the new CRS is defined we register it with leaflet's CRS
 L.CRS.EPSG3347 = CRS3347;
-
-const CRS8857 = new L.Proj.CRS(
-  "EPSG:8857",
-  "+proj=eqearth +lon_0=0 +datum=WGS84 +units=m +no_defs +type=crs",
-  {
-    origin: [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.maxY],
-    bounds: L.bounds(
-      [EPSG8857_WORLD_EXTENT.minX, EPSG8857_WORLD_EXTENT.minY],
-      [EPSG8857_WORLD_EXTENT.maxX, EPSG8857_WORLD_EXTENT.maxY],
-    ),
-    resolutions: buildProjectedResolutions(
-      EPSG8857_WORLD_EXTENT.maxX - EPSG8857_WORLD_EXTENT.minX,
-    ),
-  },
-);
-L.CRS.EPSG8857 = CRS8857;
 
 const state = {
   map: null,
@@ -718,7 +676,7 @@ async function loadConfig() {
 /**
  * Normalize a configured CRS code into a Leaflet CRS registry key.
  * @param {string} crsCode - CRS identifier from app config.
- * @returns {string} CRS key such as EPSG3857 or EPSG8857.
+ * @returns {string} CRS key such as EPSG3857 or EPSG3347.
  */
 function normalizeLeafletCrsKey(crsCode) {
   return String(crsCode).trim().toUpperCase().replace(":", "");
@@ -1141,7 +1099,6 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     pane: paneBySlot[slot],
     bounds: opts.bounds ?? null,
   });
-  suppressInvalidProjectedTileBounds(layer);
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
   if (state[stateKey]) state.map.removeLayer(state[stateKey]);
@@ -1268,31 +1225,6 @@ function _latLngBoundsOrNull(southWest, northEast) {
   return null;
 }
 
-/**
- * Prevent custom projected CRS tile bounds from crashing WMS layer creation.
- *
- * Leaflet checks tile bounds by unprojecting tile corners. At low zoom levels,
- * custom projections such as EPSG:8857 can produce candidate tiles outside the
- * projection's valid domain before Leaflet has a chance to reject them against
- * the layer bounds. Treat those tiles as invalid and let valid tiles continue
- * through Leaflet's normal checks.
- *
- * @param {L.TileLayer.WMS} layer - WMS layer to protect.
- */
-function suppressInvalidProjectedTileBounds(layer) {
-  const originalIsValidTile = layer._isValidTile;
-  layer._isValidTile = function (coords) {
-    try {
-      return originalIsValidTile.call(this, coords);
-    } catch (error) {
-      if (String(error?.message || "").includes("Invalid LatLng object")) {
-        return false;
-      }
-      throw error;
-    }
-  };
-}
-
 function _extractLatLonBoundingBox(layerEl) {
   const ll = _xmlChild(layerEl, "LatLonBoundingBox");
   if (ll) {
@@ -1331,61 +1263,13 @@ function _extractGeographicBoundingBox(layerEl) {
   return null;
 }
 
-function _extractProjectedBoundingBox(layerEl) {
-  if (!state.map) return null;
-  const crs = state.map.options.crs;
-  const mapCrsCode = String(crs?.code || "").toUpperCase();
-
-  const bboxEls = _xmlChildren(layerEl, "BoundingBox");
-  for (const bb of bboxEls) {
-    const srs = String(
-      bb.getAttribute("SRS") || bb.getAttribute("CRS") || "",
-    ).toUpperCase();
-    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue;
-    const minx = parseFloat(bb.getAttribute("minx"));
-    const miny = parseFloat(bb.getAttribute("miny"));
-    const maxx = parseFloat(bb.getAttribute("maxx"));
-    const maxy = parseFloat(bb.getAttribute("maxy"));
-    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue;
-
-    try {
-      const southWest = crs.unproject(L.point(minx, miny));
-      const northEast = crs.unproject(L.point(maxx, maxy));
-      const bounds = _latLngBoundsOrNull(southWest, northEast);
-      if (bounds) return bounds;
-    } catch {}
-  }
-  return null;
-}
-
 function _extractLayerLatLngBounds(layerEl) {
   if (!layerEl) return null;
 
   return (
     _extractLatLonBoundingBox(layerEl) ||
-    _extractGeographicBoundingBox(layerEl) ||
-    _extractProjectedBoundingBox(layerEl)
+    _extractGeographicBoundingBox(layerEl)
   );
-}
-
-function _nextAnimationFrame() {
-  return new Promise((resolve) => window.requestAnimationFrame(resolve));
-}
-
-async function fitInitialRasterBounds(bounds) {
-  if (!bounds?.isValid?.()) return false;
-
-  await _nextAnimationFrame();
-  await _nextAnimationFrame();
-  state.map.invalidateSize({ pan: false });
-  state.map.fitBounds(bounds, { padding: [24, 24], animate: false });
-
-  state.lastMouseLatLng = state.map.getCenter();
-  if (state.hoverRect) {
-    const poly = squarePolygonAt(state.lastMouseLatLng, state.boxSizeKm);
-    state.hoverRect.setLatLngs(poly.getLatLngs());
-  }
-  return true;
 }
 
 async function _getWmsLayerLatLngBounds(qualifiedName) {
@@ -1465,7 +1349,8 @@ async function onLayerChange(e, layerId) {
   history.replaceState(null, "", url.toString());
   if (!state.didInitialRasterFit && bounds) {
     try {
-      if (await fitInitialRasterBounds(bounds)) {
+      if (bounds.isValid()) {
+        state.map.fitBounds(bounds, { padding: [24, 24] });
         state.didInitialRasterFit = true;
       }
     } catch {}

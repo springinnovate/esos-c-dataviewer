@@ -6,7 +6,8 @@ Unreleased
 * Added frontend EPSG:8857 map CRS support and a visible unsupported-CRS
   startup message.
 * Fixed EPSG:8857 layer startup by preferring geographic WMS bounds in the
-  viewer and sending GeoServer WKT1 native CRS metadata during registration.
+  viewer and avoiding WKT native CRS metadata when GeoServer can use an EPSG
+  authority code during registration.
 
 1.5.0 (2026-06-09)
 ------------------

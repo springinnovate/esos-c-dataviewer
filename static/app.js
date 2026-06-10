@@ -1229,27 +1229,31 @@ function _findWmsLayerElByName(xml, qualifiedName) {
   return null;
 }
 
-function _extractLayerLatLngBounds(layerEl) {
-  if (!layerEl || !state.map) return null;
-  const crs = state.map.options.crs;
-  const mapCrsCode = String(crs?.code || "").toUpperCase();
+function _isUsableLatLng(latLng) {
+  return (
+    Number.isFinite(latLng?.lat) &&
+    Number.isFinite(latLng?.lng) &&
+    latLng.lat >= -90 &&
+    latLng.lat <= 90 &&
+    latLng.lng >= -360 &&
+    latLng.lng <= 360
+  );
+}
 
-  const bboxEls = _xmlChildren(layerEl, "BoundingBox");
-  for (const bb of bboxEls) {
-    const srs = String(
-      bb.getAttribute("SRS") || bb.getAttribute("CRS") || "",
-    ).toUpperCase();
-    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue;
-    const minx = parseFloat(bb.getAttribute("minx"));
-    const miny = parseFloat(bb.getAttribute("miny"));
-    const maxx = parseFloat(bb.getAttribute("maxx"));
-    const maxy = parseFloat(bb.getAttribute("maxy"));
-    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue;
-    const sw = crs.unproject(L.point(minx, miny));
-    const ne = crs.unproject(L.point(maxx, maxy));
-    return L.latLngBounds(sw, ne);
-  }
+function _latLngBoundsOrNull(southWest, northEast) {
+  try {
+    const bounds = L.latLngBounds(southWest, northEast);
+    if (
+      _isUsableLatLng(bounds.getSouthWest()) &&
+      _isUsableLatLng(bounds.getNorthEast())
+    ) {
+      return bounds;
+    }
+  } catch {}
+  return null;
+}
 
+function _extractLatLonBoundingBox(layerEl) {
   const ll = _xmlChild(layerEl, "LatLonBoundingBox");
   if (ll) {
     const minx = parseFloat(ll.getAttribute("minx"));
@@ -1257,10 +1261,14 @@ function _extractLayerLatLngBounds(layerEl) {
     const maxx = parseFloat(ll.getAttribute("maxx"));
     const maxy = parseFloat(ll.getAttribute("maxy"));
     if ([minx, miny, maxx, maxy].every(Number.isFinite)) {
-      return L.latLngBounds([miny, minx], [maxy, maxx]);
+      const bounds = _latLngBoundsOrNull([miny, minx], [maxy, maxx]);
+      if (bounds) return bounds;
     }
   }
+  return null;
+}
 
+function _extractGeographicBoundingBox(layerEl) {
   const ex = _xmlChild(layerEl, "EX_GeographicBoundingBox");
   if (ex) {
     const west = parseFloat(
@@ -1276,11 +1284,48 @@ function _extractLayerLatLngBounds(layerEl) {
       String(_xmlChild(ex, "northBoundLatitude")?.textContent || "").trim(),
     );
     if ([west, east, south, north].every(Number.isFinite)) {
-      return L.latLngBounds([south, west], [north, east]);
+      const bounds = _latLngBoundsOrNull([south, west], [north, east]);
+      if (bounds) return bounds;
     }
   }
-
   return null;
+}
+
+function _extractProjectedBoundingBox(layerEl) {
+  if (!state.map) return null;
+  const crs = state.map.options.crs;
+  const mapCrsCode = String(crs?.code || "").toUpperCase();
+
+  const bboxEls = _xmlChildren(layerEl, "BoundingBox");
+  for (const bb of bboxEls) {
+    const srs = String(
+      bb.getAttribute("SRS") || bb.getAttribute("CRS") || "",
+    ).toUpperCase();
+    if (!srs || !mapCrsCode || srs !== mapCrsCode) continue;
+    const minx = parseFloat(bb.getAttribute("minx"));
+    const miny = parseFloat(bb.getAttribute("miny"));
+    const maxx = parseFloat(bb.getAttribute("maxx"));
+    const maxy = parseFloat(bb.getAttribute("maxy"));
+    if (![minx, miny, maxx, maxy].every(Number.isFinite)) continue;
+
+    try {
+      const southWest = crs.unproject(L.point(minx, miny));
+      const northEast = crs.unproject(L.point(maxx, maxy));
+      const bounds = _latLngBoundsOrNull(southWest, northEast);
+      if (bounds) return bounds;
+    } catch {}
+  }
+  return null;
+}
+
+function _extractLayerLatLngBounds(layerEl) {
+  if (!layerEl) return null;
+
+  return (
+    _extractLatLonBoundingBox(layerEl) ||
+    _extractGeographicBoundingBox(layerEl) ||
+    _extractProjectedBoundingBox(layerEl)
+  );
 }
 
 async function _getWmsLayerLatLngBounds(qualifiedName) {

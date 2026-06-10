@@ -307,14 +307,14 @@ def crs_info_from_rasterio_crs(crs):
     if auth == "EPSG" and code:
         return {
             "declared_srs": f"EPSG:{code}",
-            "native_wkt": crs.to_wkt(),
+            "native_wkt": crs.to_wkt(version="WKT1_GDAL"),
             "policy": "FORCE_DECLARED",
         }
     else:
         # choose a declared CRS you want clients to see (e.g., EPSG:4326)
         return {
             "declared_srs": "EPSG:4326",
-            "native_wkt": crs.to_wkt(),
+            "native_wkt": crs.to_wkt(version="WKT1_GDAL"),
             "policy": "REPROJECT_TO_DECLARED",
         }
 

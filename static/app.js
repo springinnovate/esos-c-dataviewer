@@ -75,6 +75,7 @@ const state = {
   map: null,
   geoserverBaseUrl: null,
   baseStatsUrl: null,
+  dynamicStyle: "esosc:dynamic_style",
   wmsLayerA: null,
   wmsLayerB: null,
   availableLayers: null,
@@ -2249,7 +2250,7 @@ function applyDynamicStyle(layerId) {
     const styleVars = readStyleInputsFromUI(layerId);
     const env = buildEnvString(styleVars);
 
-    layer.setParams({ styles: "esosc:dynamic_style", env, _t: Date.now() });
+    layer.setParams({ styles: state.dynamicStyle, env, _t: Date.now() });
   }
   renderBivariateLegend();
 }
@@ -5105,6 +5106,7 @@ function createBaseLegendControl() {
   state.availableLayers = cfg.layers;
   state.availableBaseLayers = cfg.baseLayers || [];
   state.baseStatsUrl = cfg.rstats_base_url;
+  state.dynamicStyle = cfg.dynamic_style || state.dynamicStyle;
 
   initMap(cfg.global_crs);
   wireSquareSamplerControls();

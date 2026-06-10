@@ -12,6 +12,8 @@ Unreleased
   domain from crashing layer creation.
 * Increased the EPSG:8857 zoom-zero pixel width so normal desktop viewports do
   not start outside the valid Equal Earth projection domain.
+* Fixed dynamic WMS styling for deployments that use a workspace other than
+  ``esosc``.
 
 1.5.0 (2026-06-09)
 ------------------

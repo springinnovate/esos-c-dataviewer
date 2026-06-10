@@ -1040,6 +1040,7 @@ const layerUnits = (lyr) => {
   const units = lyr?.raster_units ?? lyr?.units;
   return units && String(units).trim() ? String(units).trim() : "";
 };
+const layerWmsName = (lyr) => lyr?.wms_name || lyr?.name;
 
 /**
  * Populate both layer <select> elements, and the base layer, with available
@@ -1175,9 +1176,9 @@ async function onBaseLayerChange(e) {
   let bounds = null;
   try {
     // Fetches WMS capabilities once; later calls read state._wmsLayerBoundsCache.
-    bounds = await _getWmsLayerLatLngBounds(baseLayer.name);
+    bounds = await _getWmsLayerLatLngBounds(layerWmsName(baseLayer));
   } catch {}
-  addWmsLayer(baseLayer.name, "base", {
+  addWmsLayer(layerWmsName(baseLayer), "base", {
     className: "base-layer",
     zIndex: 100,
     bounds,
@@ -1389,10 +1390,11 @@ async function onLayerChange(e, layerId) {
   const lyr = state.availableLayers[idx];
   if (!lyr) return;
   const layerName = lyr.name;
+  const wmsLayerName = layerWmsName(lyr);
   const isCategorical = isCategoricalLayer(lyr);
   const doInitialFit = !state.didInitialRasterFit;
   if (doInitialFit) state.didInitialRasterFit = true;
-  const layerBoundsPromise = _getWmsLayerLatLngBounds(layerName);
+  const layerBoundsPromise = _getWmsLayerLatLngBounds(wmsLayerName);
   renderLayerMeta(layerId, lyr);
   setStyleControlsEnabled(layerId, !isCategorical);
 
@@ -1426,7 +1428,7 @@ async function onLayerChange(e, layerId) {
     } catch {}
   }
   document.getElementById(`layerVisible${layerId}`).checked = true;
-  addWmsLayer(layerName, layerId, { className, bounds });
+  addWmsLayer(wmsLayerName, layerId, { className, bounds });
   if (!isCategorical) applyDynamicStyle(layerId);
   updateContextLegend();
   if (!state.sampleMode) {
@@ -5046,7 +5048,7 @@ function createBaseLegendControl() {
       return;
     }
 
-    const layerName = typeof layer === "string" ? layer : layer.name;
+    const layerName = typeof layer === "string" ? layer : layerWmsName(layer);
     const layerTitle = typeof layer === "string" ? layer : layer.title || layer.name;
     const legendTitle =
       typeof layer === "string"

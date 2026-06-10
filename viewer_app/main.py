@@ -103,6 +103,7 @@ def _collect_layers(layer_key: str, config: dict) -> list:
                 "workspace": workspace_id,
                 # we push this lower because geoserver lowercases all ids
                 "name": Path(layer["file_path"]).stem.lower(),
+                "wms_name": f"{workspace_id}:{Path(layer['file_path']).stem.lower()}",
                 "title": layer.get("title"),
                 "description": layer.get("description"),
                 "raster_units": raster_units,

@@ -1134,6 +1134,7 @@ function addWmsLayer(qualifiedName, slot, opts = {}) {
     pane: paneBySlot[slot],
     bounds: opts.bounds ?? null,
   });
+  suppressInvalidProjectedTileBounds(layer);
 
   const stateKey = slot === "base" ? "wmsLayerBase" : `wmsLayer${slot}`;
   if (state[stateKey]) state.map.removeLayer(state[stateKey]);
@@ -1251,6 +1252,31 @@ function _latLngBoundsOrNull(southWest, northEast) {
     }
   } catch {}
   return null;
+}
+
+/**
+ * Prevent custom projected CRS tile bounds from crashing WMS layer creation.
+ *
+ * Leaflet checks tile bounds by unprojecting tile corners. At low zoom levels,
+ * custom projections such as EPSG:8857 can produce candidate tiles outside the
+ * projection's valid domain before Leaflet has a chance to reject them against
+ * the layer bounds. Treat those tiles as invalid and let valid tiles continue
+ * through Leaflet's normal checks.
+ *
+ * @param {L.TileLayer.WMS} layer - WMS layer to protect.
+ */
+function suppressInvalidProjectedTileBounds(layer) {
+  const originalIsValidTile = layer._isValidTile;
+  layer._isValidTile = function (coords) {
+    try {
+      return originalIsValidTile.call(this, coords);
+    } catch (error) {
+      if (String(error?.message || "").includes("Invalid LatLng object")) {
+        return false;
+      }
+      throw error;
+    }
+  };
 }
 
 function _extractLatLonBoundingBox(layerEl) {

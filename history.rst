@@ -8,6 +8,8 @@ Unreleased
 * Fixed EPSG:8857 layer startup by preferring geographic WMS bounds in the
   viewer and avoiding WKT native CRS metadata when GeoServer can use an EPSG
   authority code during registration.
+* Prevented low-zoom EPSG:8857 WMS tile candidates outside the projection
+  domain from crashing layer creation.
 
 1.5.0 (2026-06-09)
 ------------------
